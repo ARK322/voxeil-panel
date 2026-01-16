@@ -58,6 +58,11 @@ kubectl wait --for=condition=Ready node --all --timeout=180s
 
 # ========= render manifests to temp dir =========
 RENDER_DIR="$(mktemp -d)"
+
+if [[ ! -d infra/k8s/platform ]]; then
+  echo "infra/k8s/platform is missing; run from the repository root or download the full archive."
+  exit 1
+fi
 cp -r infra/k8s/platform "${RENDER_DIR}/platform"
 
 cat > "${RENDER_DIR}/platform/platform-secrets.yaml" <<EOF

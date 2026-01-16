@@ -12,11 +12,11 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 1) Build/push your own images (no hardcoded registry):
    - Controller: `apps/controller`
    - Panel: `apps/panel`
-2) From the repo root run:
+2) One-liner install (no git clone required):
    ```bash
-   chmod +x installer/installer.sh
-   installer/installer.sh
+   curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash
    ```
+   - Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
    The installer will ask for:
    - Panel NodePort
    - Optional controller NodePort (admin-only)
