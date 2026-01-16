@@ -1,0 +1,33 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: panel
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: panel
+  template:
+    metadata:
+      labels:
+        app: panel
+    spec:
+      containers:
+        - name: panel
+          image: REPLACE_PANEL_IMAGE
+          ports:
+            - containerPort: 3000
+          env:
+            - name: CONTROLLER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: ADMIN_API_KEY
+            - name: PANEL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_PASSWORD
+            - name: CONTROLLER_BASE_URL
+              value: "http://controller.platform.svc.cluster.local:8080"
