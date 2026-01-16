@@ -113,6 +113,26 @@ async function ensureTenantNetworkPolicy(ns: string, siteId: string) {
   }
 }
 
+async function ensureTenantIngressAllow(ns: string, siteId: string) {
+  const { net } = getClients();
+  const policyBody = {
+    metadata: {
+      name: "allow-all-ingress",
+      labels: { [LABELS.siteId]: siteId }
+    },
+    spec: {
+      podSelector: {},
+      policyTypes: ["Ingress"],
+      ingress: [{}] // allow all ingress to permit NodePort traffic
+    }
+  };
+  try {
+    await net.createNamespacedNetworkPolicy(ns, policyBody as any);
+  } catch (e: any) {
+    if (e?.response?.statusCode !== 409) throw e;
+  }
+}
+
 app.post("/sites", async (req: FastifyRequest, reply: FastifyReply) => {
   const body = CreateSiteBody.parse(req.body);
   const ns = `tenant-${body.siteId}`;
@@ -138,7 +158,8 @@ app.post("/sites", async (req: FastifyRequest, reply: FastifyReply) => {
   await Promise.all([
     ensureTenantQuota(ns),
     ensureTenantLimits(ns),
-    ensureTenantNetworkPolicy(ns, body.siteId)
+    ensureTenantNetworkPolicy(ns, body.siteId),
+    ensureTenantIngressAllow(ns, body.siteId)
   ]);
 
   // 2) Deployment

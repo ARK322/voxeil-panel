@@ -95,20 +95,22 @@ if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
 fi
 
 # ========= optional: UFW allowlist =========
-if command -v ufw >/dev/null 2>&1; then
-  echo "Configuring UFW..."
+if command -v ufw >/dev/null 2>&1 && [[ -n "${ALLOW_IP}" ]]; then
+  echo "Configuring UFW allowlist..."
   ufw --force enable
-
-  if [[ -n "${ALLOW_IP}" ]]; then
-    ufw allow from "${ALLOW_IP}" to any port "${PANEL_NODEPORT}" proto tcp
-    ufw allow from "${ALLOW_IP}" to any port "${SITE_PORT_START}:${SITE_PORT_END}" proto tcp
-    if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
-      ufw allow from "${ALLOW_IP}" to any port "${CONTROLLER_NODEPORT}" proto tcp
-    fi
-  else
-    echo "WARNING: no allowlist IP provided; not opening panel/site/controller ports automatically."
+  ufw allow from "${ALLOW_IP}" to any port "${PANEL_NODEPORT}" proto tcp
+  ufw allow from "${ALLOW_IP}" to any port "${SITE_PORT_START}:${SITE_PORT_END}" proto tcp
+  if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
+    ufw allow from "${ALLOW_IP}" to any port "${CONTROLLER_NODEPORT}" proto tcp
   fi
+else
+  echo "UFW skipped (no allowlist provided or ufw missing)."
 fi
+
+# ========= wait for readiness =========
+echo "Waiting for controller and panel to become available..."
+kubectl wait --for=condition=Available deployment/controller -n platform --timeout=180s
+kubectl wait --for=condition=Available deployment/panel -n platform --timeout=180s
 
 echo ""
 echo "Done."
