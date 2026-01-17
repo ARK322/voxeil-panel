@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - voxeil
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - voxeil
+
+  controller:
+    build:
+      context: ../../../apps/controller
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      PORT: "8080"
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      SITE_NODEPORT_START: ${SITE_NODEPORT_START}
+      SITE_NODEPORT_END: ${SITE_NODEPORT_END}
+      KUBECONFIG: ${KUBECONFIG_CONTAINER_PATH}
+    volumes:
+      - "${KUBECONFIG_HOST_PATH}:${KUBECONFIG_CONTAINER_PATH}:ro"
+    ports:
+      - "${CONTROLLER_PORT}:8080"
+    networks:
+      - voxeil
+
+  panel:
+    build:
+      context: ../../../apps/panel
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - controller
+    environment:
+      PORT: "3000"
+      CONTROLLER_API_KEY: ${CONTROLLER_API_KEY}
+      CONTROLLER_BASE_URL: ${CONTROLLER_BASE_URL}
+      PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD}
+    ports:
+      - "${PANEL_PORT}:3000"
+    networks:
+      - voxeil
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  voxeil:

@@ -1,0 +1,32 @@
+import k8s from "@kubernetes/client-node";
+
+export const LABELS = {
+  managedBy: "vhp-controller",
+  siteSlug: "vhp/site-slug"
+} as const;
+
+type Clients = {
+  kc: k8s.KubeConfig;
+  core: k8s.CoreV1Api;
+  net: k8s.NetworkingV1Api;
+};
+
+let cached: Clients | null = null;
+
+export function getClients(): Clients {
+  if (cached) return cached;
+  const kc = new k8s.KubeConfig();
+  try {
+    kc.loadFromCluster();
+  } catch {
+    kc.loadFromDefault();
+  }
+
+  cached = {
+    kc,
+    core: kc.makeApiClient(k8s.CoreV1Api),
+    net: kc.makeApiClient(k8s.NetworkingV1Api)
+  };
+
+  return cached;
+}
