@@ -18,6 +18,7 @@ let cached: TenantTemplates | null = null;
 
 function resolveTemplatesDir(): string {
   const candidates = [
+    path.resolve(process.cwd(), "templates", "tenant"),
     path.resolve(process.cwd(), "infra", "k8s", "templates", "tenant"),
     path.resolve(process.cwd(), "..", "..", "infra", "k8s", "templates", "tenant"),
     path.resolve(process.cwd(), "..", "infra", "k8s", "templates", "tenant")
@@ -33,6 +34,9 @@ function resolveTemplatesDir(): string {
 }
 
 async function readYaml<T>(filePath: string): Promise<T> {
+  if (!existsSync(filePath)) {
+    throw new Error(`Template file not found: ${filePath}`);
+  }
   const raw = await fs.readFile(filePath, "utf8");
   return k8s.loadYaml(raw) as T;
 }

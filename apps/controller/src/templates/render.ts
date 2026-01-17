@@ -56,12 +56,16 @@ export function renderLimitRange(
       memory: `${limits.ramGi}Gi`
     };
     if (!limitRange.spec) {
-      limitRange.spec = { limits: [{ type: "Container", max: next }] };
+      limitRange.spec = {
+        limits: [{ type: "Container", max: next, default: next, defaultRequest: next }]
+      };
     } else if (!limitRange.spec.limits || limitRange.spec.limits.length === 0) {
-      limitRange.spec.limits = [{ type: "Container", max: next }];
+      limitRange.spec.limits = [{ type: "Container", max: next, default: next, defaultRequest: next }];
     } else {
       const limit = limitRange.spec.limits[0];
       limit.max = { ...(limit.max ?? {}), ...next };
+      limit.default = { ...(limit.default ?? {}), ...next };
+      limit.defaultRequest = { ...(limit.defaultRequest ?? {}), ...next };
     }
   }
   return limitRange;
