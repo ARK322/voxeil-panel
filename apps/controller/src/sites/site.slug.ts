@@ -17,9 +17,6 @@ export function slugFromDomain(input: string): string {
   value = value.replace(/\.$/, "");
 
   const parts = value.split(".").filter(Boolean);
-  if (parts.length >= 2) {
-    parts.pop();
-  }
   value = parts.join(".");
 
   value = value.replace(/[^a-z0-9]+/g, "-");
@@ -29,5 +26,16 @@ export function slugFromDomain(input: string): string {
     throw new Error("Domain cannot be normalized into a slug.");
   }
 
+  return value;
+}
+
+export function validateSlug(input: string): string {
+  const value = input.trim().toLowerCase();
+  if (!value) {
+    throw new Error("Slug is required.");
+  }
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)) {
+    throw new Error("Slug must be lowercase and contain only a-z, 0-9, or hyphen.");
+  }
   return value;
 }

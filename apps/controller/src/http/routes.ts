@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { CreateSiteSchema, PatchLimitsSchema } from "../sites/site.dto.js";
-import { createSite, listSites, updateSiteLimits } from "../sites/site.service.js";
+import { createSite, deleteSite, listSites, updateSiteLimits } from "../sites/site.service.js";
 
 export function registerRoutes(app: FastifyInstance) {
   app.post("/sites", async (req, reply) => {
@@ -16,5 +16,11 @@ export function registerRoutes(app: FastifyInstance) {
     const body = PatchLimitsSchema.parse(req.body);
     const result = await updateSiteLimits(slug, body);
     return reply.send(result);
+  });
+
+  app.delete("/sites/:slug", async (req, reply) => {
+    const slug = String((req.params as { slug: string }).slug ?? "");
+    await deleteSite(slug);
+    return reply.code(204).send();
   });
 }

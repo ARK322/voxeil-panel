@@ -10,7 +10,7 @@ spec:
     requests.storage: 1Gi
     limits.cpu: "2"
     limits.memory: 2Gi
-    pods: "10"
+    pods: "1"
     services: "5"
     configmaps: "10"
     persistentvolumeclaims: "1"

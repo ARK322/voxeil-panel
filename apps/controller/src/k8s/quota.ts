@@ -53,9 +53,21 @@ export async function updateQuotaLimits(
   }
 
   const hard = { ...(current.body.spec?.hard ?? {}) };
-  if (patch.cpu !== undefined) hard["requests.cpu"] = String(patch.cpu);
-  if (patch.ramGi !== undefined) hard["requests.memory"] = `${patch.ramGi}Gi`;
-  if (patch.diskGi !== undefined) hard["requests.storage"] = `${patch.diskGi}Gi`;
+  const currentCpu =
+    parseCpuToNumber(hard["requests.cpu"]) ?? parseCpuToNumber(hard["limits.cpu"]) ?? 0;
+  const currentRamGi =
+    parseGiToNumber(hard["requests.memory"]) ?? parseGiToNumber(hard["limits.memory"]) ?? 0;
+  const currentDiskGi = parseGiToNumber(hard["requests.storage"]) ?? 0;
+
+  const desiredCpu = patch.cpu ?? currentCpu;
+  const desiredRamGi = patch.ramGi ?? currentRamGi;
+  const desiredDiskGi = patch.diskGi ?? currentDiskGi;
+
+  hard["requests.cpu"] = String(desiredCpu);
+  hard["limits.cpu"] = String(desiredCpu);
+  hard["requests.memory"] = `${desiredRamGi}Gi`;
+  hard["limits.memory"] = `${desiredRamGi}Gi`;
+  hard["requests.storage"] = `${desiredDiskGi}Gi`;
   hard["pods"] = "1";
   hard["persistentvolumeclaims"] = "1";
 
@@ -74,8 +86,8 @@ export async function updateQuotaLimits(
   await core.replaceNamespacedResourceQuota(quotaName, namespace, next);
 
   return {
-    cpu: patch.cpu ?? parseCpuToNumber(hard["requests.cpu"]) ?? 0,
-    ramGi: patch.ramGi ?? parseGiToNumber(hard["requests.memory"]) ?? 0,
-    diskGi: patch.diskGi ?? parseGiToNumber(hard["requests.storage"]) ?? 0
+    cpu: desiredCpu,
+    ramGi: desiredRamGi,
+    diskGi: desiredDiskGi
   };
 }

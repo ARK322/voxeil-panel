@@ -6,10 +6,16 @@ import {
   renderResourceQuota
 } from "../templates/render.js";
 import { upsertLimitRange, upsertNetworkPolicy, upsertResourceQuota } from "../k8s/apply.js";
-import { allocateTenantNamespace, listTenantNamespaces, requireNamespace, slugFromNamespace } from "../k8s/namespace.js";
+import {
+  allocateTenantNamespace,
+  deleteNamespace,
+  listTenantNamespaces,
+  requireNamespace,
+  slugFromNamespace
+} from "../k8s/namespace.js";
 import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
 import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
-import { slugFromDomain } from "./site.slug.js";
+import { slugFromDomain, validateSlug } from "./site.slug.js";
 import type {
   CreateSiteInput,
   PatchLimitsInput,
@@ -33,7 +39,10 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
     ramGi: input.ramGi,
     diskGi: input.diskGi
   });
-  const limitRange = renderLimitRange(templates.limitRange, namespace);
+  const limitRange = renderLimitRange(templates.limitRange, namespace, {
+    cpu: input.cpu,
+    ramGi: input.ramGi
+  });
   const denyAll = renderNetworkPolicy(templates.networkPolicyDenyAll, namespace);
   const allowIngress = renderNetworkPolicy(templates.networkPolicyAllowIngress, namespace);
 
@@ -100,6 +109,13 @@ export async function updateSiteLimits(
   }
 
   const updated = await updateQuotaLimits(namespace, quotaName, patch);
+  if (patch.cpu !== undefined || patch.ramGi !== undefined) {
+    const limitRange = renderLimitRange(templates.limitRange, namespace, {
+      cpu: updated.cpu,
+      ramGi: updated.ramGi
+    });
+    await upsertLimitRange(limitRange);
+  }
 
   return {
     slug,
@@ -111,4 +127,16 @@ export async function updateSiteLimits(
       pods: 1
     }
   };
+}
+
+export async function deleteSite(slug: string): Promise<void> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespace = `tenant-${normalized}`;
+  await requireNamespace(namespace);
+  await deleteNamespace(namespace);
 }

@@ -3,7 +3,7 @@
 Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal UI shipped in this repo.
 
 ### Components
-- `apps/controller`: Fastify API that owns all Kubernetes access (namespaces, deployments, services, quotas, network policies).
+- `apps/controller`: Fastify API that owns all Kubernetes access (namespaces, quotas, PVCs, network policies).
 - `apps/panel`: Next.js UI that talks only to the controller service inside the cluster.
 - `infra/k8s/platform`: k3s-compatible manifests with placeholders (`REPLACE_*`) for images and NodePorts.
 - `infra/k8s/templates/tenant`: Baseline ResourceQuota, LimitRange, and default-deny NetworkPolicy used for every tenant namespace.
@@ -27,12 +27,18 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
    - Panel admin password (stored in `platform-secrets`)
    - Controller API key (stored in `platform-secrets`)
    - Panel URL: `http://<VPS_IP>:<PANEL_NODEPORT>`
+   - Note: `SITE_NODEPORT_START/END` are reserved for Phase 2 and currently unused by the controller.
 
 ### Security baseline
 - Controller enforces `X-API-Key` on all routes except `/health`.
 - Panel never talks directly to the Kubernetes API; it proxies via the controller service.
 - Tenants get a dedicated namespace with ResourceQuota, LimitRange, and default-deny NetworkPolicy (DNS egress only).
 - No domains or registry paths are hardcoded; everything is provided at install time.
+
+### Controller API
+- `POST /sites` with `{ domain, cpu, ramGi, diskGi }`
+- `GET /sites`
+- `PATCH /sites/:slug/limits` with `{ cpu?, ramGi?, diskGi? }`
 
 ### Future TODOs
 - Add HTTPS/ingress once domain support is enabled.

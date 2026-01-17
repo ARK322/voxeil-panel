@@ -31,19 +31,39 @@ export function renderResourceQuota(
     "pods": "1",
     "requests.cpu": String(limits.cpu),
     "requests.memory": `${limits.ramGi}Gi`,
+    "limits.cpu": String(limits.cpu),
+    "limits.memory": `${limits.ramGi}Gi`,
     "persistentvolumeclaims": "1",
     "requests.storage": `${limits.diskGi}Gi`
   };
   return quota;
 }
 
-export function renderLimitRange(template: V1LimitRange, namespace: string): V1LimitRange {
+export function renderLimitRange(
+  template: V1LimitRange,
+  namespace: string,
+  limits?: Pick<Limits, "cpu" | "ramGi">
+): V1LimitRange {
   const limitRange = clone(template);
   limitRange.metadata = {
     ...limitRange.metadata,
     name: template.metadata?.name ?? "site-limits",
     namespace
   };
+  if (limits) {
+    const next = {
+      cpu: String(limits.cpu),
+      memory: `${limits.ramGi}Gi`
+    };
+    if (!limitRange.spec) {
+      limitRange.spec = { limits: [{ type: "Container", max: next }] };
+    } else if (!limitRange.spec.limits || limitRange.spec.limits.length === 0) {
+      limitRange.spec.limits = [{ type: "Container", max: next }];
+    } else {
+      const limit = limitRange.spec.limits[0];
+      limit.max = { ...(limit.max ?? {}), ...next };
+    }
+  }
   return limitRange;
 }
 

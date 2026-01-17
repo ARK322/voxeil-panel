@@ -8,33 +8,43 @@ export async function allocateTenantNamespace(baseSlug: string): Promise<{
   namespace: string;
 }> {
   const { core } = getClients();
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const suffix = attempt === 0 ? "" : `-${attempt + 1}`;
-    const slug = `${baseSlug}${suffix}`;
-    const namespace = `${TENANT_PREFIX}${slug}`;
-    try {
-      await core.createNamespace({
-        metadata: {
-          name: namespace,
-          labels: {
-            [LABELS.managedBy]: LABELS.managedBy,
-            [LABELS.siteSlug]: slug
-          }
+  const slug = baseSlug;
+  const namespace = `${TENANT_PREFIX}${slug}`;
+  try {
+    await core.createNamespace({
+      metadata: {
+        name: namespace,
+        labels: {
+          [LABELS.managedBy]: LABELS.managedBy,
+          [LABELS.siteSlug]: slug
         }
-      });
-      return { slug, namespace };
-    } catch (error: any) {
-      if (error?.response?.statusCode === 409) continue;
-      throw error;
+      }
+    });
+    return { slug, namespace };
+  } catch (error: any) {
+    if (error?.response?.statusCode === 409) {
+      throw new HttpError(409, "Site already exists for this slug/domain.");
     }
+    throw error;
   }
-  throw new HttpError(409, "Unable to allocate a unique namespace.");
 }
 
 export async function requireNamespace(namespace: string): Promise<void> {
   const { core } = getClients();
   try {
     await core.readNamespace(namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(404, "Namespace not found.");
+    }
+    throw error;
+  }
+}
+
+export async function deleteNamespace(namespace: string): Promise<void> {
+  const { core } = getClients();
+  try {
+    await core.deleteNamespace(namespace);
   } catch (error: any) {
     if (error?.response?.statusCode === 404) {
       throw new HttpError(404, "Namespace not found.");
