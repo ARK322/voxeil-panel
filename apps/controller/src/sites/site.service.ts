@@ -5,24 +5,55 @@ import {
   renderNetworkPolicy,
   renderResourceQuota
 } from "../templates/render.js";
-import { upsertLimitRange, upsertNetworkPolicy, upsertResourceQuota } from "../k8s/apply.js";
+import {
+  upsertDeployment,
+  upsertIngress,
+  upsertLimitRange,
+  upsertNetworkPolicy,
+  upsertResourceQuota,
+  upsertService
+} from "../k8s/apply.js";
 import {
   allocateTenantNamespace,
-  deleteNamespace,
+  deleteTenantNamespace,
   listTenantNamespaces,
   requireNamespace,
   slugFromNamespace
 } from "../k8s/namespace.js";
 import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
 import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
+import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
+import { ensureGhcrPullSecret } from "../k8s/secrets.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
 import type {
   CreateSiteInput,
   PatchLimitsInput,
   CreateSiteResponse,
+  DeploySiteInput,
+  DeploySiteResponse,
   SiteListItem,
   SiteLimitsResponse
 } from "./site.dto.js";
+
+const DEFAULT_MAINTENANCE_IMAGE = "ghcr.io/OWNER/voxeil-maintenance:latest";
+const DEFAULT_MAINTENANCE_PORT = 3000;
+
+function resolveMaintenanceImage(): string {
+  const value = process.env.GHCR_MAINTENANCE_IMAGE ?? DEFAULT_MAINTENANCE_IMAGE;
+  if (!value.trim()) {
+    throw new HttpError(500, "GHCR_MAINTENANCE_IMAGE must be set.");
+  }
+  return value;
+}
+
+function resolveMaintenancePort(): number {
+  const raw = process.env.MAINTENANCE_CONTAINER_PORT;
+  const port = raw ? Number(raw) : DEFAULT_MAINTENANCE_PORT;
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new HttpError(500, "MAINTENANCE_CONTAINER_PORT must be a positive integer.");
+  }
+  return port;
+}
 
 export async function createSite(input: CreateSiteInput): Promise<CreateSiteResponse> {
   let baseSlug: string;
@@ -52,6 +83,26 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
     upsertNetworkPolicy(denyAll),
     upsertNetworkPolicy(allowIngress),
     ensurePvc(namespace, input.diskGi)
+  ]);
+
+  await ensureGhcrPullSecret(namespace, slug);
+  const host = input.domain.trim();
+  if (!host) {
+    throw new HttpError(400, "Domain is required.");
+  }
+  const maintenanceSpec = {
+    namespace,
+    slug,
+    host,
+    image: resolveMaintenanceImage(),
+    containerPort: resolveMaintenancePort(),
+    cpu: input.cpu,
+    ramGi: input.ramGi
+  };
+  await Promise.all([
+    upsertDeployment(buildDeployment(maintenanceSpec)),
+    upsertService(buildService(maintenanceSpec)),
+    upsertIngress(buildIngress(maintenanceSpec))
   ]);
 
   return {
@@ -129,7 +180,10 @@ export async function updateSiteLimits(
   };
 }
 
-export async function deleteSite(slug: string): Promise<void> {
+export async function deploySite(
+  slug: string,
+  input: DeploySiteInput
+): Promise<DeploySiteResponse> {
   let normalized: string;
   try {
     normalized = validateSlug(slug);
@@ -138,5 +192,46 @@ export async function deleteSite(slug: string): Promise<void> {
   }
   const namespace = `tenant-${normalized}`;
   await requireNamespace(namespace);
-  await deleteNamespace(namespace);
+
+  await ensureGhcrPullSecret(namespace, normalized);
+
+  const templates = await loadTenantTemplates();
+  const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
+  const quotaStatus = await readQuotaStatus(namespace, quotaName);
+  if (!quotaStatus.exists || !quotaStatus.limits) {
+    throw new HttpError(500, "Tenant limits are missing for deployment.");
+  }
+
+  const spec = {
+    namespace,
+    slug: normalized,
+    host: "",
+    image: input.image,
+    containerPort: input.containerPort,
+    cpu: quotaStatus.limits.cpu,
+    ramGi: quotaStatus.limits.ramGi
+  };
+
+  await Promise.all([
+    upsertDeployment(buildDeployment(spec)),
+    upsertService(buildService(spec))
+  ]);
+
+  return {
+    slug: normalized,
+    namespace,
+    image: input.image,
+    containerPort: input.containerPort
+  };
+}
+
+export async function deleteSite(slug: string): Promise<{ slug: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  await deleteTenantNamespace(normalized);
+  return { slug: normalized };
 }

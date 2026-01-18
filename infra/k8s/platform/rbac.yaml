@@ -21,9 +21,21 @@ rules:
   - apiGroups: [""]
     resources: ["resourcequotas"]
     verbs: ["get","list","create","patch","update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get","list","create","patch","update"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
     verbs: ["get","list","create","patch","update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get","list"]
@@ -42,4 +54,28 @@ subjects:
 roleRef:
   kind: ClusterRole
   name: controller-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: controller-platform-secrets
+  namespace: platform
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: controller-platform-secrets-binding
+  namespace: platform
+subjects:
+  - kind: ServiceAccount
+    name: controller-sa
+    namespace: platform
+roleRef:
+  kind: Role
+  name: controller-platform-secrets
   apiGroup: rbac.authorization.k8s.io

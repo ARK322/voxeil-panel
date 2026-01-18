@@ -11,6 +11,17 @@ need_cmd curl
 need_cmd sed
 need_cmd mktemp
 
+# ========= GHCR credentials =========
+if [[ -z "${GHCR_USERNAME:-}" ]]; then
+  echo "GHCR_USERNAME env var is required."
+  exit 1
+fi
+if [[ -z "${GHCR_TOKEN:-}" ]]; then
+  echo "GHCR_TOKEN env var is required."
+  exit 1
+fi
+GHCR_EMAIL="${GHCR_EMAIL:-}"
+
 # ========= inputs =========
 read -rp "Panel NodePort [30080]: " PANEL_NODEPORT
 PANEL_NODEPORT="${PANEL_NODEPORT:-30080}"
@@ -43,6 +54,8 @@ echo "  Panel NodePort: ${PANEL_NODEPORT}"
 echo "  Controller NodePort (optional): ${CONTROLLER_NODEPORT} (enabled? ${EXPOSE_CONTROLLER})"
 echo "  Site NodePort range: ${SITE_PORT_START}-${SITE_PORT_END}"
 echo "  Allowlist: ${ALLOW_IP:-<none>}"
+echo "  GHCR Username: ${GHCR_USERNAME}"
+echo "  GHCR Email: ${GHCR_EMAIL:-<none>}"
 echo ""
 
 # ========= install k3s if needed =========
@@ -90,6 +103,13 @@ echo "Applying platform manifests..."
 kubectl apply -f "${RENDER_DIR}/platform/namespace.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/rbac.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/platform-secrets.yaml"
+kubectl create secret docker-registry ghcr-pull-secret \
+  -n platform \
+  --docker-server=ghcr.io \
+  --docker-username="${GHCR_USERNAME}" \
+  --docker-password="${GHCR_TOKEN}" \
+  ${GHCR_EMAIL:+--docker-email="${GHCR_EMAIL}"} \
+  --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f "${RENDER_DIR}/platform/controller-deploy.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/controller-svc.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/panel-deploy.yaml"

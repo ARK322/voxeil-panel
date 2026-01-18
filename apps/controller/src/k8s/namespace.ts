@@ -53,6 +53,19 @@ export async function deleteNamespace(namespace: string): Promise<void> {
   }
 }
 
+export async function deleteTenantNamespace(slug: string): Promise<void> {
+  const { core } = getClients();
+  const namespace = `${TENANT_PREFIX}${slug}`;
+  try {
+    await core.deleteNamespace(namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(404, "Site not found.");
+    }
+    throw error;
+  }
+}
+
 export async function listTenantNamespaces(): Promise<string[]> {
   const { core } = getClients();
   const result = await core.listNamespace();

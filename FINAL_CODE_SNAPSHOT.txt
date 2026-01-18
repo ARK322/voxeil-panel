@@ -1,0 +1,4915 @@
+================ HEADER ================
+timestamp: 2026-01-18 21:36:06 +03:00
+branch: main
+commit: 1f46ba67942d90ef190f1ea0a60c42c70e0c380a
+
+================ TREE ==================
+.github/workflows/controller.yml
+.gitignore
+apps/controller/Dockerfile
+apps/controller/package.json
+apps/controller/package-lock.json
+apps/controller/src/http/errors.ts
+apps/controller/src/http/routes.ts
+apps/controller/src/index.ts
+apps/controller/src/k8s/apply.ts
+apps/controller/src/k8s/client.ts
+apps/controller/src/k8s/namespace.ts
+apps/controller/src/k8s/publish.ts
+apps/controller/src/k8s/pvc.ts
+apps/controller/src/k8s/quantity.ts
+apps/controller/src/k8s/quota.ts
+apps/controller/src/k8s/secrets.ts
+apps/controller/src/sites/site.dto.ts
+apps/controller/src/sites/site.service.ts
+apps/controller/src/sites/site.slug.ts
+apps/controller/src/templates/load.ts
+apps/controller/src/templates/render.ts
+apps/controller/templates/tenant/limitrange.yaml
+apps/controller/templates/tenant/networkpolicy-allow-ingress.yaml
+apps/controller/templates/tenant/networkpolicy-deny-all.yaml
+apps/controller/templates/tenant/resourcequota.yaml
+apps/controller/tsconfig.json
+apps/panel/app/actions.ts
+apps/panel/app/globals.css
+apps/panel/app/layout.tsx
+apps/panel/app/lib/controller.ts
+apps/panel/app/lib/session.ts
+apps/panel/app/login/login-actions.ts
+apps/panel/app/login/login-form.tsx
+apps/panel/app/login/page.tsx
+apps/panel/app/page.tsx
+apps/panel/Dockerfile
+apps/panel/next.config.mjs
+apps/panel/next-env.d.ts
+apps/panel/package.json
+apps/panel/package-lock.json
+apps/panel/tsconfig.json
+infra/docker/compose/.env.example
+infra/docker/compose/docker-compose.yml
+infra/k8s/docs/README.md
+infra/k8s/platform/controller-deploy.yaml
+infra/k8s/platform/controller-nodeport.yaml
+infra/k8s/platform/controller-svc.yaml
+infra/k8s/platform/namespace.yaml
+infra/k8s/platform/panel-deploy.yaml
+infra/k8s/platform/panel-svc.yaml
+infra/k8s/platform/rbac.yaml
+infra/k8s/templates/tenant/limitrange.yaml
+infra/k8s/templates/tenant/networkpolicy-allow-ingress.yaml
+infra/k8s/templates/tenant/networkpolicy-deny-all.yaml
+infra/k8s/templates/tenant/resourcequota.yaml
+install.sh
+installer/installer.sh
+README.md
+
+================ FILES ================
+----- FILE: .github/workflows/controller.yml -----
+name: build-and-push-controller
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "apps/controller/**"
+      - ".github/workflows/controller.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/controller
+          file: ./apps/controller/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/vhp-controller:latest
+            ghcr.io/${{ github.repository_owner }}/vhp-controller:${{ github.sha }}
+
+----- FILE: .gitignore -----
+node_modules
+.next
+dist
+npm-debug.log
+*.log
+
+----- FILE: apps/controller/Dockerfile -----
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json tsconfig.json ./
+COPY src ./src
+RUN npm i
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/package.json /app/package.json
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/dist /app/dist
+COPY templates /app/templates
+EXPOSE 8080
+CMD ["node", "dist/index.js"]
+
+----- FILE: apps/controller/package.json -----
+{
+    "name": "vhp-controller",
+    "private": true,
+    "type": "module",
+    "scripts": {
+      "dev": "tsx watch src/index.ts",
+      "build": "tsc -p tsconfig.json",
+      "start": "node dist/index.js"
+    },
+    "dependencies": {
+      "@kubernetes/client-node": "^0.22.3",
+      "fastify": "^4.28.1",
+      "zod": "^3.23.8"
+    },
+    "devDependencies": {
+      "@types/node": "^20.11.19",
+      "tsx": "^4.16.2",
+      "typescript": "^5.6.3"
+    }
+  }
+  
+----- FILE: apps/controller/package-lock.json -----
+{
+    "name": "vhp-controller",
+    "lockfileVersion": 3,
+    "requires": true,
+    "packages": {
+        "": {
+            "name": "vhp-controller",
+            "dependencies": {
+                "@kubernetes/client-node": "^0.22.3",
+                "fastify": "^4.28.1",
+                "zod": "^3.23.8"
+            },
+            "devDependencies": {
+                "@types/node": "^20.11.19",
+                "tsx": "^4.16.2",
+                "typescript": "^5.6.3"
+            }
+        },
+        "node_modules/@esbuild/aix-ppc64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/aix-ppc64/-/aix-ppc64-0.27.2.tgz",
+            "integrity": "sha512-GZMB+a0mOMZs4MpDbj8RJp4cw+w1WV5NYD6xzgvzUJ5Ek2jerwfO2eADyI6ExDSUED+1X8aMbegahsJi+8mgpw==",
+            "cpu": [
+                "ppc64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "aix"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/android-arm": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/android-arm/-/android-arm-0.27.2.tgz",
+            "integrity": "sha512-DVNI8jlPa7Ujbr1yjU2PfUSRtAUZPG9I1RwW4F4xFB1Imiu2on0ADiI/c3td+KmDtVKNbi+nffGDQMfcIMkwIA==",
+            "cpu": [
+                "arm"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "android"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/android-arm64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/android-arm64/-/android-arm64-0.27.2.tgz",
+            "integrity": "sha512-pvz8ZZ7ot/RBphf8fv60ljmaoydPU12VuXHImtAs0XhLLw+EXBi2BLe3OYSBslR4rryHvweW5gmkKFwTiFy6KA==",
+            "cpu": [
+                "arm64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "android"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/android-x64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/android-x64/-/android-x64-0.27.2.tgz",
+            "integrity": "sha512-z8Ank4Byh4TJJOh4wpz8g2vDy75zFL0TlZlkUkEwYXuPSgX8yzep596n6mT7905kA9uHZsf/o2OJZubl2l3M7A==",
+            "cpu": [
+                "x64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "android"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/darwin-arm64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/darwin-arm64/-/darwin-arm64-0.27.2.tgz",
+            "integrity": "sha512-davCD2Zc80nzDVRwXTcQP/28fiJbcOwvdolL0sOiOsbwBa72kegmVU0Wrh1MYrbuCL98Omp5dVhQFWRKR2ZAlg==",
+            "cpu": [
+                "arm64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "darwin"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/darwin-x64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/darwin-x64/-/darwin-x64-0.27.2.tgz",
+            "integrity": "sha512-ZxtijOmlQCBWGwbVmwOF/UCzuGIbUkqB1faQRf5akQmxRJ1ujusWsb3CVfk/9iZKr2L5SMU5wPBi1UWbvL+VQA==",
+            "cpu": [
+                "x64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "darwin"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/freebsd-arm64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/freebsd-arm64/-/freebsd-arm64-0.27.2.tgz",
+            "integrity": "sha512-lS/9CN+rgqQ9czogxlMcBMGd+l8Q3Nj1MFQwBZJyoEKI50XGxwuzznYdwcav6lpOGv5BqaZXqvBSiB/kJ5op+g==",
+            "cpu": [
+                "arm64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "freebsd"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/freebsd-x64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/freebsd-x64/-/freebsd-x64-0.27.2.tgz",
+            "integrity": "sha512-tAfqtNYb4YgPnJlEFu4c212HYjQWSO/w/h/lQaBK7RbwGIkBOuNKQI9tqWzx7Wtp7bTPaGC6MJvWI608P3wXYA==",
+            "cpu": [
+                "x64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "freebsd"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/linux-arm": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/linux-arm/-/linux-arm-0.27.2.tgz",
+            "integrity": "sha512-vWfq4GaIMP9AIe4yj1ZUW18RDhx6EPQKjwe7n8BbIecFtCQG4CfHGaHuh7fdfq+y3LIA2vGS/o9ZBGVxIDi9hw==",
+            "cpu": [
+                "arm"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "linux"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/linux-arm64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/linux-arm64/-/linux-arm64-0.27.2.tgz",
+            "integrity": "sha512-hYxN8pr66NsCCiRFkHUAsxylNOcAQaxSSkHMMjcpx0si13t1LHFphxJZUiGwojB1a/Hd5OiPIqDdXONia6bhTw==",
+            "cpu": [
+                "arm64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "linux"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/linux-ia32": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/linux-ia32/-/linux-ia32-0.27.2.tgz",
+            "integrity": "sha512-MJt5BRRSScPDwG2hLelYhAAKh9imjHK5+NE/tvnRLbIqUWa+0E9N4WNMjmp/kXXPHZGqPLxggwVhz7QP8CTR8w==",
+            "cpu": [
+                "ia32"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "linux"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/linux-loong64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/linux-loong64/-/linux-loong64-0.27.2.tgz",
+            "integrity": "sha512-lugyF1atnAT463aO6KPshVCJK5NgRnU4yb3FUumyVz+cGvZbontBgzeGFO1nF+dPueHD367a2ZXe1NtUkAjOtg==",
+            "cpu": [
+                "loong64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "linux"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/linux-mips64el": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/linux-mips64el/-/linux-mips64el-0.27.2.tgz",
+            "integrity": "sha512-nlP2I6ArEBewvJ2gjrrkESEZkB5mIoaTswuqNFRv/WYd+ATtUpe9Y09RnJvgvdag7he0OWgEZWhviS1OTOKixw==",
+            "cpu": [
+                "mips64el"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "linux"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/linux-ppc64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/linux-ppc64/-/linux-ppc64-0.27.2.tgz",
+            "integrity": "sha512-C92gnpey7tUQONqg1n6dKVbx3vphKtTHJaNG2Ok9lGwbZil6DrfyecMsp9CrmXGQJmZ7iiVXvvZH6Ml5hL6XdQ==",
+            "cpu": [
+                "ppc64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "linux"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/linux-riscv64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/linux-riscv64/-/linux-riscv64-0.27.2.tgz",
+            "integrity": "sha512-B5BOmojNtUyN8AXlK0QJyvjEZkWwy/FKvakkTDCziX95AowLZKR6aCDhG7LeF7uMCXEJqwa8Bejz5LTPYm8AvA==",
+            "cpu": [
+                "riscv64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "linux"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/linux-s390x": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/linux-s390x/-/linux-s390x-0.27.2.tgz",
+            "integrity": "sha512-p4bm9+wsPwup5Z8f4EpfN63qNagQ47Ua2znaqGH6bqLlmJ4bx97Y9JdqxgGZ6Y8xVTixUnEkoKSHcpRlDnNr5w==",
+            "cpu": [
+                "s390x"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "linux"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/linux-x64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/linux-x64/-/linux-x64-0.27.2.tgz",
+            "integrity": "sha512-uwp2Tip5aPmH+NRUwTcfLb+W32WXjpFejTIOWZFw/v7/KnpCDKG66u4DLcurQpiYTiYwQ9B7KOeMJvLCu/OvbA==",
+            "cpu": [
+                "x64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "linux"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/netbsd-arm64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/netbsd-arm64/-/netbsd-arm64-0.27.2.tgz",
+            "integrity": "sha512-Kj6DiBlwXrPsCRDeRvGAUb/LNrBASrfqAIok+xB0LxK8CHqxZ037viF13ugfsIpePH93mX7xfJp97cyDuTZ3cw==",
+            "cpu": [
+                "arm64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "netbsd"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/netbsd-x64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/netbsd-x64/-/netbsd-x64-0.27.2.tgz",
+            "integrity": "sha512-HwGDZ0VLVBY3Y+Nw0JexZy9o/nUAWq9MlV7cahpaXKW6TOzfVno3y3/M8Ga8u8Yr7GldLOov27xiCnqRZf0tCA==",
+            "cpu": [
+                "x64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "netbsd"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/openbsd-arm64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/openbsd-arm64/-/openbsd-arm64-0.27.2.tgz",
+            "integrity": "sha512-DNIHH2BPQ5551A7oSHD0CKbwIA/Ox7+78/AWkbS5QoRzaqlev2uFayfSxq68EkonB+IKjiuxBFoV8ESJy8bOHA==",
+            "cpu": [
+                "arm64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "openbsd"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/openbsd-x64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/openbsd-x64/-/openbsd-x64-0.27.2.tgz",
+            "integrity": "sha512-/it7w9Nb7+0KFIzjalNJVR5bOzA9Vay+yIPLVHfIQYG/j+j9VTH84aNB8ExGKPU4AzfaEvN9/V4HV+F+vo8OEg==",
+            "cpu": [
+                "x64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "openbsd"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/openharmony-arm64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/openharmony-arm64/-/openharmony-arm64-0.27.2.tgz",
+            "integrity": "sha512-LRBbCmiU51IXfeXk59csuX/aSaToeG7w48nMwA6049Y4J4+VbWALAuXcs+qcD04rHDuSCSRKdmY63sruDS5qag==",
+            "cpu": [
+                "arm64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "openharmony"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/sunos-x64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/sunos-x64/-/sunos-x64-0.27.2.tgz",
+            "integrity": "sha512-kMtx1yqJHTmqaqHPAzKCAkDaKsffmXkPHThSfRwZGyuqyIeBvf08KSsYXl+abf5HDAPMJIPnbBfXvP2ZC2TfHg==",
+            "cpu": [
+                "x64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "sunos"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/win32-arm64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/win32-arm64/-/win32-arm64-0.27.2.tgz",
+            "integrity": "sha512-Yaf78O/B3Kkh+nKABUF++bvJv5Ijoy9AN1ww904rOXZFLWVc5OLOfL56W+C8F9xn5JQZa3UX6m+IktJnIb1Jjg==",
+            "cpu": [
+                "arm64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "win32"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/win32-ia32": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/win32-ia32/-/win32-ia32-0.27.2.tgz",
+            "integrity": "sha512-Iuws0kxo4yusk7sw70Xa2E2imZU5HoixzxfGCdxwBdhiDgt9vX9VUCBhqcwY7/uh//78A1hMkkROMJq9l27oLQ==",
+            "cpu": [
+                "ia32"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "win32"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@esbuild/win32-x64": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/@esbuild/win32-x64/-/win32-x64-0.27.2.tgz",
+            "integrity": "sha512-sRdU18mcKf7F+YgheI/zGf5alZatMUTKj/jNS6l744f9u3WFu4v7twcUI9vu4mknF4Y9aDlblIie0IM+5xxaqQ==",
+            "cpu": [
+                "x64"
+            ],
+            "dev": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "win32"
+            ],
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/@fastify/ajv-compiler": {
+            "version": "3.6.0",
+            "resolved": "https://registry.npmjs.org/@fastify/ajv-compiler/-/ajv-compiler-3.6.0.tgz",
+            "integrity": "sha512-LwdXQJjmMD+GwLOkP7TVC68qa+pSSogeWWmznRJ/coyTcfe9qA05AHFSe1eZFwK6q+xVRpChnvFUkf1iYaSZsQ==",
+            "license": "MIT",
+            "dependencies": {
+                "ajv": "^8.11.0",
+                "ajv-formats": "^2.1.1",
+                "fast-uri": "^2.0.0"
+            }
+        },
+        "node_modules/@fastify/error": {
+            "version": "3.4.1",
+            "resolved": "https://registry.npmjs.org/@fastify/error/-/error-3.4.1.tgz",
+            "integrity": "sha512-wWSvph+29GR783IhmvdwWnN4bUxTD01Vm5Xad4i7i1VuAOItLvbPAb69sb0IQ2N57yprvhNIwAP5B6xfKTmjmQ==",
+            "license": "MIT"
+        },
+        "node_modules/@fastify/fast-json-stringify-compiler": {
+            "version": "4.3.0",
+            "resolved": "https://registry.npmjs.org/@fastify/fast-json-stringify-compiler/-/fast-json-stringify-compiler-4.3.0.tgz",
+            "integrity": "sha512-aZAXGYo6m22Fk1zZzEUKBvut/CIIQe/BapEORnxiD5Qr0kPHqqI69NtEMCme74h+at72sPhbkb4ZrLd1W3KRLA==",
+            "license": "MIT",
+            "dependencies": {
+                "fast-json-stringify": "^5.7.0"
+            }
+        },
+        "node_modules/@fastify/merge-json-schemas": {
+            "version": "0.1.1",
+            "resolved": "https://registry.npmjs.org/@fastify/merge-json-schemas/-/merge-json-schemas-0.1.1.tgz",
+            "integrity": "sha512-fERDVz7topgNjtXsJTTW1JKLy0rhuLRcquYqNR9rF7OcVpCa2OVW49ZPDIhaRRCaUuvVxI+N416xUoF76HNSXA==",
+            "license": "MIT",
+            "dependencies": {
+                "fast-deep-equal": "^3.1.3"
+            }
+        },
+        "node_modules/@isaacs/fs-minipass": {
+            "version": "4.0.1",
+            "resolved": "https://registry.npmjs.org/@isaacs/fs-minipass/-/fs-minipass-4.0.1.tgz",
+            "integrity": "sha512-wgm9Ehl2jpeqP3zw/7mo3kRHFp5MEDhqAdwy1fTGkHAwnkGOVsgpvQhL8B5n1qlb01jV3n/bI0ZfZp5lWA1k4w==",
+            "license": "ISC",
+            "dependencies": {
+                "minipass": "^7.0.4"
+            },
+            "engines": {
+                "node": ">=18.0.0"
+            }
+        },
+        "node_modules/@jsep-plugin/assignment": {
+            "version": "1.3.0",
+            "resolved": "https://registry.npmjs.org/@jsep-plugin/assignment/-/assignment-1.3.0.tgz",
+            "integrity": "sha512-VVgV+CXrhbMI3aSusQyclHkenWSAm95WaiKrMxRFam3JSUiIaQjoMIw2sEs/OX4XifnqeQUN4DYbJjlA8EfktQ==",
+            "license": "MIT",
+            "engines": {
+                "node": ">= 10.16.0"
+            },
+            "peerDependencies": {
+                "jsep": "^0.4.0||^1.0.0"
+            }
+        },
+        "node_modules/@jsep-plugin/regex": {
+            "version": "1.0.4",
+            "resolved": "https://registry.npmjs.org/@jsep-plugin/regex/-/regex-1.0.4.tgz",
+            "integrity": "sha512-q7qL4Mgjs1vByCaTnDFcBnV9HS7GVPJX5vyVoCgZHNSC9rjwIlmbXG5sUuorR5ndfHAIlJ8pVStxvjXHbNvtUg==",
+            "license": "MIT",
+            "engines": {
+                "node": ">= 10.16.0"
+            },
+            "peerDependencies": {
+                "jsep": "^0.4.0||^1.0.0"
+            }
+        },
+        "node_modules/@kubernetes/client-node": {
+            "version": "0.22.3",
+            "resolved": "https://registry.npmjs.org/@kubernetes/client-node/-/client-node-0.22.3.tgz",
+            "integrity": "sha512-dG8uah3+HDJLpJEESshLRZlAZ4PgDeV9mZXT0u1g7oy4KMRzdZ7n5g0JEIlL6QhK51/2ztcIqURAnjfjJt6Z+g==",
+            "license": "Apache-2.0",
+            "dependencies": {
+                "byline": "^5.0.0",
+                "isomorphic-ws": "^5.0.0",
+                "js-yaml": "^4.1.0",
+                "jsonpath-plus": "^10.2.0",
+                "request": "^2.88.0",
+                "rfc4648": "^1.3.0",
+                "stream-buffers": "^3.0.2",
+                "tar": "^7.0.0",
+                "tslib": "^2.4.1",
+                "ws": "^8.18.0"
+            },
+            "optionalDependencies": {
+                "openid-client": "^6.1.3"
+            }
+        },
+        "node_modules/@pinojs/redact": {
+            "version": "0.4.0",
+            "resolved": "https://registry.npmjs.org/@pinojs/redact/-/redact-0.4.0.tgz",
+            "integrity": "sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==",
+            "license": "MIT"
+        },
+        "node_modules/@types/node": {
+            "version": "20.19.30",
+            "resolved": "https://registry.npmjs.org/@types/node/-/node-20.19.30.tgz",
+            "integrity": "sha512-WJtwWJu7UdlvzEAUm484QNg5eAoq5QR08KDNx7g45Usrs2NtOPiX8ugDqmKdXkyL03rBqU5dYNYVQetEpBHq2g==",
+            "dev": true,
+            "license": "MIT",
+            "dependencies": {
+                "undici-types": "~6.21.0"
+            }
+        },
+        "node_modules/abstract-logging": {
+            "version": "2.0.1",
+            "resolved": "https://registry.npmjs.org/abstract-logging/-/abstract-logging-2.0.1.tgz",
+            "integrity": "sha512-2BjRTZxTPvheOvGbBslFSYOUkr+SjPtOnrLP33f+VIWLzezQpZcqVg7ja3L4dBXmzzgwT+a029jRx5PCi3JuiA==",
+            "license": "MIT"
+        },
+        "node_modules/ajv": {
+            "version": "8.17.1",
+            "resolved": "https://registry.npmjs.org/ajv/-/ajv-8.17.1.tgz",
+            "integrity": "sha512-B/gBuNg5SiMTrPkC+A2+cW0RszwxYmn6VYxB/inlBStS5nx6xHIt/ehKRhIMhqusl7a8LjQoZnjCs5vhwxOQ1g==",
+            "license": "MIT",
+            "dependencies": {
+                "fast-deep-equal": "^3.1.3",
+                "fast-uri": "^3.0.1",
+                "json-schema-traverse": "^1.0.0",
+                "require-from-string": "^2.0.2"
+            },
+            "funding": {
+                "type": "github",
+                "url": "https://github.com/sponsors/epoberezkin"
+            }
+        },
+        "node_modules/ajv-formats": {
+            "version": "2.1.1",
+            "resolved": "https://registry.npmjs.org/ajv-formats/-/ajv-formats-2.1.1.tgz",
+            "integrity": "sha512-Wx0Kx52hxE7C18hkMEggYlEifqWZtYaRgouJor+WMdPnQyEK13vgEWyVNup7SoeeoLMsr4kf5h6dOW11I15MUA==",
+            "license": "MIT",
+            "dependencies": {
+                "ajv": "^8.0.0"
+            },
+            "peerDependencies": {
+                "ajv": "^8.0.0"
+            },
+            "peerDependenciesMeta": {
+                "ajv": {
+                    "optional": true
+                }
+            }
+        },
+        "node_modules/ajv/node_modules/fast-uri": {
+            "version": "3.1.0",
+            "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-3.1.0.tgz",
+            "integrity": "sha512-iPeeDKJSWf4IEOasVVrknXpaBV0IApz/gp7S2bb7Z4Lljbl2MGJRqInZiUrQwV16cpzw/D3S5j5Julj/gT52AA==",
+            "funding": [
+                {
+                    "type": "github",
+                    "url": "https://github.com/sponsors/fastify"
+                },
+                {
+                    "type": "opencollective",
+                    "url": "https://opencollective.com/fastify"
+                }
+            ],
+            "license": "BSD-3-Clause"
+        },
+        "node_modules/argparse": {
+            "version": "2.0.1",
+            "resolved": "https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz",
+            "integrity": "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==",
+            "license": "Python-2.0"
+        },
+        "node_modules/asn1": {
+            "version": "0.2.6",
+            "resolved": "https://registry.npmjs.org/asn1/-/asn1-0.2.6.tgz",
+            "integrity": "sha512-ix/FxPn0MDjeyJ7i/yoHGFt/EX6LyNbxSEhPPXODPL+KB0VPk86UYfL0lMdy+KCnv+fmvIzySwaK5COwqVbWTQ==",
+            "license": "MIT",
+            "dependencies": {
+                "safer-buffer": "~2.1.0"
+            }
+        },
+        "node_modules/assert-plus": {
+            "version": "1.0.0",
+            "resolved": "https://registry.npmjs.org/assert-plus/-/assert-plus-1.0.0.tgz",
+            "integrity": "sha512-NfJ4UzBCcQGLDlQq7nHxH+tv3kyZ0hHQqF5BO6J7tNJeP5do1llPr8dZ8zHonfhAu0PHAdMkSo+8o0wxg9lZWw==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=0.8"
+            }
+        },
+        "node_modules/asynckit": {
+            "version": "0.4.0",
+            "resolved": "https://registry.npmjs.org/asynckit/-/asynckit-0.4.0.tgz",
+            "integrity": "sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==",
+            "license": "MIT"
+        },
+        "node_modules/atomic-sleep": {
+            "version": "1.0.0",
+            "resolved": "https://registry.npmjs.org/atomic-sleep/-/atomic-sleep-1.0.0.tgz",
+            "integrity": "sha512-kNOjDqAh7px0XWNI+4QbzoiR/nTkHAWNud2uvnJquD1/x5a7EQZMJT0AczqK0Qn67oY/TTQ1LbUKajZpp3I9tQ==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=8.0.0"
+            }
+        },
+        "node_modules/avvio": {
+            "version": "8.4.0",
+            "resolved": "https://registry.npmjs.org/avvio/-/avvio-8.4.0.tgz",
+            "integrity": "sha512-CDSwaxINFy59iNwhYnkvALBwZiTydGkOecZyPkqBpABYR1KqGEsET0VOOYDwtleZSUIdeY36DC2bSZ24CO1igA==",
+            "license": "MIT",
+            "dependencies": {
+                "@fastify/error": "^3.3.0",
+                "fastq": "^1.17.1"
+            }
+        },
+        "node_modules/aws-sign2": {
+            "version": "0.7.0",
+            "resolved": "https://registry.npmjs.org/aws-sign2/-/aws-sign2-0.7.0.tgz",
+            "integrity": "sha512-08kcGqnYf/YmjoRhfxyu+CLxBjUtHLXLXX/vUfx9l2LYzG3c1m61nrpyFUZI6zeS+Li/wWMMidD9KgrqtGq3mA==",
+            "license": "Apache-2.0",
+            "engines": {
+                "node": "*"
+            }
+        },
+        "node_modules/aws4": {
+            "version": "1.13.2",
+            "resolved": "https://registry.npmjs.org/aws4/-/aws4-1.13.2.tgz",
+            "integrity": "sha512-lHe62zvbTB5eEABUVi/AwVh0ZKY9rMMDhmm+eeyuuUQbQ3+J+fONVQOZyj+DdrvD4BY33uYniyRJ4UJIaSKAfw==",
+            "license": "MIT"
+        },
+        "node_modules/bcrypt-pbkdf": {
+            "version": "1.0.2",
+            "resolved": "https://registry.npmjs.org/bcrypt-pbkdf/-/bcrypt-pbkdf-1.0.2.tgz",
+            "integrity": "sha512-qeFIXtP4MSoi6NLqO12WfqARWWuCKi2Rn/9hJLEmtB5yTNr9DqFWkJRCf2qShWzPeAMRnOgCrq0sg/KLv5ES9w==",
+            "license": "BSD-3-Clause",
+            "dependencies": {
+                "tweetnacl": "^0.14.3"
+            }
+        },
+        "node_modules/byline": {
+            "version": "5.0.0",
+            "resolved": "https://registry.npmjs.org/byline/-/byline-5.0.0.tgz",
+            "integrity": "sha512-s6webAy+R4SR8XVuJWt2V2rGvhnrhxN+9S15GNuTK3wKPOXFF6RNc+8ug2XhH+2s4f+uudG4kUVYmYOQWL2g0Q==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=0.10.0"
+            }
+        },
+        "node_modules/caseless": {
+            "version": "0.12.0",
+            "resolved": "https://registry.npmjs.org/caseless/-/caseless-0.12.0.tgz",
+            "integrity": "sha512-4tYFyifaFfGacoiObjJegolkwSU4xQNGbVgUiNYVUxbQ2x2lUsFvY4hVgVzGiIe6WLOPqycWXA40l+PWsxthUw==",
+            "license": "Apache-2.0"
+        },
+        "node_modules/chownr": {
+            "version": "3.0.0",
+            "resolved": "https://registry.npmjs.org/chownr/-/chownr-3.0.0.tgz",
+            "integrity": "sha512-+IxzY9BZOQd/XuYPRmrvEVjF/nqj5kgT4kEq7VofrDoM1MxoRjEWkrCC3EtLi59TVawxTAn+orJwFQcrqEN1+g==",
+            "license": "BlueOak-1.0.0",
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/combined-stream": {
+            "version": "1.0.8",
+            "resolved": "https://registry.npmjs.org/combined-stream/-/combined-stream-1.0.8.tgz",
+            "integrity": "sha512-FQN4MRfuJeHf7cBbBMJFXhKSDq+2kAArBlmRBvcvFE5BB1HZKXtSFASDhdlz9zOYwxh8lDdnvmMOe/+5cdoEdg==",
+            "license": "MIT",
+            "dependencies": {
+                "delayed-stream": "~1.0.0"
+            },
+            "engines": {
+                "node": ">= 0.8"
+            }
+        },
+        "node_modules/cookie": {
+            "version": "0.7.2",
+            "resolved": "https://registry.npmjs.org/cookie/-/cookie-0.7.2.tgz",
+            "integrity": "sha512-yki5XnKuf750l50uGTllt6kKILY4nQ1eNIQatoXEByZ5dWgnKqbnqmTrBE5B4N7lrMJKQ2ytWMiTO2o0v6Ew/w==",
+            "license": "MIT",
+            "engines": {
+                "node": ">= 0.6"
+            }
+        },
+        "node_modules/core-util-is": {
+            "version": "1.0.2",
+            "resolved": "https://registry.npmjs.org/core-util-is/-/core-util-is-1.0.2.tgz",
+            "integrity": "sha512-3lqz5YjWTYnW6dlDa5TLaTCcShfar1e40rmcJVwCBJC6mWlFuj0eCHIElmG1g5kyuJ/GD+8Wn4FFCcz4gJPfaQ==",
+            "license": "MIT"
+        },
+        "node_modules/dashdash": {
+            "version": "1.14.1",
+            "resolved": "https://registry.npmjs.org/dashdash/-/dashdash-1.14.1.tgz",
+            "integrity": "sha512-jRFi8UDGo6j+odZiEpjazZaWqEal3w/basFjQHQEwVtZJGDpxbH1MeYluwCS8Xq5wmLJooDlMgvVarmWfGM44g==",
+            "license": "MIT",
+            "dependencies": {
+                "assert-plus": "^1.0.0"
+            },
+            "engines": {
+                "node": ">=0.10"
+            }
+        },
+        "node_modules/delayed-stream": {
+            "version": "1.0.0",
+            "resolved": "https://registry.npmjs.org/delayed-stream/-/delayed-stream-1.0.0.tgz",
+            "integrity": "sha512-ZySD7Nf91aLB0RxL4KGrKHBXl7Eds1DAmEdcoVawXnLD7SDhpNgtuII2aAkg7a7QS41jxPSZ17p4VdGnMHk3MQ==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=0.4.0"
+            }
+        },
+        "node_modules/ecc-jsbn": {
+            "version": "0.1.2",
+            "resolved": "https://registry.npmjs.org/ecc-jsbn/-/ecc-jsbn-0.1.2.tgz",
+            "integrity": "sha512-eh9O+hwRHNbG4BLTjEl3nw044CkGm5X6LoaCf7LPp7UU8Qrt47JYNi6nPX8xjW97TKGKm1ouctg0QSpZe9qrnw==",
+            "license": "MIT",
+            "dependencies": {
+                "jsbn": "~0.1.0",
+                "safer-buffer": "^2.1.0"
+            }
+        },
+        "node_modules/esbuild": {
+            "version": "0.27.2",
+            "resolved": "https://registry.npmjs.org/esbuild/-/esbuild-0.27.2.tgz",
+            "integrity": "sha512-HyNQImnsOC7X9PMNaCIeAm4ISCQXs5a5YasTXVliKv4uuBo1dKrG0A+uQS8M5eXjVMnLg3WgXaKvprHlFJQffw==",
+            "dev": true,
+            "hasInstallScript": true,
+            "license": "MIT",
+            "bin": {
+                "esbuild": "bin/esbuild"
+            },
+            "engines": {
+                "node": ">=18"
+            },
+            "optionalDependencies": {
+                "@esbuild/aix-ppc64": "0.27.2",
+                "@esbuild/android-arm": "0.27.2",
+                "@esbuild/android-arm64": "0.27.2",
+                "@esbuild/android-x64": "0.27.2",
+                "@esbuild/darwin-arm64": "0.27.2",
+                "@esbuild/darwin-x64": "0.27.2",
+                "@esbuild/freebsd-arm64": "0.27.2",
+                "@esbuild/freebsd-x64": "0.27.2",
+                "@esbuild/linux-arm": "0.27.2",
+                "@esbuild/linux-arm64": "0.27.2",
+                "@esbuild/linux-ia32": "0.27.2",
+                "@esbuild/linux-loong64": "0.27.2",
+                "@esbuild/linux-mips64el": "0.27.2",
+                "@esbuild/linux-ppc64": "0.27.2",
+                "@esbuild/linux-riscv64": "0.27.2",
+                "@esbuild/linux-s390x": "0.27.2",
+                "@esbuild/linux-x64": "0.27.2",
+                "@esbuild/netbsd-arm64": "0.27.2",
+                "@esbuild/netbsd-x64": "0.27.2",
+                "@esbuild/openbsd-arm64": "0.27.2",
+                "@esbuild/openbsd-x64": "0.27.2",
+                "@esbuild/openharmony-arm64": "0.27.2",
+                "@esbuild/sunos-x64": "0.27.2",
+                "@esbuild/win32-arm64": "0.27.2",
+                "@esbuild/win32-ia32": "0.27.2",
+                "@esbuild/win32-x64": "0.27.2"
+            }
+        },
+        "node_modules/extend": {
+            "version": "3.0.2",
+            "resolved": "https://registry.npmjs.org/extend/-/extend-3.0.2.tgz",
+            "integrity": "sha512-fjquC59cD7CyW6urNXK0FBufkZcoiGG80wTuPujX590cB5Ttln20E2UB4S/WARVqhXffZl2LNgS+gQdPIIim/g==",
+            "license": "MIT"
+        },
+        "node_modules/extsprintf": {
+            "version": "1.3.0",
+            "resolved": "https://registry.npmjs.org/extsprintf/-/extsprintf-1.3.0.tgz",
+            "integrity": "sha512-11Ndz7Nv+mvAC1j0ktTa7fAb0vLyGGX+rMHNBYQviQDGU0Hw7lhctJANqbPhu9nV9/izT/IntTgZ7Im/9LJs9g==",
+            "engines": [
+                "node >=0.6.0"
+            ],
+            "license": "MIT"
+        },
+        "node_modules/fast-content-type-parse": {
+            "version": "1.1.0",
+            "resolved": "https://registry.npmjs.org/fast-content-type-parse/-/fast-content-type-parse-1.1.0.tgz",
+            "integrity": "sha512-fBHHqSTFLVnR61C+gltJuE5GkVQMV0S2nqUO8TJ+5Z3qAKG8vAx4FKai1s5jq/inV1+sREynIWSuQ6HgoSXpDQ==",
+            "license": "MIT"
+        },
+        "node_modules/fast-decode-uri-component": {
+            "version": "1.0.1",
+            "resolved": "https://registry.npmjs.org/fast-decode-uri-component/-/fast-decode-uri-component-1.0.1.tgz",
+            "integrity": "sha512-WKgKWg5eUxvRZGwW8FvfbaH7AXSh2cL+3j5fMGzUMCxWBJ3dV3a7Wz8y2f/uQ0e3B6WmodD3oS54jTQ9HVTIIg==",
+            "license": "MIT"
+        },
+        "node_modules/fast-deep-equal": {
+            "version": "3.1.3",
+            "resolved": "https://registry.npmjs.org/fast-deep-equal/-/fast-deep-equal-3.1.3.tgz",
+            "integrity": "sha512-f3qQ9oQy9j2AhBe/H9VC91wLmKBCCU/gDOnKNAYG5hswO7BLKj09Hc5HYNz9cGI++xlpDCIgDaitVs03ATR84Q==",
+            "license": "MIT"
+        },
+        "node_modules/fast-json-stable-stringify": {
+            "version": "2.1.0",
+            "resolved": "https://registry.npmjs.org/fast-json-stable-stringify/-/fast-json-stable-stringify-2.1.0.tgz",
+            "integrity": "sha512-lhd/wF+Lk98HZoTCtlVraHtfh5XYijIjalXck7saUtuanSDyLMxnHhSXEDJqHxD7msR8D0uCmqlkwjCV8xvwHw==",
+            "license": "MIT"
+        },
+        "node_modules/fast-json-stringify": {
+            "version": "5.16.1",
+            "resolved": "https://registry.npmjs.org/fast-json-stringify/-/fast-json-stringify-5.16.1.tgz",
+            "integrity": "sha512-KAdnLvy1yu/XrRtP+LJnxbBGrhN+xXu+gt3EUvZhYGKCr3lFHq/7UFJHHFgmJKoqlh6B40bZLEv7w46B0mqn1g==",
+            "license": "MIT",
+            "dependencies": {
+                "@fastify/merge-json-schemas": "^0.1.0",
+                "ajv": "^8.10.0",
+                "ajv-formats": "^3.0.1",
+                "fast-deep-equal": "^3.1.3",
+                "fast-uri": "^2.1.0",
+                "json-schema-ref-resolver": "^1.0.1",
+                "rfdc": "^1.2.0"
+            }
+        },
+        "node_modules/fast-json-stringify/node_modules/ajv-formats": {
+            "version": "3.0.1",
+            "resolved": "https://registry.npmjs.org/ajv-formats/-/ajv-formats-3.0.1.tgz",
+            "integrity": "sha512-8iUql50EUR+uUcdRQ3HDqa6EVyo3docL8g5WJ3FNcWmu62IbkGUue/pEyLBW8VGKKucTPgqeks4fIU1DA4yowQ==",
+            "license": "MIT",
+            "dependencies": {
+                "ajv": "^8.0.0"
+            },
+            "peerDependencies": {
+                "ajv": "^8.0.0"
+            },
+            "peerDependenciesMeta": {
+                "ajv": {
+                    "optional": true
+                }
+            }
+        },
+        "node_modules/fast-querystring": {
+            "version": "1.1.2",
+            "resolved": "https://registry.npmjs.org/fast-querystring/-/fast-querystring-1.1.2.tgz",
+            "integrity": "sha512-g6KuKWmFXc0fID8WWH0jit4g0AGBoJhCkJMb1RmbsSEUNvQ+ZC8D6CUZ+GtF8nMzSPXnhiePyyqqipzNNEnHjg==",
+            "license": "MIT",
+            "dependencies": {
+                "fast-decode-uri-component": "^1.0.1"
+            }
+        },
+        "node_modules/fast-uri": {
+            "version": "2.4.0",
+            "resolved": "https://registry.npmjs.org/fast-uri/-/fast-uri-2.4.0.tgz",
+            "integrity": "sha512-ypuAmmMKInk5q7XcepxlnUWDLWv4GFtaJqAzWKqn62IpQ3pejtr5dTVbt3vwqVaMKmkNR55sTT+CqUKIaT21BA==",
+            "license": "MIT"
+        },
+        "node_modules/fastify": {
+            "version": "4.29.1",
+            "resolved": "https://registry.npmjs.org/fastify/-/fastify-4.29.1.tgz",
+            "integrity": "sha512-m2kMNHIG92tSNWv+Z3UeTR9AWLLuo7KctC7mlFPtMEVrfjIhmQhkQnT9v15qA/BfVq3vvj134Y0jl9SBje3jXQ==",
+            "funding": [
+                {
+                    "type": "github",
+                    "url": "https://github.com/sponsors/fastify"
+                },
+                {
+                    "type": "opencollective",
+                    "url": "https://opencollective.com/fastify"
+                }
+            ],
+            "license": "MIT",
+            "dependencies": {
+                "@fastify/ajv-compiler": "^3.5.0",
+                "@fastify/error": "^3.4.0",
+                "@fastify/fast-json-stringify-compiler": "^4.3.0",
+                "abstract-logging": "^2.0.1",
+                "avvio": "^8.3.0",
+                "fast-content-type-parse": "^1.1.0",
+                "fast-json-stringify": "^5.8.0",
+                "find-my-way": "^8.0.0",
+                "light-my-request": "^5.11.0",
+                "pino": "^9.0.0",
+                "process-warning": "^3.0.0",
+                "proxy-addr": "^2.0.7",
+                "rfdc": "^1.3.0",
+                "secure-json-parse": "^2.7.0",
+                "semver": "^7.5.4",
+                "toad-cache": "^3.3.0"
+            }
+        },
+        "node_modules/fastq": {
+            "version": "1.20.1",
+            "resolved": "https://registry.npmjs.org/fastq/-/fastq-1.20.1.tgz",
+            "integrity": "sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==",
+            "license": "ISC",
+            "dependencies": {
+                "reusify": "^1.0.4"
+            }
+        },
+        "node_modules/find-my-way": {
+            "version": "8.2.2",
+            "resolved": "https://registry.npmjs.org/find-my-way/-/find-my-way-8.2.2.tgz",
+            "integrity": "sha512-Dobi7gcTEq8yszimcfp/R7+owiT4WncAJ7VTTgFH1jYJ5GaG1FbhjwDG820hptN0QDFvzVY3RfCzdInvGPGzjA==",
+            "license": "MIT",
+            "dependencies": {
+                "fast-deep-equal": "^3.1.3",
+                "fast-querystring": "^1.0.0",
+                "safe-regex2": "^3.1.0"
+            },
+            "engines": {
+                "node": ">=14"
+            }
+        },
+        "node_modules/forever-agent": {
+            "version": "0.6.1",
+            "resolved": "https://registry.npmjs.org/forever-agent/-/forever-agent-0.6.1.tgz",
+            "integrity": "sha512-j0KLYPhm6zeac4lz3oJ3o65qvgQCcPubiyotZrXqEaG4hNagNYO8qdlUrX5vwqv9ohqeT/Z3j6+yW067yWWdUw==",
+            "license": "Apache-2.0",
+            "engines": {
+                "node": "*"
+            }
+        },
+        "node_modules/form-data": {
+            "version": "2.3.3",
+            "resolved": "https://registry.npmjs.org/form-data/-/form-data-2.3.3.tgz",
+            "integrity": "sha512-1lLKB2Mu3aGP1Q/2eCOx0fNbRMe7XdwktwOruhfqqd0rIJWwN4Dh+E3hrPSlDCXnSR7UtZ1N38rVXm+6+MEhJQ==",
+            "license": "MIT",
+            "dependencies": {
+                "asynckit": "^0.4.0",
+                "combined-stream": "^1.0.6",
+                "mime-types": "^2.1.12"
+            },
+            "engines": {
+                "node": ">= 0.12"
+            }
+        },
+        "node_modules/forwarded": {
+            "version": "0.2.0",
+            "resolved": "https://registry.npmjs.org/forwarded/-/forwarded-0.2.0.tgz",
+            "integrity": "sha512-buRG0fpBtRHSTCOASe6hD258tEubFoRLb4ZNA6NxMVHNw2gOcwHo9wyablzMzOA5z9xA9L1KNjk/Nt6MT9aYow==",
+            "license": "MIT",
+            "engines": {
+                "node": ">= 0.6"
+            }
+        },
+        "node_modules/fsevents": {
+            "version": "2.3.3",
+            "resolved": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
+            "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
+            "dev": true,
+            "hasInstallScript": true,
+            "license": "MIT",
+            "optional": true,
+            "os": [
+                "darwin"
+            ],
+            "engines": {
+                "node": "^8.16.0 || ^10.6.0 || >=11.0.0"
+            }
+        },
+        "node_modules/get-tsconfig": {
+            "version": "4.13.0",
+            "resolved": "https://registry.npmjs.org/get-tsconfig/-/get-tsconfig-4.13.0.tgz",
+            "integrity": "sha512-1VKTZJCwBrvbd+Wn3AOgQP/2Av+TfTCOlE4AcRJE72W1ksZXbAx8PPBR9RzgTeSPzlPMHrbANMH3LbltH73wxQ==",
+            "dev": true,
+            "license": "MIT",
+            "dependencies": {
+                "resolve-pkg-maps": "^1.0.0"
+            },
+            "funding": {
+                "url": "https://github.com/privatenumber/get-tsconfig?sponsor=1"
+            }
+        },
+        "node_modules/getpass": {
+            "version": "0.1.7",
+            "resolved": "https://registry.npmjs.org/getpass/-/getpass-0.1.7.tgz",
+            "integrity": "sha512-0fzj9JxOLfJ+XGLhR8ze3unN0KZCgZwiSSDz168VERjK8Wl8kVSdcu2kspd4s4wtAa1y/qrVRiAA0WclVsu0ng==",
+            "license": "MIT",
+            "dependencies": {
+                "assert-plus": "^1.0.0"
+            }
+        },
+        "node_modules/har-schema": {
+            "version": "2.0.0",
+            "resolved": "https://registry.npmjs.org/har-schema/-/har-schema-2.0.0.tgz",
+            "integrity": "sha512-Oqluz6zhGX8cyRaTQlFMPw80bSJVG2x/cFb8ZPhUILGgHka9SsokCCOQgpveePerqidZOrT14ipqfJb7ILcW5Q==",
+            "license": "ISC",
+            "engines": {
+                "node": ">=4"
+            }
+        },
+        "node_modules/har-validator": {
+            "version": "5.1.5",
+            "resolved": "https://registry.npmjs.org/har-validator/-/har-validator-5.1.5.tgz",
+            "integrity": "sha512-nmT2T0lljbxdQZfspsno9hgrG3Uir6Ks5afism62poxqBM6sDnMEuPmzTq8XN0OEwqKLLdh1jQI3qyE66Nzb3w==",
+            "deprecated": "this library is no longer supported",
+            "license": "MIT",
+            "dependencies": {
+                "ajv": "^6.12.3",
+                "har-schema": "^2.0.0"
+            },
+            "engines": {
+                "node": ">=6"
+            }
+        },
+        "node_modules/har-validator/node_modules/ajv": {
+            "version": "6.12.6",
+            "resolved": "https://registry.npmjs.org/ajv/-/ajv-6.12.6.tgz",
+            "integrity": "sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==",
+            "license": "MIT",
+            "dependencies": {
+                "fast-deep-equal": "^3.1.1",
+                "fast-json-stable-stringify": "^2.0.0",
+                "json-schema-traverse": "^0.4.1",
+                "uri-js": "^4.2.2"
+            },
+            "funding": {
+                "type": "github",
+                "url": "https://github.com/sponsors/epoberezkin"
+            }
+        },
+        "node_modules/har-validator/node_modules/json-schema-traverse": {
+            "version": "0.4.1",
+            "resolved": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-0.4.1.tgz",
+            "integrity": "sha512-xbbCH5dCYU5T8LcEhhuh7HJ88HXuW3qsI3Y0zOZFKfZEHcpWiHU/Jxzk629Brsab/mMiHQti9wMP+845RPe3Vg==",
+            "license": "MIT"
+        },
+        "node_modules/http-signature": {
+            "version": "1.2.0",
+            "resolved": "https://registry.npmjs.org/http-signature/-/http-signature-1.2.0.tgz",
+            "integrity": "sha512-CAbnr6Rz4CYQkLYUtSNXxQPUH2gK8f3iWexVlsnMeD+GjlsQ0Xsy1cOX+mN3dtxYomRy21CiOzU8Uhw6OwncEQ==",
+            "license": "MIT",
+            "dependencies": {
+                "assert-plus": "^1.0.0",
+                "jsprim": "^1.2.2",
+                "sshpk": "^1.7.0"
+            },
+            "engines": {
+                "node": ">=0.8",
+                "npm": ">=1.3.7"
+            }
+        },
+        "node_modules/ipaddr.js": {
+            "version": "1.9.1",
+            "resolved": "https://registry.npmjs.org/ipaddr.js/-/ipaddr.js-1.9.1.tgz",
+            "integrity": "sha512-0KI/607xoxSToH7GjN1FfSbLoU0+btTicjsQSWQlh/hZykN8KpmMf7uYwPW3R+akZ6R/w18ZlXSHBYXiYUPO3g==",
+            "license": "MIT",
+            "engines": {
+                "node": ">= 0.10"
+            }
+        },
+        "node_modules/is-typedarray": {
+            "version": "1.0.0",
+            "resolved": "https://registry.npmjs.org/is-typedarray/-/is-typedarray-1.0.0.tgz",
+            "integrity": "sha512-cyA56iCMHAh5CdzjJIa4aohJyeO1YbwLi3Jc35MmRU6poroFjIGZzUzupGiRPOjgHg9TLu43xbpwXk523fMxKA==",
+            "license": "MIT"
+        },
+        "node_modules/isomorphic-ws": {
+            "version": "5.0.0",
+            "resolved": "https://registry.npmjs.org/isomorphic-ws/-/isomorphic-ws-5.0.0.tgz",
+            "integrity": "sha512-muId7Zzn9ywDsyXgTIafTry2sV3nySZeUDe6YedVd1Hvuuep5AsIlqK+XefWpYTyJG5e503F2xIuT2lcU6rCSw==",
+            "license": "MIT",
+            "peerDependencies": {
+                "ws": "*"
+            }
+        },
+        "node_modules/isstream": {
+            "version": "0.1.2",
+            "resolved": "https://registry.npmjs.org/isstream/-/isstream-0.1.2.tgz",
+            "integrity": "sha512-Yljz7ffyPbrLpLngrMtZ7NduUgVvi6wG9RJ9IUcyCd59YQ911PBJphODUcbOVbqYfxe1wuYf/LJ8PauMRwsM/g==",
+            "license": "MIT"
+        },
+        "node_modules/jose": {
+            "version": "6.1.3",
+            "resolved": "https://registry.npmjs.org/jose/-/jose-6.1.3.tgz",
+            "integrity": "sha512-0TpaTfihd4QMNwrz/ob2Bp7X04yuxJkjRGi4aKmOqwhov54i6u79oCv7T+C7lo70MKH6BesI3vscD1yb/yzKXQ==",
+            "license": "MIT",
+            "optional": true,
+            "funding": {
+                "url": "https://github.com/sponsors/panva"
+            }
+        },
+        "node_modules/js-yaml": {
+            "version": "4.1.1",
+            "resolved": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.1.tgz",
+            "integrity": "sha512-qQKT4zQxXl8lLwBtHMWwaTcGfFOZviOJet3Oy/xmGk2gZH677CJM9EvtfdSkgWcATZhj/55JZ0rmy3myCT5lsA==",
+            "license": "MIT",
+            "dependencies": {
+                "argparse": "^2.0.1"
+            },
+            "bin": {
+                "js-yaml": "bin/js-yaml.js"
+            }
+        },
+        "node_modules/jsbn": {
+            "version": "0.1.1",
+            "resolved": "https://registry.npmjs.org/jsbn/-/jsbn-0.1.1.tgz",
+            "integrity": "sha512-UVU9dibq2JcFWxQPA6KCqj5O42VOmAY3zQUfEKxU0KpTGXwNoCjkX1e13eHNvw/xPynt6pU0rZ1htjWTNTSXsg==",
+            "license": "MIT"
+        },
+        "node_modules/jsep": {
+            "version": "1.4.0",
+            "resolved": "https://registry.npmjs.org/jsep/-/jsep-1.4.0.tgz",
+            "integrity": "sha512-B7qPcEVE3NVkmSJbaYxvv4cHkVW7DQsZz13pUMrfS8z8Q/BuShN+gcTXrUlPiGqM2/t/EEaI030bpxMqY8gMlw==",
+            "license": "MIT",
+            "peer": true,
+            "engines": {
+                "node": ">= 10.16.0"
+            }
+        },
+        "node_modules/json-schema": {
+            "version": "0.4.0",
+            "resolved": "https://registry.npmjs.org/json-schema/-/json-schema-0.4.0.tgz",
+            "integrity": "sha512-es94M3nTIfsEPisRafak+HDLfHXnKBhV3vU5eqPcS3flIWqcxJWgXHXiey3YrpaNsanY5ei1VoYEbOzijuq9BA==",
+            "license": "(AFL-2.1 OR BSD-3-Clause)"
+        },
+        "node_modules/json-schema-ref-resolver": {
+            "version": "1.0.1",
+            "resolved": "https://registry.npmjs.org/json-schema-ref-resolver/-/json-schema-ref-resolver-1.0.1.tgz",
+            "integrity": "sha512-EJAj1pgHc1hxF6vo2Z3s69fMjO1INq6eGHXZ8Z6wCQeldCuwxGK9Sxf4/cScGn3FZubCVUehfWtcDM/PLteCQw==",
+            "license": "MIT",
+            "dependencies": {
+                "fast-deep-equal": "^3.1.3"
+            }
+        },
+        "node_modules/json-schema-traverse": {
+            "version": "1.0.0",
+            "resolved": "https://registry.npmjs.org/json-schema-traverse/-/json-schema-traverse-1.0.0.tgz",
+            "integrity": "sha512-NM8/P9n3XjXhIZn1lLhkFaACTOURQXjWhV4BA/RnOv8xvgqtqpAX9IO4mRQxSx1Rlo4tqzeqb0sOlruaOy3dug==",
+            "license": "MIT"
+        },
+        "node_modules/json-stringify-safe": {
+            "version": "5.0.1",
+            "resolved": "https://registry.npmjs.org/json-stringify-safe/-/json-stringify-safe-5.0.1.tgz",
+            "integrity": "sha512-ZClg6AaYvamvYEE82d3Iyd3vSSIjQ+odgjaTzRuO3s7toCdFKczob2i0zCh7JE8kWn17yvAWhUVxvqGwUalsRA==",
+            "license": "ISC"
+        },
+        "node_modules/jsonpath-plus": {
+            "version": "10.3.0",
+            "resolved": "https://registry.npmjs.org/jsonpath-plus/-/jsonpath-plus-10.3.0.tgz",
+            "integrity": "sha512-8TNmfeTCk2Le33A3vRRwtuworG/L5RrgMvdjhKZxvyShO+mBu2fP50OWUjRLNtvw344DdDarFh9buFAZs5ujeA==",
+            "license": "MIT",
+            "dependencies": {
+                "@jsep-plugin/assignment": "^1.3.0",
+                "@jsep-plugin/regex": "^1.0.4",
+                "jsep": "^1.4.0"
+            },
+            "bin": {
+                "jsonpath": "bin/jsonpath-cli.js",
+                "jsonpath-plus": "bin/jsonpath-cli.js"
+            },
+            "engines": {
+                "node": ">=18.0.0"
+            }
+        },
+        "node_modules/jsprim": {
+            "version": "1.4.2",
+            "resolved": "https://registry.npmjs.org/jsprim/-/jsprim-1.4.2.tgz",
+            "integrity": "sha512-P2bSOMAc/ciLz6DzgjVlGJP9+BrJWu5UDGK70C2iweC5QBIeFf0ZXRvGjEj2uYgrY2MkAAhsSWHDWlFtEroZWw==",
+            "license": "MIT",
+            "dependencies": {
+                "assert-plus": "1.0.0",
+                "extsprintf": "1.3.0",
+                "json-schema": "0.4.0",
+                "verror": "1.10.0"
+            },
+            "engines": {
+                "node": ">=0.6.0"
+            }
+        },
+        "node_modules/light-my-request": {
+            "version": "5.14.0",
+            "resolved": "https://registry.npmjs.org/light-my-request/-/light-my-request-5.14.0.tgz",
+            "integrity": "sha512-aORPWntbpH5esaYpGOOmri0OHDOe3wC5M2MQxZ9dvMLZm6DnaAn0kJlcbU9hwsQgLzmZyReKwFwwPkR+nHu5kA==",
+            "license": "BSD-3-Clause",
+            "dependencies": {
+                "cookie": "^0.7.0",
+                "process-warning": "^3.0.0",
+                "set-cookie-parser": "^2.4.1"
+            }
+        },
+        "node_modules/mime-db": {
+            "version": "1.52.0",
+            "resolved": "https://registry.npmjs.org/mime-db/-/mime-db-1.52.0.tgz",
+            "integrity": "sha512-sPU4uV7dYlvtWJxwwxHD0PuihVNiE7TyAbQ5SWxDCB9mUYvOgroQOwYQQOKPJ8CIbE+1ETVlOoK1UC2nU3gYvg==",
+            "license": "MIT",
+            "engines": {
+                "node": ">= 0.6"
+            }
+        },
+        "node_modules/mime-types": {
+            "version": "2.1.35",
+            "resolved": "https://registry.npmjs.org/mime-types/-/mime-types-2.1.35.tgz",
+            "integrity": "sha512-ZDY+bPm5zTTF+YpCrAU9nK0UgICYPT0QtT1NZWFv4s++TNkcgVaT0g6+4R2uI4MjQjzysHB1zxuWL50hzaeXiw==",
+            "license": "MIT",
+            "dependencies": {
+                "mime-db": "1.52.0"
+            },
+            "engines": {
+                "node": ">= 0.6"
+            }
+        },
+        "node_modules/minipass": {
+            "version": "7.1.2",
+            "resolved": "https://registry.npmjs.org/minipass/-/minipass-7.1.2.tgz",
+            "integrity": "sha512-qOOzS1cBTWYF4BH8fVePDBOO9iptMnGUEZwNc/cMWnTV2nVLZ7VoNWEPHkYczZA0pdoA7dl6e7FL659nX9S2aw==",
+            "license": "ISC",
+            "engines": {
+                "node": ">=16 || 14 >=14.17"
+            }
+        },
+        "node_modules/minizlib": {
+            "version": "3.1.0",
+            "resolved": "https://registry.npmjs.org/minizlib/-/minizlib-3.1.0.tgz",
+            "integrity": "sha512-KZxYo1BUkWD2TVFLr0MQoM8vUUigWD3LlD83a/75BqC+4qE0Hb1Vo5v1FgcfaNXvfXzr+5EhQ6ing/CaBijTlw==",
+            "license": "MIT",
+            "dependencies": {
+                "minipass": "^7.1.2"
+            },
+            "engines": {
+                "node": ">= 18"
+            }
+        },
+        "node_modules/oauth-sign": {
+            "version": "0.9.0",
+            "resolved": "https://registry.npmjs.org/oauth-sign/-/oauth-sign-0.9.0.tgz",
+            "integrity": "sha512-fexhUFFPTGV8ybAtSIGbV6gOkSv8UtRbDBnAyLQw4QPKkgNlsH2ByPGtMUqdWkos6YCRmAqViwgZrJc/mRDzZQ==",
+            "license": "Apache-2.0",
+            "engines": {
+                "node": "*"
+            }
+        },
+        "node_modules/oauth4webapi": {
+            "version": "3.8.3",
+            "resolved": "https://registry.npmjs.org/oauth4webapi/-/oauth4webapi-3.8.3.tgz",
+            "integrity": "sha512-pQ5BsX3QRTgnt5HxgHwgunIRaDXBdkT23tf8dfzmtTIL2LTpdmxgbpbBm0VgFWAIDlezQvQCTgnVIUmHupXHxw==",
+            "license": "MIT",
+            "optional": true,
+            "funding": {
+                "url": "https://github.com/sponsors/panva"
+            }
+        },
+        "node_modules/on-exit-leak-free": {
+            "version": "2.1.2",
+            "resolved": "https://registry.npmjs.org/on-exit-leak-free/-/on-exit-leak-free-2.1.2.tgz",
+            "integrity": "sha512-0eJJY6hXLGf1udHwfNftBqH+g73EU4B504nZeKpz1sYRKafAghwxEJunB2O7rDZkL4PGfsMVnTXZ2EjibbqcsA==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=14.0.0"
+            }
+        },
+        "node_modules/openid-client": {
+            "version": "6.8.1",
+            "resolved": "https://registry.npmjs.org/openid-client/-/openid-client-6.8.1.tgz",
+            "integrity": "sha512-VoYT6enBo6Vj2j3Q5Ec0AezS+9YGzQo1f5Xc42lreMGlfP4ljiXPKVDvCADh+XHCV/bqPu/wWSiCVXbJKvrODw==",
+            "license": "MIT",
+            "optional": true,
+            "dependencies": {
+                "jose": "^6.1.0",
+                "oauth4webapi": "^3.8.2"
+            },
+            "funding": {
+                "url": "https://github.com/sponsors/panva"
+            }
+        },
+        "node_modules/performance-now": {
+            "version": "2.1.0",
+            "resolved": "https://registry.npmjs.org/performance-now/-/performance-now-2.1.0.tgz",
+            "integrity": "sha512-7EAHlyLHI56VEIdK57uwHdHKIaAGbnXPiw0yWbarQZOKaKpvUIgW0jWRVLiatnM+XXlSwsanIBH/hzGMJulMow==",
+            "license": "MIT"
+        },
+        "node_modules/pino": {
+            "version": "9.14.0",
+            "resolved": "https://registry.npmjs.org/pino/-/pino-9.14.0.tgz",
+            "integrity": "sha512-8OEwKp5juEvb/MjpIc4hjqfgCNysrS94RIOMXYvpYCdm/jglrKEiAYmiumbmGhCvs+IcInsphYDFwqrjr7398w==",
+            "license": "MIT",
+            "dependencies": {
+                "@pinojs/redact": "^0.4.0",
+                "atomic-sleep": "^1.0.0",
+                "on-exit-leak-free": "^2.1.0",
+                "pino-abstract-transport": "^2.0.0",
+                "pino-std-serializers": "^7.0.0",
+                "process-warning": "^5.0.0",
+                "quick-format-unescaped": "^4.0.3",
+                "real-require": "^0.2.0",
+                "safe-stable-stringify": "^2.3.1",
+                "sonic-boom": "^4.0.1",
+                "thread-stream": "^3.0.0"
+            },
+            "bin": {
+                "pino": "bin.js"
+            }
+        },
+        "node_modules/pino-abstract-transport": {
+            "version": "2.0.0",
+            "resolved": "https://registry.npmjs.org/pino-abstract-transport/-/pino-abstract-transport-2.0.0.tgz",
+            "integrity": "sha512-F63x5tizV6WCh4R6RHyi2Ml+M70DNRXt/+HANowMflpgGFMAym/VKm6G7ZOQRjqN7XbGxK1Lg9t6ZrtzOaivMw==",
+            "license": "MIT",
+            "dependencies": {
+                "split2": "^4.0.0"
+            }
+        },
+        "node_modules/pino-std-serializers": {
+            "version": "7.1.0",
+            "resolved": "https://registry.npmjs.org/pino-std-serializers/-/pino-std-serializers-7.1.0.tgz",
+            "integrity": "sha512-BndPH67/JxGExRgiX1dX0w1FvZck5Wa4aal9198SrRhZjH3GxKQUKIBnYJTdj2HDN3UQAS06HlfcSbQj2OHmaw==",
+            "license": "MIT"
+        },
+        "node_modules/pino/node_modules/process-warning": {
+            "version": "5.0.0",
+            "resolved": "https://registry.npmjs.org/process-warning/-/process-warning-5.0.0.tgz",
+            "integrity": "sha512-a39t9ApHNx2L4+HBnQKqxxHNs1r7KF+Intd8Q/g1bUh6q0WIp9voPXJ/x0j+ZL45KF1pJd9+q2jLIRMfvEshkA==",
+            "funding": [
+                {
+                    "type": "github",
+                    "url": "https://github.com/sponsors/fastify"
+                },
+                {
+                    "type": "opencollective",
+                    "url": "https://opencollective.com/fastify"
+                }
+            ],
+            "license": "MIT"
+        },
+        "node_modules/process-warning": {
+            "version": "3.0.0",
+            "resolved": "https://registry.npmjs.org/process-warning/-/process-warning-3.0.0.tgz",
+            "integrity": "sha512-mqn0kFRl0EoqhnL0GQ0veqFHyIN1yig9RHh/InzORTUiZHFRAur+aMtRkELNwGs9aNwKS6tg/An4NYBPGwvtzQ==",
+            "license": "MIT"
+        },
+        "node_modules/proxy-addr": {
+            "version": "2.0.7",
+            "resolved": "https://registry.npmjs.org/proxy-addr/-/proxy-addr-2.0.7.tgz",
+            "integrity": "sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==",
+            "license": "MIT",
+            "dependencies": {
+                "forwarded": "0.2.0",
+                "ipaddr.js": "1.9.1"
+            },
+            "engines": {
+                "node": ">= 0.10"
+            }
+        },
+        "node_modules/psl": {
+            "version": "1.15.0",
+            "resolved": "https://registry.npmjs.org/psl/-/psl-1.15.0.tgz",
+            "integrity": "sha512-JZd3gMVBAVQkSs6HdNZo9Sdo0LNcQeMNP3CozBJb3JYC/QUYZTnKxP+f8oWRX4rHP5EurWxqAHTSwUCjlNKa1w==",
+            "license": "MIT",
+            "dependencies": {
+                "punycode": "^2.3.1"
+            },
+            "funding": {
+                "url": "https://github.com/sponsors/lupomontero"
+            }
+        },
+        "node_modules/punycode": {
+            "version": "2.3.1",
+            "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
+            "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=6"
+            }
+        },
+        "node_modules/qs": {
+            "version": "6.5.3",
+            "resolved": "https://registry.npmjs.org/qs/-/qs-6.5.3.tgz",
+            "integrity": "sha512-qxXIEh4pCGfHICj1mAJQ2/2XVZkjCDTcEgfoSQxc/fYivUZxTkk7L3bDBJSoNrEzXI17oUO5Dp07ktqE5KzczA==",
+            "license": "BSD-3-Clause",
+            "engines": {
+                "node": ">=0.6"
+            }
+        },
+        "node_modules/quick-format-unescaped": {
+            "version": "4.0.4",
+            "resolved": "https://registry.npmjs.org/quick-format-unescaped/-/quick-format-unescaped-4.0.4.tgz",
+            "integrity": "sha512-tYC1Q1hgyRuHgloV/YXs2w15unPVh8qfu/qCTfhTYamaw7fyhumKa2yGpdSo87vY32rIclj+4fWYQXUMs9EHvg==",
+            "license": "MIT"
+        },
+        "node_modules/real-require": {
+            "version": "0.2.0",
+            "resolved": "https://registry.npmjs.org/real-require/-/real-require-0.2.0.tgz",
+            "integrity": "sha512-57frrGM/OCTLqLOAh0mhVA9VBMHd+9U7Zb2THMGdBUoZVOtGbJzjxsYGDJ3A9AYYCP4hn6y1TVbaOfzWtm5GFg==",
+            "license": "MIT",
+            "engines": {
+                "node": ">= 12.13.0"
+            }
+        },
+        "node_modules/request": {
+            "version": "2.88.2",
+            "resolved": "https://registry.npmjs.org/request/-/request-2.88.2.tgz",
+            "integrity": "sha512-MsvtOrfG9ZcrOwAW+Qi+F6HbD0CWXEh9ou77uOb7FM2WPhwT7smM833PzanhJLsgXjN89Ir6V2PczXNnMpwKhw==",
+            "deprecated": "request has been deprecated, see https://github.com/request/request/issues/3142",
+            "license": "Apache-2.0",
+            "dependencies": {
+                "aws-sign2": "~0.7.0",
+                "aws4": "^1.8.0",
+                "caseless": "~0.12.0",
+                "combined-stream": "~1.0.6",
+                "extend": "~3.0.2",
+                "forever-agent": "~0.6.1",
+                "form-data": "~2.3.2",
+                "har-validator": "~5.1.3",
+                "http-signature": "~1.2.0",
+                "is-typedarray": "~1.0.0",
+                "isstream": "~0.1.2",
+                "json-stringify-safe": "~5.0.1",
+                "mime-types": "~2.1.19",
+                "oauth-sign": "~0.9.0",
+                "performance-now": "^2.1.0",
+                "qs": "~6.5.2",
+                "safe-buffer": "^5.1.2",
+                "tough-cookie": "~2.5.0",
+                "tunnel-agent": "^0.6.0",
+                "uuid": "^3.3.2"
+            },
+            "engines": {
+                "node": ">= 6"
+            }
+        },
+        "node_modules/require-from-string": {
+            "version": "2.0.2",
+            "resolved": "https://registry.npmjs.org/require-from-string/-/require-from-string-2.0.2.tgz",
+            "integrity": "sha512-Xf0nWe6RseziFMu+Ap9biiUbmplq6S9/p+7w7YXP/JBHhrUDDUhwa+vANyubuqfZWTveU//DYVGsDG7RKL/vEw==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=0.10.0"
+            }
+        },
+        "node_modules/resolve-pkg-maps": {
+            "version": "1.0.0",
+            "resolved": "https://registry.npmjs.org/resolve-pkg-maps/-/resolve-pkg-maps-1.0.0.tgz",
+            "integrity": "sha512-seS2Tj26TBVOC2NIc2rOe2y2ZO7efxITtLZcGSOnHHNOQ7CkiUBfw0Iw2ck6xkIhPwLhKNLS8BO+hEpngQlqzw==",
+            "dev": true,
+            "license": "MIT",
+            "funding": {
+                "url": "https://github.com/privatenumber/resolve-pkg-maps?sponsor=1"
+            }
+        },
+        "node_modules/ret": {
+            "version": "0.4.3",
+            "resolved": "https://registry.npmjs.org/ret/-/ret-0.4.3.tgz",
+            "integrity": "sha512-0f4Memo5QP7WQyUEAYUO3esD/XjOc3Zjjg5CPsAq1p8sIu0XPeMbHJemKA0BO7tV0X7+A0FoEpbmHXWxPyD3wQ==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=10"
+            }
+        },
+        "node_modules/reusify": {
+            "version": "1.1.0",
+            "resolved": "https://registry.npmjs.org/reusify/-/reusify-1.1.0.tgz",
+            "integrity": "sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==",
+            "license": "MIT",
+            "engines": {
+                "iojs": ">=1.0.0",
+                "node": ">=0.10.0"
+            }
+        },
+        "node_modules/rfc4648": {
+            "version": "1.5.4",
+            "resolved": "https://registry.npmjs.org/rfc4648/-/rfc4648-1.5.4.tgz",
+            "integrity": "sha512-rRg/6Lb+IGfJqO05HZkN50UtY7K/JhxJag1kP23+zyMfrvoB0B7RWv06MbOzoc79RgCdNTiUaNsTT1AJZ7Z+cg==",
+            "license": "MIT"
+        },
+        "node_modules/rfdc": {
+            "version": "1.4.1",
+            "resolved": "https://registry.npmjs.org/rfdc/-/rfdc-1.4.1.tgz",
+            "integrity": "sha512-q1b3N5QkRUWUl7iyylaaj3kOpIT0N2i9MqIEQXP73GVsN9cw3fdx8X63cEmWhJGi2PPCF23Ijp7ktmd39rawIA==",
+            "license": "MIT"
+        },
+        "node_modules/safe-buffer": {
+            "version": "5.2.1",
+            "resolved": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz",
+            "integrity": "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==",
+            "funding": [
+                {
+                    "type": "github",
+                    "url": "https://github.com/sponsors/feross"
+                },
+                {
+                    "type": "patreon",
+                    "url": "https://www.patreon.com/feross"
+                },
+                {
+                    "type": "consulting",
+                    "url": "https://feross.org/support"
+                }
+            ],
+            "license": "MIT"
+        },
+        "node_modules/safe-regex2": {
+            "version": "3.1.0",
+            "resolved": "https://registry.npmjs.org/safe-regex2/-/safe-regex2-3.1.0.tgz",
+            "integrity": "sha512-RAAZAGbap2kBfbVhvmnTFv73NWLMvDGOITFYTZBAaY8eR+Ir4ef7Up/e7amo+y1+AH+3PtLkrt9mvcTsG9LXug==",
+            "license": "MIT",
+            "dependencies": {
+                "ret": "~0.4.0"
+            }
+        },
+        "node_modules/safe-stable-stringify": {
+            "version": "2.5.0",
+            "resolved": "https://registry.npmjs.org/safe-stable-stringify/-/safe-stable-stringify-2.5.0.tgz",
+            "integrity": "sha512-b3rppTKm9T+PsVCBEOUR46GWI7fdOs00VKZ1+9c1EWDaDMvjQc6tUwuFyIprgGgTcWoVHSKrU8H31ZHA2e0RHA==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=10"
+            }
+        },
+        "node_modules/safer-buffer": {
+            "version": "2.1.2",
+            "resolved": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
+            "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+            "license": "MIT"
+        },
+        "node_modules/secure-json-parse": {
+            "version": "2.7.0",
+            "resolved": "https://registry.npmjs.org/secure-json-parse/-/secure-json-parse-2.7.0.tgz",
+            "integrity": "sha512-6aU+Rwsezw7VR8/nyvKTx8QpWH9FrcYiXXlqC4z5d5XQBDRqtbfsRjnwGyqbi3gddNtWHuEk9OANUotL26qKUw==",
+            "license": "BSD-3-Clause"
+        },
+        "node_modules/semver": {
+            "version": "7.7.3",
+            "resolved": "https://registry.npmjs.org/semver/-/semver-7.7.3.tgz",
+            "integrity": "sha512-SdsKMrI9TdgjdweUSR9MweHA4EJ8YxHn8DFaDisvhVlUOe4BF1tLD7GAj0lIqWVl+dPb/rExr0Btby5loQm20Q==",
+            "license": "ISC",
+            "bin": {
+                "semver": "bin/semver.js"
+            },
+            "engines": {
+                "node": ">=10"
+            }
+        },
+        "node_modules/set-cookie-parser": {
+            "version": "2.7.2",
+            "resolved": "https://registry.npmjs.org/set-cookie-parser/-/set-cookie-parser-2.7.2.tgz",
+            "integrity": "sha512-oeM1lpU/UvhTxw+g3cIfxXHyJRc/uidd3yK1P242gzHds0udQBYzs3y8j4gCCW+ZJ7ad0yctld8RYO+bdurlvw==",
+            "license": "MIT"
+        },
+        "node_modules/sonic-boom": {
+            "version": "4.2.0",
+            "resolved": "https://registry.npmjs.org/sonic-boom/-/sonic-boom-4.2.0.tgz",
+            "integrity": "sha512-INb7TM37/mAcsGmc9hyyI6+QR3rR1zVRu36B0NeGXKnOOLiZOfER5SA+N7X7k3yUYRzLWafduTDvJAfDswwEww==",
+            "license": "MIT",
+            "dependencies": {
+                "atomic-sleep": "^1.0.0"
+            }
+        },
+        "node_modules/split2": {
+            "version": "4.2.0",
+            "resolved": "https://registry.npmjs.org/split2/-/split2-4.2.0.tgz",
+            "integrity": "sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==",
+            "license": "ISC",
+            "engines": {
+                "node": ">= 10.x"
+            }
+        },
+        "node_modules/sshpk": {
+            "version": "1.18.0",
+            "resolved": "https://registry.npmjs.org/sshpk/-/sshpk-1.18.0.tgz",
+            "integrity": "sha512-2p2KJZTSqQ/I3+HX42EpYOa2l3f8Erv8MWKsy2I9uf4wA7yFIkXRffYdsx86y6z4vHtV8u7g+pPlr8/4ouAxsQ==",
+            "license": "MIT",
+            "dependencies": {
+                "asn1": "~0.2.3",
+                "assert-plus": "^1.0.0",
+                "bcrypt-pbkdf": "^1.0.0",
+                "dashdash": "^1.12.0",
+                "ecc-jsbn": "~0.1.1",
+                "getpass": "^0.1.1",
+                "jsbn": "~0.1.0",
+                "safer-buffer": "^2.0.2",
+                "tweetnacl": "~0.14.0"
+            },
+            "bin": {
+                "sshpk-conv": "bin/sshpk-conv",
+                "sshpk-sign": "bin/sshpk-sign",
+                "sshpk-verify": "bin/sshpk-verify"
+            },
+            "engines": {
+                "node": ">=0.10.0"
+            }
+        },
+        "node_modules/stream-buffers": {
+            "version": "3.0.3",
+            "resolved": "https://registry.npmjs.org/stream-buffers/-/stream-buffers-3.0.3.tgz",
+            "integrity": "sha512-pqMqwQCso0PBJt2PQmDO0cFj0lyqmiwOMiMSkVtRokl7e+ZTRYgDHKnuZNbqjiJXgsg4nuqtD/zxuo9KqTp0Yw==",
+            "license": "Unlicense",
+            "engines": {
+                "node": ">= 0.10.0"
+            }
+        },
+        "node_modules/tar": {
+            "version": "7.5.2",
+            "resolved": "https://registry.npmjs.org/tar/-/tar-7.5.2.tgz",
+            "integrity": "sha512-7NyxrTE4Anh8km8iEy7o0QYPs+0JKBTj5ZaqHg6B39erLg0qYXN3BijtShwbsNSvQ+LN75+KV+C4QR/f6Gwnpg==",
+            "license": "BlueOak-1.0.0",
+            "dependencies": {
+                "@isaacs/fs-minipass": "^4.0.0",
+                "chownr": "^3.0.0",
+                "minipass": "^7.1.2",
+                "minizlib": "^3.1.0",
+                "yallist": "^5.0.0"
+            },
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/thread-stream": {
+            "version": "3.1.0",
+            "resolved": "https://registry.npmjs.org/thread-stream/-/thread-stream-3.1.0.tgz",
+            "integrity": "sha512-OqyPZ9u96VohAyMfJykzmivOrY2wfMSf3C5TtFJVgN+Hm6aj+voFhlK+kZEIv2FBh1X6Xp3DlnCOfEQ3B2J86A==",
+            "license": "MIT",
+            "dependencies": {
+                "real-require": "^0.2.0"
+            }
+        },
+        "node_modules/toad-cache": {
+            "version": "3.7.0",
+            "resolved": "https://registry.npmjs.org/toad-cache/-/toad-cache-3.7.0.tgz",
+            "integrity": "sha512-/m8M+2BJUpoJdgAHoG+baCwBT+tf2VraSfkBgl0Y00qIWt41DJ8R5B8nsEw0I58YwF5IZH6z24/2TobDKnqSWw==",
+            "license": "MIT",
+            "engines": {
+                "node": ">=12"
+            }
+        },
+        "node_modules/tough-cookie": {
+            "version": "2.5.0",
+            "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-2.5.0.tgz",
+            "integrity": "sha512-nlLsUzgm1kfLXSXfRZMc1KLAugd4hqJHDTvc2hDIwS3mZAfMEuMbc03SujMF+GEcpaX/qboeycw6iO8JwVv2+g==",
+            "license": "BSD-3-Clause",
+            "dependencies": {
+                "psl": "^1.1.28",
+                "punycode": "^2.1.1"
+            },
+            "engines": {
+                "node": ">=0.8"
+            }
+        },
+        "node_modules/tslib": {
+            "version": "2.8.1",
+            "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+            "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
+            "license": "0BSD"
+        },
+        "node_modules/tsx": {
+            "version": "4.21.0",
+            "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.21.0.tgz",
+            "integrity": "sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==",
+            "dev": true,
+            "license": "MIT",
+            "dependencies": {
+                "esbuild": "~0.27.0",
+                "get-tsconfig": "^4.7.5"
+            },
+            "bin": {
+                "tsx": "dist/cli.mjs"
+            },
+            "engines": {
+                "node": ">=18.0.0"
+            },
+            "optionalDependencies": {
+                "fsevents": "~2.3.3"
+            }
+        },
+        "node_modules/tunnel-agent": {
+            "version": "0.6.0",
+            "resolved": "https://registry.npmjs.org/tunnel-agent/-/tunnel-agent-0.6.0.tgz",
+            "integrity": "sha512-McnNiV1l8RYeY8tBgEpuodCC1mLUdbSN+CYBL7kJsJNInOP8UjDDEwdk6Mw60vdLLrr5NHKZhMAOSrR2NZuQ+w==",
+            "license": "Apache-2.0",
+            "dependencies": {
+                "safe-buffer": "^5.0.1"
+            },
+            "engines": {
+                "node": "*"
+            }
+        },
+        "node_modules/tweetnacl": {
+            "version": "0.14.5",
+            "resolved": "https://registry.npmjs.org/tweetnacl/-/tweetnacl-0.14.5.tgz",
+            "integrity": "sha512-KXXFFdAbFXY4geFIwoyNK+f5Z1b7swfXABfL7HXCmoIWMKU3dmS26672A4EeQtDzLKy7SXmfBu51JolvEKwtGA==",
+            "license": "Unlicense"
+        },
+        "node_modules/typescript": {
+            "version": "5.9.3",
+            "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+            "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+            "dev": true,
+            "license": "Apache-2.0",
+            "bin": {
+                "tsc": "bin/tsc",
+                "tsserver": "bin/tsserver"
+            },
+            "engines": {
+                "node": ">=14.17"
+            }
+        },
+        "node_modules/undici-types": {
+            "version": "6.21.0",
+            "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz",
+            "integrity": "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==",
+            "dev": true,
+            "license": "MIT"
+        },
+        "node_modules/uri-js": {
+            "version": "4.4.1",
+            "resolved": "https://registry.npmjs.org/uri-js/-/uri-js-4.4.1.tgz",
+            "integrity": "sha512-7rKUyy33Q1yc98pQ1DAmLtwX109F7TIfWlW1Ydo8Wl1ii1SeHieeh0HHfPeL2fMXK6z0s8ecKs9frCuLJvndBg==",
+            "license": "BSD-2-Clause",
+            "dependencies": {
+                "punycode": "^2.1.0"
+            }
+        },
+        "node_modules/uuid": {
+            "version": "3.4.0",
+            "resolved": "https://registry.npmjs.org/uuid/-/uuid-3.4.0.tgz",
+            "integrity": "sha512-HjSDRw6gZE5JMggctHBcjVak08+KEVhSIiDzFnT9S9aegmp85S/bReBVTb4QTFaRNptJ9kuYaNhnbNEOkbKb/A==",
+            "deprecated": "Please upgrade  to version 7 or higher.  Older versions may use Math.random() in certain circumstances, which is known to be problematic.  See https://v8.dev/blog/math-random for details.",
+            "license": "MIT",
+            "bin": {
+                "uuid": "bin/uuid"
+            }
+        },
+        "node_modules/verror": {
+            "version": "1.10.0",
+            "resolved": "https://registry.npmjs.org/verror/-/verror-1.10.0.tgz",
+            "integrity": "sha512-ZZKSmDAEFOijERBLkmYfJ+vmk3w+7hOLYDNkRCuRuMJGEmqYNCNLyBBFwWKVMhfwaEF3WOd0Zlw86U/WC/+nYw==",
+            "engines": [
+                "node >=0.6.0"
+            ],
+            "license": "MIT",
+            "dependencies": {
+                "assert-plus": "^1.0.0",
+                "core-util-is": "1.0.2",
+                "extsprintf": "^1.2.0"
+            }
+        },
+        "node_modules/ws": {
+            "version": "8.19.0",
+            "resolved": "https://registry.npmjs.org/ws/-/ws-8.19.0.tgz",
+            "integrity": "sha512-blAT2mjOEIi0ZzruJfIhb3nps74PRWTCz1IjglWEEpQl5XS/UNama6u2/rjFkDDouqr4L67ry+1aGIALViWjDg==",
+            "license": "MIT",
+            "peer": true,
+            "engines": {
+                "node": ">=10.0.0"
+            },
+            "peerDependencies": {
+                "bufferutil": "^4.0.1",
+                "utf-8-validate": ">=5.0.2"
+            },
+            "peerDependenciesMeta": {
+                "bufferutil": {
+                    "optional": true
+                },
+                "utf-8-validate": {
+                    "optional": true
+                }
+            }
+        },
+        "node_modules/yallist": {
+            "version": "5.0.0",
+            "resolved": "https://registry.npmjs.org/yallist/-/yallist-5.0.0.tgz",
+            "integrity": "sha512-YgvUTfwqyc7UXVMrB+SImsVYSmTS8X/tSrtdNZMImM+n7+QTriRXyXim0mBrTXNeqzVF0KWGgHPeiyViFFrNDw==",
+            "license": "BlueOak-1.0.0",
+            "engines": {
+                "node": ">=18"
+            }
+        },
+        "node_modules/zod": {
+            "version": "3.25.76",
+            "resolved": "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz",
+            "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==",
+            "license": "MIT",
+            "funding": {
+                "url": "https://github.com/sponsors/colinhacks"
+            }
+        }
+    }
+}
+
+----- FILE: apps/controller/src/http/errors.ts -----
+export class HttpError extends Error {
+  statusCode: number;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+----- FILE: apps/controller/src/http/routes.ts -----
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { CreateSiteSchema, DeploySiteSchema, PatchLimitsSchema } from "../sites/site.dto.js";
+import {
+  createSite,
+  deleteSite,
+  deploySite,
+  listSites,
+  updateSiteLimits
+} from "../sites/site.service.js";
+
+const SlugParamSchema = z.string().min(1, "Slug is required.");
+
+export function registerRoutes(app: FastifyInstance) {
+  app.post("/sites", async (req, reply) => {
+    const body = CreateSiteSchema.parse(req.body);
+    const result = await createSite(body);
+    return reply.send(result);
+  });
+
+  app.get("/sites", async () => listSites());
+
+  app.patch("/sites/:slug/limits", async (req, reply) => {
+    const slug = String((req.params as { slug: string }).slug ?? "");
+    const body = PatchLimitsSchema.parse(req.body);
+    const result = await updateSiteLimits(slug, body);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/deploy", async (req, reply) => {
+    const slug = String((req.params as { slug: string }).slug ?? "");
+    const body = DeploySiteSchema.parse(req.body);
+    const result = await deploySite(slug, body);
+    return reply.send(result);
+  });
+
+  app.delete("/sites/:slug", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await deleteSite(slug);
+    return reply.code(200).send({ ok: true, slug: result.slug });
+  });
+}
+
+----- FILE: apps/controller/src/index.ts -----
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { z } from "zod";
+import { registerRoutes } from "./http/routes.js";
+import { HttpError } from "./http/errors.js";
+
+const app = Fastify({ logger: true });
+
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+if (!ADMIN_API_KEY) {
+  throw new Error("ADMIN_API_KEY env var is required (provided via Secret).");
+}
+
+app.addHook("onRequest", async (req: FastifyRequest, reply: FastifyReply) => {
+  if (req.url.startsWith("/health")) return;
+  const header = req.headers["x-api-key"];
+  const provided = Array.isArray(header) ? header[0] : header;
+  if (!provided || provided !== ADMIN_API_KEY) {
+    return reply.code(401).send({ error: "unauthorized" });
+  }
+});
+
+app.setErrorHandler((error, _req, reply) => {
+  if (error instanceof HttpError) {
+    return reply.code(error.statusCode).send({ error: error.message });
+  }
+  if (error instanceof z.ZodError) {
+    return reply.code(400).send({ error: "invalid_request", details: error.flatten() });
+  }
+  app.log.error({ err: error }, "Unhandled error");
+  return reply.code(500).send({ error: "internal_error" });
+});
+
+app.get("/health", async () => ({ ok: true }));
+
+registerRoutes(app);
+
+const port = Number(process.env.PORT ?? 8080);
+app.listen({ host: "0.0.0.0", port });
+
+----- FILE: apps/controller/src/k8s/apply.ts -----
+import type {
+  V1Deployment,
+  V1Ingress,
+  V1LimitRange,
+  V1NetworkPolicy,
+  V1ResourceQuota,
+  V1Secret,
+  V1Service
+} from "@kubernetes/client-node";
+import { getClients } from "./client.js";
+
+async function replaceWithResourceVersion<T extends { metadata?: { resourceVersion?: string } }>(
+  next: T,
+  read: () => Promise<{ body: T }>,
+  replace: (nextWithVersion: T) => Promise<unknown>
+): Promise<void> {
+  const existing = await read();
+  const nextWithVersion = {
+    ...next,
+    metadata: {
+      ...next.metadata,
+      resourceVersion: existing.body.metadata?.resourceVersion
+    }
+  };
+  await replace(nextWithVersion);
+}
+
+export async function upsertResourceQuota(resourceQuota: V1ResourceQuota): Promise<void> {
+  const { core } = getClients();
+  const name = resourceQuota.metadata?.name ?? "site-quota";
+  const namespace = resourceQuota.metadata?.namespace ?? "default";
+  try {
+    await core.createNamespacedResourceQuota(namespace, resourceQuota);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      resourceQuota,
+      () => core.readNamespacedResourceQuota(name, namespace),
+      (next) => core.replaceNamespacedResourceQuota(name, namespace, next)
+    );
+  }
+}
+
+export async function upsertLimitRange(limitRange: V1LimitRange): Promise<void> {
+  const { core } = getClients();
+  const name = limitRange.metadata?.name ?? "site-limits";
+  const namespace = limitRange.metadata?.namespace ?? "default";
+  try {
+    await core.createNamespacedLimitRange(namespace, limitRange);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      limitRange,
+      () => core.readNamespacedLimitRange(name, namespace),
+      (next) => core.replaceNamespacedLimitRange(name, namespace, next)
+    );
+  }
+}
+
+export async function upsertNetworkPolicy(policy: V1NetworkPolicy): Promise<void> {
+  const { net } = getClients();
+  const name = policy.metadata?.name ?? "policy";
+  const namespace = policy.metadata?.namespace ?? "default";
+  try {
+    await net.createNamespacedNetworkPolicy(namespace, policy);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      policy,
+      () => net.readNamespacedNetworkPolicy(name, namespace),
+      (next) => net.replaceNamespacedNetworkPolicy(name, namespace, next)
+    );
+  }
+}
+
+export async function upsertDeployment(deployment: V1Deployment): Promise<void> {
+  const { apps } = getClients();
+  const name = deployment.metadata?.name ?? "app";
+  const namespace = deployment.metadata?.namespace ?? "default";
+  try {
+    await apps.createNamespacedDeployment(namespace, deployment);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      deployment,
+      () => apps.readNamespacedDeployment(name, namespace),
+      (next) => apps.replaceNamespacedDeployment(name, namespace, next)
+    );
+  }
+}
+
+export async function upsertService(service: V1Service): Promise<void> {
+  const { core } = getClients();
+  const name = service.metadata?.name ?? "web";
+  const namespace = service.metadata?.namespace ?? "default";
+  try {
+    await core.createNamespacedService(namespace, service);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      service,
+      () => core.readNamespacedService(name, namespace),
+      (next) => core.replaceNamespacedService(name, namespace, next)
+    );
+  }
+}
+
+export async function upsertIngress(ingress: V1Ingress): Promise<void> {
+  const { net } = getClients();
+  const name = ingress.metadata?.name ?? "web";
+  const namespace = ingress.metadata?.namespace ?? "default";
+  try {
+    await net.createNamespacedIngress(namespace, ingress);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      ingress,
+      () => net.readNamespacedIngress(name, namespace),
+      (next) => net.replaceNamespacedIngress(name, namespace, next)
+    );
+  }
+}
+
+export async function upsertSecret(secret: V1Secret): Promise<void> {
+  const { core } = getClients();
+  const name = secret.metadata?.name ?? "secret";
+  const namespace = secret.metadata?.namespace ?? "default";
+  try {
+    await core.createNamespacedSecret(namespace, secret);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      secret,
+      () => core.readNamespacedSecret(name, namespace),
+      (next) => core.replaceNamespacedSecret(name, namespace, next)
+    );
+  }
+}
+
+----- FILE: apps/controller/src/k8s/client.ts -----
+import k8s from "@kubernetes/client-node";
+
+export const LABELS = {
+  managedBy: "vhp-controller",
+  siteSlug: "vhp/site-slug"
+} as const;
+
+type Clients = {
+  kc: k8s.KubeConfig;
+  core: k8s.CoreV1Api;
+  apps: k8s.AppsV1Api;
+  net: k8s.NetworkingV1Api;
+};
+
+let cached: Clients | null = null;
+
+export function getClients(): Clients {
+  if (cached) return cached;
+  const kc = new k8s.KubeConfig();
+  try {
+    kc.loadFromCluster();
+  } catch {
+    kc.loadFromDefault();
+  }
+
+  cached = {
+    kc,
+    core: kc.makeApiClient(k8s.CoreV1Api),
+    apps: kc.makeApiClient(k8s.AppsV1Api),
+    net: kc.makeApiClient(k8s.NetworkingV1Api)
+  };
+
+  return cached;
+}
+
+----- FILE: apps/controller/src/k8s/namespace.ts -----
+import { getClients, LABELS } from "./client.js";
+import { HttpError } from "../http/errors.js";
+
+export const TENANT_PREFIX = "tenant-";
+
+export async function allocateTenantNamespace(baseSlug: string): Promise<{
+  slug: string;
+  namespace: string;
+}> {
+  const { core } = getClients();
+  const slug = baseSlug;
+  const namespace = `${TENANT_PREFIX}${slug}`;
+  try {
+    await core.createNamespace({
+      metadata: {
+        name: namespace,
+        labels: {
+          [LABELS.managedBy]: LABELS.managedBy,
+          [LABELS.siteSlug]: slug
+        }
+      }
+    });
+    return { slug, namespace };
+  } catch (error: any) {
+    if (error?.response?.statusCode === 409) {
+      throw new HttpError(409, "Site already exists for this slug/domain.");
+    }
+    throw error;
+  }
+}
+
+export async function requireNamespace(namespace: string): Promise<void> {
+  const { core } = getClients();
+  try {
+    await core.readNamespace(namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(404, "Namespace not found.");
+    }
+    throw error;
+  }
+}
+
+export async function deleteNamespace(namespace: string): Promise<void> {
+  const { core } = getClients();
+  try {
+    await core.deleteNamespace(namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(404, "Namespace not found.");
+    }
+    throw error;
+  }
+}
+
+export async function deleteTenantNamespace(slug: string): Promise<void> {
+  const { core } = getClients();
+  const namespace = `${TENANT_PREFIX}${slug}`;
+  try {
+    await core.deleteNamespace(namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(404, "Site not found.");
+    }
+    throw error;
+  }
+}
+
+export async function listTenantNamespaces(): Promise<string[]> {
+  const { core } = getClients();
+  const result = await core.listNamespace();
+  return result.body.items
+    .map((item) => item.metadata?.name)
+    .filter((name): name is string => Boolean(name && name.startsWith(TENANT_PREFIX)));
+}
+
+export function slugFromNamespace(namespace: string): string {
+  if (!namespace.startsWith(TENANT_PREFIX)) return namespace;
+  return namespace.slice(TENANT_PREFIX.length);
+}
+
+----- FILE: apps/controller/src/k8s/publish.ts -----
+import type { V1Deployment, V1Ingress, V1Service } from "@kubernetes/client-node";
+import { LABELS } from "./client.js";
+import { GHCR_PULL_SECRET_NAME } from "./secrets.js";
+
+export const APP_DEPLOYMENT_NAME = "app";
+export const SERVICE_NAME = "web";
+export const INGRESS_NAME = "web";
+
+type PublishSpec = {
+  namespace: string;
+  slug: string;
+  image: string;
+  containerPort: number;
+  cpu: number;
+  ramGi: number;
+  host: string;
+};
+
+function buildSelector(slug: string): Record<string, string> {
+  return {
+    app: "web",
+    [LABELS.siteSlug]: slug
+  };
+}
+
+export function buildDeployment(spec: PublishSpec): V1Deployment {
+  const selector = buildSelector(spec.slug);
+  return {
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: {
+      name: APP_DEPLOYMENT_NAME,
+      namespace: spec.namespace,
+      labels: {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: spec.slug
+      }
+    },
+    spec: {
+      replicas: 1,
+      selector: {
+        matchLabels: selector
+      },
+      template: {
+        metadata: {
+          labels: {
+            ...selector,
+            [LABELS.managedBy]: LABELS.managedBy
+          }
+        },
+        spec: {
+          imagePullSecrets: [{ name: GHCR_PULL_SECRET_NAME }],
+          containers: [
+            {
+              name: "app",
+              image: spec.image,
+              ports: [{ containerPort: spec.containerPort }],
+              resources: {
+                requests: {
+                  cpu: String(spec.cpu),
+                  memory: `${spec.ramGi}Gi`
+                },
+                limits: {
+                  cpu: String(spec.cpu),
+                  memory: `${spec.ramGi}Gi`
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  };
+}
+
+export function buildService(spec: PublishSpec): V1Service {
+  const selector = buildSelector(spec.slug);
+  return {
+    apiVersion: "v1",
+    kind: "Service",
+    metadata: {
+      name: SERVICE_NAME,
+      namespace: spec.namespace,
+      labels: {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: spec.slug
+      }
+    },
+    spec: {
+      type: "ClusterIP",
+      selector,
+      ports: [
+        {
+          name: "http",
+          port: 80,
+          targetPort: spec.containerPort,
+          protocol: "TCP"
+        }
+      ]
+    }
+  };
+}
+
+export function buildIngress(spec: PublishSpec): V1Ingress {
+  const baseIngress: V1Ingress = {
+    apiVersion: "networking.k8s.io/v1",
+    kind: "Ingress",
+    metadata: {
+      name: INGRESS_NAME,
+      namespace: spec.namespace,
+      labels: {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: spec.slug
+      }
+    },
+    spec: {
+      ingressClassName: process.env.INGRESS_CLASS_NAME ?? "traefik",
+      rules: [
+        {
+          host: spec.host,
+          http: {
+            paths: [
+              {
+                path: "/",
+                pathType: "Prefix",
+                backend: {
+                  service: {
+                    name: SERVICE_NAME,
+                    port: { number: 80 }
+                  }
+                }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  };
+
+  return {
+    ...baseIngress,
+    metadata: {
+      ...baseIngress.metadata,
+      annotations: {
+        ...(baseIngress.metadata?.annotations ?? {}),
+        "traefik.ingress.kubernetes.io/router.entrypoints": "web",
+        "traefik.ingress.kubernetes.io/router.tls": "false"
+      }
+    }
+  };
+}
+
+----- FILE: apps/controller/src/k8s/pvc.ts -----
+import { getClients } from "./client.js";
+import { parseGiToNumber } from "./quantity.js";
+import { HttpError } from "../http/errors.js";
+
+export const TENANT_PVC_NAME = "site-data";
+
+export async function ensurePvc(namespace: string, sizeGi: number): Promise<void> {
+  const { core } = getClients();
+  try {
+    await core.createNamespacedPersistentVolumeClaim(namespace, {
+      metadata: { name: TENANT_PVC_NAME },
+      spec: {
+        accessModes: ["ReadWriteOnce"],
+        resources: {
+          requests: {
+            storage: `${sizeGi}Gi`
+          }
+        }
+      }
+    });
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+  }
+}
+
+export async function getPvcSizeGi(namespace: string): Promise<number | null> {
+  const { core } = getClients();
+  try {
+    const pvc = await core.readNamespacedPersistentVolumeClaim(TENANT_PVC_NAME, namespace);
+    const value = pvc.body.spec?.resources?.requests?.storage;
+    return parseGiToNumber(value);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) return null;
+    throw error;
+  }
+}
+
+export async function expandPvcIfNeeded(namespace: string, nextSizeGi: number): Promise<void> {
+  const { core } = getClients();
+  let pvc;
+  try {
+    pvc = await core.readNamespacedPersistentVolumeClaim(TENANT_PVC_NAME, namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(409, "PVC site-data not found.");
+    }
+    throw error;
+  }
+  const currentGi = parseGiToNumber(pvc.body.spec?.resources?.requests?.storage);
+  if (currentGi != null && nextSizeGi <= currentGi) {
+    throw new HttpError(400, "diskGi must be greater than current size.");
+  }
+
+  const resourceVersion = pvc.body.metadata?.resourceVersion;
+  if (!resourceVersion) {
+    throw new HttpError(500, "PVC resourceVersion missing.");
+  }
+
+  const next = {
+    ...pvc.body,
+    spec: {
+      ...pvc.body.spec,
+      resources: {
+        ...pvc.body.spec?.resources,
+        requests: {
+          ...pvc.body.spec?.resources?.requests,
+          storage: `${nextSizeGi}Gi`
+        }
+      }
+    },
+    metadata: {
+      ...pvc.body.metadata,
+      resourceVersion
+    }
+  };
+
+  await core.replaceNamespacedPersistentVolumeClaim(TENANT_PVC_NAME, namespace, next);
+}
+
+----- FILE: apps/controller/src/k8s/quantity.ts -----
+export function parseCpuToNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.endsWith("m")) {
+    const number = Number(trimmed.slice(0, -1));
+    return Number.isFinite(number) ? number / 1000 : null;
+  }
+  const number = Number(trimmed);
+  return Number.isFinite(number) ? number : null;
+}
+
+export function parseGiToNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.endsWith("Gi")) {
+    const number = Number(trimmed.slice(0, -2));
+    return Number.isFinite(number) ? number : null;
+  }
+  if (trimmed.endsWith("Mi")) {
+    const number = Number(trimmed.slice(0, -2));
+    return Number.isFinite(number) ? number / 1024 : null;
+  }
+  const number = Number(trimmed);
+  return Number.isFinite(number) ? number : null;
+}
+
+----- FILE: apps/controller/src/k8s/quota.ts -----
+import { getClients } from "./client.js";
+import { parseCpuToNumber, parseGiToNumber } from "./quantity.js";
+import { HttpError } from "../http/errors.js";
+
+export type LimitsPatch = {
+  cpu?: number;
+  ramGi?: number;
+  diskGi?: number;
+};
+
+export type ResolvedLimits = {
+  cpu: number;
+  ramGi: number;
+  diskGi: number;
+};
+
+export type QuotaStatus = {
+  exists: boolean;
+  limits?: ResolvedLimits;
+};
+
+export async function readQuotaStatus(
+  namespace: string,
+  quotaName: string
+): Promise<QuotaStatus> {
+  const { core } = getClients();
+  try {
+    const result = await core.readNamespacedResourceQuota(quotaName, namespace);
+    const hard = result.body.spec?.hard ?? {};
+    const cpu = parseCpuToNumber(hard["requests.cpu"]);
+    const ramGi = parseGiToNumber(hard["requests.memory"]);
+    const diskGi = parseGiToNumber(hard["requests.storage"]);
+    if (cpu == null || ramGi == null || diskGi == null) {
+      return { exists: true };
+    }
+    return { exists: true, limits: { cpu, ramGi, diskGi } };
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) return { exists: false };
+    throw error;
+  }
+}
+
+export async function updateQuotaLimits(
+  namespace: string,
+  quotaName: string,
+  patch: LimitsPatch
+): Promise<ResolvedLimits> {
+  const { core } = getClients();
+  const current = await core.readNamespacedResourceQuota(quotaName, namespace);
+  const resourceVersion = current.body.metadata?.resourceVersion;
+  if (!resourceVersion) {
+    throw new HttpError(500, "ResourceQuota resourceVersion missing.");
+  }
+
+  const hard = { ...(current.body.spec?.hard ?? {}) };
+  const currentCpu =
+    parseCpuToNumber(hard["requests.cpu"]) ?? parseCpuToNumber(hard["limits.cpu"]) ?? 0;
+  const currentRamGi =
+    parseGiToNumber(hard["requests.memory"]) ?? parseGiToNumber(hard["limits.memory"]) ?? 0;
+  const currentDiskGi = parseGiToNumber(hard["requests.storage"]) ?? 0;
+
+  const desiredCpu = patch.cpu ?? currentCpu;
+  const desiredRamGi = patch.ramGi ?? currentRamGi;
+  const desiredDiskGi = patch.diskGi ?? currentDiskGi;
+
+  hard["requests.cpu"] = String(desiredCpu);
+  hard["limits.cpu"] = String(desiredCpu);
+  hard["requests.memory"] = `${desiredRamGi}Gi`;
+  hard["limits.memory"] = `${desiredRamGi}Gi`;
+  hard["requests.storage"] = `${desiredDiskGi}Gi`;
+  hard["pods"] = "1";
+  hard["persistentvolumeclaims"] = "1";
+
+  const next = {
+    ...current.body,
+    spec: {
+      ...current.body.spec,
+      hard
+    },
+    metadata: {
+      ...current.body.metadata,
+      resourceVersion
+    }
+  };
+
+  await core.replaceNamespacedResourceQuota(quotaName, namespace, next);
+
+  return {
+    cpu: desiredCpu,
+    ramGi: desiredRamGi,
+    diskGi: desiredDiskGi
+  };
+}
+
+----- FILE: apps/controller/src/k8s/secrets.ts -----
+import type { V1Secret } from "@kubernetes/client-node";
+import { getClients, LABELS } from "./client.js";
+import { HttpError } from "../http/errors.js";
+
+export const GHCR_PULL_SECRET_NAME = "ghcr-pull-secret";
+export const PLATFORM_NAMESPACE = process.env.PLATFORM_NAMESPACE ?? "platform";
+
+async function readPlatformSecret(name: string): Promise<V1Secret> {
+  const { core } = getClients();
+  try {
+    const result = await core.readNamespacedSecret(name, PLATFORM_NAMESPACE);
+    return result.body;
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(
+        500,
+        `Missing ${name} secret in ${PLATFORM_NAMESPACE} namespace.`
+      );
+    }
+    throw error;
+  }
+}
+
+export async function ensureGhcrPullSecret(namespace: string, slug: string): Promise<void> {
+  const { core } = getClients();
+  const source = await readPlatformSecret(GHCR_PULL_SECRET_NAME);
+  const secret: V1Secret = {
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: {
+      name: GHCR_PULL_SECRET_NAME,
+      namespace,
+      labels: {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: slug
+      }
+    },
+    type: source.type ?? "kubernetes.io/dockerconfigjson",
+    data: source.data ?? {}
+  };
+
+  try {
+    await core.createNamespacedSecret(namespace, secret);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+  }
+}
+
+----- FILE: apps/controller/src/sites/site.dto.ts -----
+import { z } from "zod";
+
+export const CreateSiteSchema = z.object({
+  domain: z.string().min(1),
+  cpu: z.number().int().positive(),
+  ramGi: z.number().int().positive(),
+  diskGi: z.number().int().positive()
+});
+
+export const PatchLimitsSchema = z
+  .object({
+    cpu: z.number().int().positive().optional(),
+    ramGi: z.number().int().positive().optional(),
+    diskGi: z.number().int().positive().optional()
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one limit must be provided"
+  });
+
+export const DeploySiteSchema = z.object({
+  image: z.string().min(1),
+  containerPort: z.number().int().positive()
+});
+
+export type CreateSiteInput = z.infer<typeof CreateSiteSchema>;
+export type PatchLimitsInput = z.infer<typeof PatchLimitsSchema>;
+export type DeploySiteInput = z.infer<typeof DeploySiteSchema>;
+
+export type SiteLimits = {
+  cpu: number;
+  ramGi: number;
+  diskGi: number;
+  pods: 1;
+};
+
+export type CreateSiteResponse = {
+  domain: string;
+  slug: string;
+  namespace: string;
+  limits: SiteLimits;
+};
+
+export type SiteLimitsResponse = {
+  slug: string;
+  namespace: string;
+  limits: SiteLimits;
+};
+
+export type DeploySiteResponse = {
+  slug: string;
+  namespace: string;
+  image: string;
+  containerPort: number;
+};
+
+export type SiteListItem = {
+  slug: string;
+  namespace: string;
+  ready: boolean;
+};
+
+----- FILE: apps/controller/src/sites/site.service.ts -----
+import { HttpError } from "../http/errors.js";
+import { loadTenantTemplates } from "../templates/load.js";
+import {
+  renderLimitRange,
+  renderNetworkPolicy,
+  renderResourceQuota
+} from "../templates/render.js";
+import {
+  upsertDeployment,
+  upsertIngress,
+  upsertLimitRange,
+  upsertNetworkPolicy,
+  upsertResourceQuota,
+  upsertService
+} from "../k8s/apply.js";
+import {
+  allocateTenantNamespace,
+  deleteTenantNamespace,
+  listTenantNamespaces,
+  requireNamespace,
+  slugFromNamespace
+} from "../k8s/namespace.js";
+import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
+import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
+import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
+import { ensureGhcrPullSecret } from "../k8s/secrets.js";
+import { slugFromDomain, validateSlug } from "./site.slug.js";
+import type {
+  CreateSiteInput,
+  PatchLimitsInput,
+  CreateSiteResponse,
+  DeploySiteInput,
+  DeploySiteResponse,
+  SiteListItem,
+  SiteLimitsResponse
+} from "./site.dto.js";
+
+const DEFAULT_MAINTENANCE_IMAGE = "ghcr.io/OWNER/voxeil-maintenance:latest";
+const DEFAULT_MAINTENANCE_PORT = 3000;
+
+function resolveMaintenanceImage(): string {
+  const value = process.env.GHCR_MAINTENANCE_IMAGE ?? DEFAULT_MAINTENANCE_IMAGE;
+  if (!value.trim()) {
+    throw new HttpError(500, "GHCR_MAINTENANCE_IMAGE must be set.");
+  }
+  return value;
+}
+
+function resolveMaintenancePort(): number {
+  const raw = process.env.MAINTENANCE_CONTAINER_PORT;
+  const port = raw ? Number(raw) : DEFAULT_MAINTENANCE_PORT;
+  if (!Number.isInteger(port) || port <= 0) {
+    throw new HttpError(500, "MAINTENANCE_CONTAINER_PORT must be a positive integer.");
+  }
+  return port;
+}
+
+export async function createSite(input: CreateSiteInput): Promise<CreateSiteResponse> {
+  let baseSlug: string;
+  try {
+    baseSlug = slugFromDomain(input.domain);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid domain.");
+  }
+  const { slug, namespace } = await allocateTenantNamespace(baseSlug);
+
+  const templates = await loadTenantTemplates();
+  const resourceQuota = renderResourceQuota(templates.resourceQuota, namespace, {
+    cpu: input.cpu,
+    ramGi: input.ramGi,
+    diskGi: input.diskGi
+  });
+  const limitRange = renderLimitRange(templates.limitRange, namespace, {
+    cpu: input.cpu,
+    ramGi: input.ramGi
+  });
+  const denyAll = renderNetworkPolicy(templates.networkPolicyDenyAll, namespace);
+  const allowIngress = renderNetworkPolicy(templates.networkPolicyAllowIngress, namespace);
+
+  await Promise.all([
+    upsertResourceQuota(resourceQuota),
+    upsertLimitRange(limitRange),
+    upsertNetworkPolicy(denyAll),
+    upsertNetworkPolicy(allowIngress),
+    ensurePvc(namespace, input.diskGi)
+  ]);
+
+  await ensureGhcrPullSecret(namespace, slug);
+  const host = input.domain.trim();
+  if (!host) {
+    throw new HttpError(400, "Domain is required.");
+  }
+  const maintenanceSpec = {
+    namespace,
+    slug,
+    host,
+    image: resolveMaintenanceImage(),
+    containerPort: resolveMaintenancePort(),
+    cpu: input.cpu,
+    ramGi: input.ramGi
+  };
+  await Promise.all([
+    upsertDeployment(buildDeployment(maintenanceSpec)),
+    upsertService(buildService(maintenanceSpec)),
+    upsertIngress(buildIngress(maintenanceSpec))
+  ]);
+
+  return {
+    domain: input.domain,
+    slug,
+    namespace,
+    limits: {
+      cpu: input.cpu,
+      ramGi: input.ramGi,
+      diskGi: input.diskGi,
+      pods: 1
+    }
+  };
+}
+
+export async function listSites(): Promise<SiteListItem[]> {
+  const templates = await loadTenantTemplates();
+  const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
+  const namespaces = await listTenantNamespaces();
+  const items: SiteListItem[] = [];
+
+  for (const namespace of namespaces) {
+    const slug = slugFromNamespace(namespace);
+    try {
+      const [quotaStatus, pvcSize] = await Promise.all([
+        readQuotaStatus(namespace, quotaName),
+        getPvcSizeGi(namespace)
+      ]);
+
+      const ready = quotaStatus.exists && pvcSize != null;
+      items.push({ slug, namespace, ready });
+    } catch {
+      items.push({ slug, namespace, ready: false });
+    }
+  }
+
+  return items;
+}
+
+export async function updateSiteLimits(
+  slug: string,
+  patch: PatchLimitsInput
+): Promise<SiteLimitsResponse> {
+  if (!slug) {
+    throw new HttpError(400, "Slug is required.");
+  }
+  const namespace = `tenant-${slug}`;
+  await requireNamespace(namespace);
+
+  const templates = await loadTenantTemplates();
+  const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
+
+  if (patch.diskGi !== undefined) {
+    await expandPvcIfNeeded(namespace, patch.diskGi);
+  }
+
+  const updated = await updateQuotaLimits(namespace, quotaName, patch);
+  if (patch.cpu !== undefined || patch.ramGi !== undefined) {
+    const limitRange = renderLimitRange(templates.limitRange, namespace, {
+      cpu: updated.cpu,
+      ramGi: updated.ramGi
+    });
+    await upsertLimitRange(limitRange);
+  }
+
+  return {
+    slug,
+    namespace,
+    limits: {
+      cpu: updated.cpu,
+      ramGi: updated.ramGi,
+      diskGi: updated.diskGi,
+      pods: 1
+    }
+  };
+}
+
+export async function deploySite(
+  slug: string,
+  input: DeploySiteInput
+): Promise<DeploySiteResponse> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespace = `tenant-${normalized}`;
+  await requireNamespace(namespace);
+
+  await ensureGhcrPullSecret(namespace, normalized);
+
+  const templates = await loadTenantTemplates();
+  const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
+  const quotaStatus = await readQuotaStatus(namespace, quotaName);
+  if (!quotaStatus.exists || !quotaStatus.limits) {
+    throw new HttpError(500, "Tenant limits are missing for deployment.");
+  }
+
+  const spec = {
+    namespace,
+    slug: normalized,
+    host: "",
+    image: input.image,
+    containerPort: input.containerPort,
+    cpu: quotaStatus.limits.cpu,
+    ramGi: quotaStatus.limits.ramGi
+  };
+
+  await Promise.all([
+    upsertDeployment(buildDeployment(spec)),
+    upsertService(buildService(spec))
+  ]);
+
+  return {
+    slug: normalized,
+    namespace,
+    image: input.image,
+    containerPort: input.containerPort
+  };
+}
+
+export async function deleteSite(slug: string): Promise<{ slug: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  await deleteTenantNamespace(normalized);
+  return { slug: normalized };
+}
+
+----- FILE: apps/controller/src/sites/site.slug.ts -----
+export function slugFromDomain(input: string): string {
+  let value = input.trim().toLowerCase();
+  if (!value) {
+    throw new Error("Domain is required.");
+  }
+
+  if (value.includes("://")) {
+    try {
+      value = new URL(value).hostname.toLowerCase();
+    } catch {
+      // fall through to best-effort parsing below
+    }
+  }
+
+  value = value.split("/")[0] ?? value;
+  value = value.split(":")[0] ?? value;
+  value = value.replace(/\.$/, "");
+
+  const parts = value.split(".").filter(Boolean);
+  value = parts.join(".");
+
+  value = value.replace(/[^a-z0-9]+/g, "-");
+  value = value.replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+
+  if (!value) {
+    throw new Error("Domain cannot be normalized into a slug.");
+  }
+
+  return value;
+}
+
+export function validateSlug(input: string): string {
+  const value = input.trim().toLowerCase();
+  if (!value) {
+    throw new Error("Slug is required.");
+  }
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)) {
+    throw new Error("Slug must be lowercase and contain only a-z, 0-9, or hyphen.");
+  }
+  return value;
+}
+----- FILE: apps/controller/src/templates/load.ts -----
+import { promises as fs, existsSync } from "node:fs";
+import path from "node:path";
+import k8s from "@kubernetes/client-node";
+import type {
+  V1LimitRange,
+  V1NetworkPolicy,
+  V1ResourceQuota
+} from "@kubernetes/client-node";
+
+export type TenantTemplates = {
+  resourceQuota: V1ResourceQuota;
+  limitRange: V1LimitRange;
+  networkPolicyDenyAll: V1NetworkPolicy;
+  networkPolicyAllowIngress: V1NetworkPolicy;
+};
+
+let cached: TenantTemplates | null = null;
+
+function resolveTemplatesDir(): string {
+  const candidates = [
+    path.resolve(process.cwd(), "templates", "tenant"),
+    path.resolve(process.cwd(), "infra", "k8s", "templates", "tenant"),
+    path.resolve(process.cwd(), "..", "..", "infra", "k8s", "templates", "tenant"),
+    path.resolve(process.cwd(), "..", "infra", "k8s", "templates", "tenant")
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0];
+}
+
+async function readYaml<T>(filePath: string): Promise<T> {
+  if (!existsSync(filePath)) {
+    throw new Error(`Template file not found: ${filePath}`);
+  }
+  const raw = await fs.readFile(filePath, "utf8");
+  return k8s.loadYaml(raw) as T;
+}
+
+export async function loadTenantTemplates(): Promise<TenantTemplates> {
+  if (cached) return cached;
+  const dir = resolveTemplatesDir();
+  const resourceQuota = await readYaml<V1ResourceQuota>(path.join(dir, "resourcequota.yaml"));
+  const limitRange = await readYaml<V1LimitRange>(path.join(dir, "limitrange.yaml"));
+  const networkPolicyDenyAll = await readYaml<V1NetworkPolicy>(
+    path.join(dir, "networkpolicy-deny-all.yaml")
+  );
+  const networkPolicyAllowIngress = await readYaml<V1NetworkPolicy>(
+    path.join(dir, "networkpolicy-allow-ingress.yaml")
+  );
+
+  cached = {
+    resourceQuota,
+    limitRange,
+    networkPolicyDenyAll,
+    networkPolicyAllowIngress
+  };
+  return cached;
+}
+
+----- FILE: apps/controller/src/templates/render.ts -----
+import type {
+  V1LimitRange,
+  V1NetworkPolicy,
+  V1ResourceQuota
+} from "@kubernetes/client-node";
+
+type Limits = {
+  cpu: number;
+  ramGi: number;
+  diskGi: number;
+};
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export function renderResourceQuota(
+  template: V1ResourceQuota,
+  namespace: string,
+  limits: Limits
+): V1ResourceQuota {
+  const quota = clone(template);
+  quota.metadata = {
+    ...quota.metadata,
+    name: template.metadata?.name ?? "site-quota",
+    namespace
+  };
+  quota.spec = quota.spec ?? {};
+  quota.spec.hard = {
+    ...quota.spec.hard,
+    "pods": "1",
+    "requests.cpu": String(limits.cpu),
+    "requests.memory": `${limits.ramGi}Gi`,
+    "limits.cpu": String(limits.cpu),
+    "limits.memory": `${limits.ramGi}Gi`,
+    "persistentvolumeclaims": "1",
+    "requests.storage": `${limits.diskGi}Gi`
+  };
+  return quota;
+}
+
+export function renderLimitRange(
+  template: V1LimitRange,
+  namespace: string,
+  limits?: Pick<Limits, "cpu" | "ramGi">
+): V1LimitRange {
+  const limitRange = clone(template);
+  limitRange.metadata = {
+    ...limitRange.metadata,
+    name: template.metadata?.name ?? "site-limits",
+    namespace
+  };
+  if (limits) {
+    const next = {
+      cpu: String(limits.cpu),
+      memory: `${limits.ramGi}Gi`
+    };
+    if (!limitRange.spec) {
+      limitRange.spec = {
+        limits: [
+          { type: "Container", max: next, _default: next, defaultRequest: next, min: { cpu: "0", memory: "0Mi" } }
+        ]
+      };
+    } else if (!limitRange.spec.limits || limitRange.spec.limits.length === 0) {
+      limitRange.spec.limits = [
+        { type: "Container", max: next, _default: next, defaultRequest: next, min: { cpu: "0", memory: "0Mi" } }
+      ];
+    } else {
+      const limit = limitRange.spec.limits[0];
+      limit.max = { ...(limit.max ?? {}), ...next };
+      limit._default = { ...(limit._default ?? {}), ...next };
+      limit.defaultRequest = { ...(limit.defaultRequest ?? {}), ...next };
+      // Keep min permissive so valid plans never get rejected.
+      limit.min = { ...(limit.min ?? {}), cpu: "0", memory: "0Mi" };
+    }
+  }
+  return limitRange;
+}
+
+export function renderNetworkPolicy(
+  template: V1NetworkPolicy,
+  namespace: string
+): V1NetworkPolicy {
+  const policy = clone(template);
+  policy.metadata = {
+    ...policy.metadata,
+    name: template.metadata?.name ?? "policy",
+    namespace
+  };
+  return policy;
+}
+
+----- FILE: apps/controller/templates/tenant/limitrange.yaml -----
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: site-limits
+  # namespace is set by the controller per tenant
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: 1000m
+        memory: 1Gi
+      min:
+        cpu: "0"
+        memory: 0Mi
+
+----- FILE: apps/controller/templates/tenant/networkpolicy-allow-ingress.yaml -----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-ingress
+  # namespace is set by the controller per tenant
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - {} # allow all ingress (NodePort traffic hits pods)
+
+----- FILE: apps/controller/templates/tenant/networkpolicy-deny-all.yaml -----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  # namespace is set by the controller per tenant
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+----- FILE: apps/controller/templates/tenant/resourcequota.yaml -----
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: site-quota
+  # namespace is set by the controller per tenant
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    requests.storage: 1Gi
+    limits.cpu: "2"
+    limits.memory: 2Gi
+    pods: "1"
+    services: "5"
+    configmaps: "10"
+    persistentvolumeclaims: "1"
+
+----- FILE: apps/controller/tsconfig.json -----
+{
+    "compilerOptions": {
+      "target": "ES2022",
+      "module": "ES2022",
+      "moduleResolution": "Bundler",
+      "outDir": "dist",
+      "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+    },
+    "include": ["src/**/*.ts"]
+  }
+  
+----- FILE: apps/panel/app/actions.ts -----
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { createSite, deleteSite } from "./lib/controller.js";
+import { clearSession, requireSession } from "./lib/session.js";
+
+export async function createSiteAction(formData: FormData) {
+  requireSession();
+
+  const siteId = String(formData.get("siteId") ?? "").trim();
+  const image = String(formData.get("image") ?? "").trim();
+  const containerPort = Number(formData.get("containerPort") ?? "3000");
+
+  if (!siteId || !image || Number.isNaN(containerPort)) {
+    throw new Error("siteId, image, and containerPort are required.");
+  }
+
+  await createSite({ siteId, image, containerPort });
+  revalidatePath("/");
+}
+
+export async function deleteSiteAction(formData: FormData) {
+  requireSession();
+  const siteId = String(formData.get("siteId") ?? "").trim();
+  if (!siteId) throw new Error("siteId is required.");
+
+  await deleteSite(siteId);
+  revalidatePath("/");
+}
+
+export async function logoutAction() {
+  clearSession();
+  redirect("/login");
+}
+
+----- FILE: apps/panel/app/globals.css -----
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #f4f5f7;
+  color: #0f172a;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 960px;
+  margin: 48px auto;
+  padding: 24px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.06);
+}
+
+button {
+  cursor: pointer;
+}
+
+----- FILE: apps/panel/app/layout.tsx -----
+import "./globals.css";
+import type { ReactNode } from "react";
+
+export const metadata = {
+  title: "Voxeil Panel",
+  description: "Minimal self-hosted Kubernetes panel"
+};
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+      </body>
+    </html>
+  );
+}
+
+----- FILE: apps/panel/app/lib/controller.ts -----
+const CONTROLLER_BASE =
+  process.env.CONTROLLER_BASE_URL ?? "http://controller.platform.svc.cluster.local:8080";
+const CONTROLLER_API_KEY = process.env.CONTROLLER_API_KEY;
+
+if (!CONTROLLER_API_KEY) {
+  throw new Error("CONTROLLER_API_KEY is not set (injected via Secret).");
+}
+
+type ControllerInit = RequestInit & { headers?: Record<string, string> };
+
+async function controllerFetch(path: string, init?: ControllerInit) {
+  const headers = {
+    ...(init?.headers ?? {}),
+    "x-api-key": CONTROLLER_API_KEY,
+    "content-type": init?.headers?.["content-type"] ?? "application/json"
+  };
+
+  const res = await fetch(`${CONTROLLER_BASE}${path}`, {
+    ...init,
+    headers
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Controller error (${res.status}): ${text}`);
+  }
+
+  return res;
+}
+
+export type SiteInfo = {
+  namespace: string;
+  siteId: string | null;
+};
+
+export async function listSites(): Promise<SiteInfo[]> {
+  const res = await controllerFetch("/sites", { method: "GET" });
+  return res.json();
+}
+
+export async function createSite(input: {
+  siteId: string;
+  image: string;
+  containerPort: number;
+}) {
+  await controllerFetch("/sites", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function deleteSite(siteId: string) {
+  await controllerFetch(`/sites/${siteId}`, { method: "DELETE" });
+}
+
+----- FILE: apps/panel/app/lib/session.ts -----
+import crypto from "crypto";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+
+const SESSION_COOKIE = "vhp_panel_session";
+const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12h
+
+function sessionValue(): string {
+  const password = process.env.PANEL_ADMIN_PASSWORD;
+  if (!password) {
+    throw new Error("PANEL_ADMIN_PASSWORD is not set (injected via Secret).");
+  }
+  return crypto.createHash("sha256").update(password).digest("hex");
+}
+
+export function hasSession(): boolean {
+  const current = cookies().get(SESSION_COOKIE)?.value;
+  return current === sessionValue();
+}
+
+export function requireSession() {
+  if (!hasSession()) redirect("/login");
+}
+
+export function establishSession() {
+  cookies().set({
+    name: SESSION_COOKIE,
+    value: sessionValue(),
+    httpOnly: true,
+    sameSite: "lax",
+    secure: false,
+    path: "/",
+    maxAge: SESSION_TTL_SECONDS
+  });
+}
+
+export function clearSession() {
+  cookies().delete(SESSION_COOKIE);
+}
+
+----- FILE: apps/panel/app/login/login-actions.ts -----
+"use server";
+
+import { establishSession, hasSession } from "../lib/session.js";
+
+type LoginState = { success: boolean; error?: string };
+
+export async function loginAction(
+  _prevState: LoginState,
+  formData: FormData
+): Promise<LoginState> {
+  if (hasSession()) return { success: true };
+
+  const provided = String(formData.get("password") ?? "");
+  const adminPassword = process.env.PANEL_ADMIN_PASSWORD;
+  if (!adminPassword) {
+    return { success: false, error: "PANEL_ADMIN_PASSWORD is not set." };
+  }
+
+  if (provided !== adminPassword) {
+    return { success: false, error: "Invalid password." };
+  }
+
+  establishSession();
+  return { success: true };
+}
+
+----- FILE: apps/panel/app/login/login-form.tsx -----
+"use client";
+
+import { useEffect } from "react";
+import { useFormState } from "react-dom";
+import { useRouter } from "next/navigation";
+import { loginAction } from "./login-actions";
+
+const initialState = { success: false, error: "" };
+
+export function LoginForm() {
+  const router = useRouter();
+  const [state, formAction] = useFormState(loginAction, initialState);
+
+  useEffect(() => {
+    if (state?.success) router.push("/");
+  }, [state?.success, router]);
+
+  return (
+    <form action={formAction} style={{ display: "grid", gap: "12px", maxWidth: 320 }}>
+      <label style={{ display: "grid", gap: 6 }}>
+        <span>Admin password</span>
+        <input name="password" type="password" required placeholder="Generated by installer" />
+      </label>
+      {state?.error ? <div style={{ color: "crimson" }}>{state.error}</div> : null}
+      <button type="submit" style={{ padding: "10px 16px" }}>Login</button>
+    </form>
+  );
+}
+
+----- FILE: apps/panel/app/login/page.tsx -----
+import { redirect } from "next/navigation";
+import { hasSession } from "../lib/session.js";
+import { LoginForm } from "./login-form";
+
+export default function LoginPage() {
+  if (hasSession()) redirect("/");
+
+  return (
+    <main>
+      <h1>Voxeil Panel</h1>
+      <p>Enter the admin password generated by the installer.</p>
+      <LoginForm />
+    </main>
+  );
+}
+
+----- FILE: apps/panel/app/page.tsx -----
+import { createSiteAction, deleteSiteAction, logoutAction } from "./actions";
+import { listSites } from "./lib/controller.js";
+import { requireSession } from "./lib/session.js";
+
+export default async function HomePage() {
+  await requireSession();
+  const sites = await listSites();
+
+  return (
+    <main>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <h1 style={{ margin: 0 }}>Sites</h1>
+          <p style={{ margin: 0, color: "#475569" }}>One tenant = one namespace.</p>
+        </div>
+        <form action={logoutAction}>
+          <button type="submit">Logout</button>
+        </form>
+      </header>
+
+      <section style={{ marginTop: 24 }}>
+        <h2>Create site</h2>
+        <form action={createSiteAction} style={{ display: "grid", gap: 12, maxWidth: 420 }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Site ID (lowercase, a-z0-9-)</span>
+            <input name="siteId" minLength={3} maxLength={40} pattern="[a-z0-9-]+" required />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Image (registry/user:tag)</span>
+            <input name="image" required />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Container port</span>
+            <input name="containerPort" type="number" defaultValue={3000} min={1} required />
+          </label>
+          <button type="submit" style={{ padding: "10px 16px" }}>Create</button>
+        </form>
+      </section>
+
+      <section style={{ marginTop: 32 }}>
+        <h2>Existing sites</h2>
+        {sites.length === 0 ? (
+          <p>No sites yet.</p>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 12 }}>
+            {sites.map(site => (
+              <li key={site.namespace} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{site.siteId ?? "unknown"}</div>
+                    <div style={{ color: "#475569", fontSize: 14 }}>{site.namespace}</div>
+                  </div>
+                  {site.siteId ? (
+                    <form action={deleteSiteAction}>
+                      <input type="hidden" name="siteId" value={site.siteId} />
+                      <button type="submit" style={{ color: "crimson" }}>Delete</button>
+                    </form>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </main>
+  );
+}
+
+----- FILE: apps/panel/Dockerfile -----
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json tsconfig.json next.config.mjs ./
+COPY next-env.d.ts ./next-env.d.ts
+COPY app ./app
+RUN npm install
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/package.json /app/package.json
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/.next /app/.next
+COPY --from=build /app/app /app/app
+EXPOSE 3000
+CMD ["npm", "run", "start"]
+
+----- FILE: apps/panel/next.config.mjs -----
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  experimental: {
+    serverActions: true
+  }
+};
+
+export default nextConfig;
+
+----- FILE: apps/panel/next-env.d.ts -----
+/// <reference types="next" />
+/// <reference types="next/types/global" />
+/// <reference types="next/navigation-types/compat/navigation" />
+
+
+----- FILE: apps/panel/package.json -----
+{
+  "name": "vhp-panel",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14.2.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.19",
+    "typescript": "^5.6.3"
+  }
+}
+
+----- FILE: apps/panel/package-lock.json -----
+{
+  "name": "vhp-panel",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "vhp-panel",
+      "dependencies": {
+        "next": "14.2.3",
+        "react": "18.3.1",
+        "react-dom": "18.3.1"
+      },
+      "devDependencies": {
+        "@types/node": "^20.11.19",
+        "@types/react": "^18.2.66",
+        "@types/react-dom": "^18.2.19",
+        "typescript": "^5.6.3"
+      }
+    },
+    "node_modules/@next/env": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/env/-/env-14.2.3.tgz",
+      "integrity": "sha512-W7fd7IbkfmeeY2gXrzJYDx8D2lWKbVoTIj1o1ScPHNzvp30s1AuoEFSdr39bC5sjxJaxTtq3OTCZboNp0lNWHA==",
+      "license": "MIT"
+    },
+    "node_modules/@next/swc-darwin-arm64": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/swc-darwin-arm64/-/swc-darwin-arm64-14.2.3.tgz",
+      "integrity": "sha512-3pEYo/RaGqPP0YzwnlmPN2puaF2WMLM3apt5jLW2fFdXD9+pqcoTzRk+iZsf8ta7+quAe4Q6Ms0nR0SFGFdS1A==",
+      "cpu": [
+        "arm64"
+      ],
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "engines": {
+        "node": ">= 10"
+      }
+    },
+    "node_modules/@next/swc-darwin-x64": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/swc-darwin-x64/-/swc-darwin-x64-14.2.3.tgz",
+      "integrity": "sha512-6adp7waE6P1TYFSXpY366xwsOnEXM+y1kgRpjSRVI2CBDOcbRjsJ67Z6EgKIqWIue52d2q/Mx8g9MszARj8IEA==",
+      "cpu": [
+        "x64"
+      ],
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "engines": {
+        "node": ">= 10"
+      }
+    },
+    "node_modules/@next/swc-linux-arm64-gnu": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-gnu/-/swc-linux-arm64-gnu-14.2.3.tgz",
+      "integrity": "sha512-cuzCE/1G0ZSnTAHJPUT1rPgQx1w5tzSX7POXSLaS7w2nIUJUD+e25QoXD/hMfxbsT9rslEXugWypJMILBj/QsA==",
+      "cpu": [
+        "arm64"
+      ],
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">= 10"
+      }
+    },
+    "node_modules/@next/swc-linux-arm64-musl": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/swc-linux-arm64-musl/-/swc-linux-arm64-musl-14.2.3.tgz",
+      "integrity": "sha512-0D4/oMM2Y9Ta3nGuCcQN8jjJjmDPYpHX9OJzqk42NZGJocU2MqhBq5tWkJrUQOQY9N+In9xOdymzapM09GeiZw==",
+      "cpu": [
+        "arm64"
+      ],
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">= 10"
+      }
+    },
+    "node_modules/@next/swc-linux-x64-gnu": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-gnu/-/swc-linux-x64-gnu-14.2.3.tgz",
+      "integrity": "sha512-ENPiNnBNDInBLyUU5ii8PMQh+4XLr4pG51tOp6aJ9xqFQ2iRI6IH0Ds2yJkAzNV1CfyagcyzPfROMViS2wOZ9w==",
+      "cpu": [
+        "x64"
+      ],
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">= 10"
+      }
+    },
+    "node_modules/@next/swc-linux-x64-musl": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/swc-linux-x64-musl/-/swc-linux-x64-musl-14.2.3.tgz",
+      "integrity": "sha512-BTAbq0LnCbF5MtoM7I/9UeUu/8ZBY0i8SFjUMCbPDOLv+un67e2JgyN4pmgfXBwy/I+RHu8q+k+MCkDN6P9ViQ==",
+      "cpu": [
+        "x64"
+      ],
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "engines": {
+        "node": ">= 10"
+      }
+    },
+    "node_modules/@next/swc-win32-arm64-msvc": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/swc-win32-arm64-msvc/-/swc-win32-arm64-msvc-14.2.3.tgz",
+      "integrity": "sha512-AEHIw/dhAMLNFJFJIJIyOFDzrzI5bAjI9J26gbO5xhAKHYTZ9Or04BesFPXiAYXDNdrwTP2dQceYA4dL1geu8A==",
+      "cpu": [
+        "arm64"
+      ],
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "engines": {
+        "node": ">= 10"
+      }
+    },
+    "node_modules/@next/swc-win32-ia32-msvc": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/swc-win32-ia32-msvc/-/swc-win32-ia32-msvc-14.2.3.tgz",
+      "integrity": "sha512-vga40n1q6aYb0CLrM+eEmisfKCR45ixQYXuBXxOOmmoV8sYST9k7E3US32FsY+CkkF7NtzdcebiFT4CHuMSyZw==",
+      "cpu": [
+        "ia32"
+      ],
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "engines": {
+        "node": ">= 10"
+      }
+    },
+    "node_modules/@next/swc-win32-x64-msvc": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/@next/swc-win32-x64-msvc/-/swc-win32-x64-msvc-14.2.3.tgz",
+      "integrity": "sha512-Q1/zm43RWynxrO7lW4ehciQVj+5ePBhOK+/K2P7pLFX3JaJ/IZVC69SHidrmZSOkqz7ECIOhhy7XhAFG4JYyHA==",
+      "cpu": [
+        "x64"
+      ],
+      "license": "MIT",
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "engines": {
+        "node": ">= 10"
+      }
+    },
+    "node_modules/@swc/counter": {
+      "version": "0.1.3",
+      "resolved": "https://registry.npmjs.org/@swc/counter/-/counter-0.1.3.tgz",
+      "integrity": "sha512-e2BR4lsJkkRlKZ/qCHPw9ZaSxc0MVUd7gtbtaB7aMvHeJVYe8sOB8DBZkP2DtISHGSku9sCK6T6cnY0CtXrOCQ==",
+      "license": "Apache-2.0"
+    },
+    "node_modules/@swc/helpers": {
+      "version": "0.5.5",
+      "resolved": "https://registry.npmjs.org/@swc/helpers/-/helpers-0.5.5.tgz",
+      "integrity": "sha512-KGYxvIOXcceOAbEk4bi/dVLEK9z8sZ0uBB3Il5b1rhfClSpcX0yfRO0KmTkqR2cnQDymwLB+25ZyMzICg/cm/A==",
+      "license": "Apache-2.0",
+      "dependencies": {
+        "@swc/counter": "^0.1.3",
+        "tslib": "^2.4.0"
+      }
+    },
+    "node_modules/@types/node": {
+      "version": "20.19.30",
+      "resolved": "https://registry.npmjs.org/@types/node/-/node-20.19.30.tgz",
+      "integrity": "sha512-WJtwWJu7UdlvzEAUm484QNg5eAoq5QR08KDNx7g45Usrs2NtOPiX8ugDqmKdXkyL03rBqU5dYNYVQetEpBHq2g==",
+      "dev": true,
+      "license": "MIT",
+      "dependencies": {
+        "undici-types": "~6.21.0"
+      }
+    },
+    "node_modules/@types/prop-types": {
+      "version": "15.7.15",
+      "resolved": "https://registry.npmjs.org/@types/prop-types/-/prop-types-15.7.15.tgz",
+      "integrity": "sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw==",
+      "dev": true,
+      "license": "MIT"
+    },
+    "node_modules/@types/react": {
+      "version": "18.3.27",
+      "resolved": "https://registry.npmjs.org/@types/react/-/react-18.3.27.tgz",
+      "integrity": "sha512-cisd7gxkzjBKU2GgdYrTdtQx1SORymWyaAFhaxQPK9bYO9ot3Y5OikQRvY0VYQtvwjeQnizCINJAenh/V7MK2w==",
+      "dev": true,
+      "license": "MIT",
+      "peer": true,
+      "dependencies": {
+        "@types/prop-types": "*",
+        "csstype": "^3.2.2"
+      }
+    },
+    "node_modules/@types/react-dom": {
+      "version": "18.3.7",
+      "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-18.3.7.tgz",
+      "integrity": "sha512-MEe3UeoENYVFXzoXEWsvcpg6ZvlrFNlOQ7EOsvhI3CfAXwzPfO8Qwuxd40nepsYKqyyVQnTdEfv68q91yLcKrQ==",
+      "dev": true,
+      "license": "MIT",
+      "peerDependencies": {
+        "@types/react": "^18.0.0"
+      }
+    },
+    "node_modules/busboy": {
+      "version": "1.6.0",
+      "resolved": "https://registry.npmjs.org/busboy/-/busboy-1.6.0.tgz",
+      "integrity": "sha512-8SFQbg/0hQ9xy3UNTB0YEnsNBbWfhf7RtnzpL7TkBiTBRfrQ9Fxcnz7VJsleJpyp6rVLvXiuORqjlHi5q+PYuA==",
+      "dependencies": {
+        "streamsearch": "^1.1.0"
+      },
+      "engines": {
+        "node": ">=10.16.0"
+      }
+    },
+    "node_modules/caniuse-lite": {
+      "version": "1.0.30001764",
+      "resolved": "https://registry.npmjs.org/caniuse-lite/-/caniuse-lite-1.0.30001764.tgz",
+      "integrity": "sha512-9JGuzl2M+vPL+pz70gtMF9sHdMFbY9FJaQBi186cHKH3pSzDvzoUJUPV6fqiKIMyXbud9ZLg4F3Yza1vJ1+93g==",
+      "funding": [
+        {
+          "type": "opencollective",
+          "url": "https://opencollective.com/browserslist"
+        },
+        {
+          "type": "tidelift",
+          "url": "https://tidelift.com/funding/github/npm/caniuse-lite"
+        },
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/ai"
+        }
+      ],
+      "license": "CC-BY-4.0"
+    },
+    "node_modules/client-only": {
+      "version": "0.0.1",
+      "resolved": "https://registry.npmjs.org/client-only/-/client-only-0.0.1.tgz",
+      "integrity": "sha512-IV3Ou0jSMzZrd3pZ48nLkT9DA7Ag1pnPzaiQhpW7c3RbcqqzvzzVu+L8gfqMp/8IM2MQtSiqaCxrrcfu8I8rMA==",
+      "license": "MIT"
+    },
+    "node_modules/csstype": {
+      "version": "3.2.3",
+      "resolved": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
+      "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
+      "dev": true,
+      "license": "MIT"
+    },
+    "node_modules/graceful-fs": {
+      "version": "4.2.11",
+      "resolved": "https://registry.npmjs.org/graceful-fs/-/graceful-fs-4.2.11.tgz",
+      "integrity": "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==",
+      "license": "ISC"
+    },
+    "node_modules/js-tokens": {
+      "version": "4.0.0",
+      "resolved": "https://registry.npmjs.org/js-tokens/-/js-tokens-4.0.0.tgz",
+      "integrity": "sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==",
+      "license": "MIT"
+    },
+    "node_modules/loose-envify": {
+      "version": "1.4.0",
+      "resolved": "https://registry.npmjs.org/loose-envify/-/loose-envify-1.4.0.tgz",
+      "integrity": "sha512-lyuxPGr/Wfhrlem2CL/UcnUc1zcqKAImBDzukY7Y5F/yQiNdko6+fRLevlw1HgMySw7f611UIY408EtxRSoK3Q==",
+      "license": "MIT",
+      "dependencies": {
+        "js-tokens": "^3.0.0 || ^4.0.0"
+      },
+      "bin": {
+        "loose-envify": "cli.js"
+      }
+    },
+    "node_modules/nanoid": {
+      "version": "3.3.11",
+      "resolved": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.11.tgz",
+      "integrity": "sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w==",
+      "funding": [
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/ai"
+        }
+      ],
+      "license": "MIT",
+      "bin": {
+        "nanoid": "bin/nanoid.cjs"
+      },
+      "engines": {
+        "node": "^10 || ^12 || ^13.7 || ^14 || >=15.0.1"
+      }
+    },
+    "node_modules/next": {
+      "version": "14.2.3",
+      "resolved": "https://registry.npmjs.org/next/-/next-14.2.3.tgz",
+      "integrity": "sha512-dowFkFTR8v79NPJO4QsBUtxv0g9BrS/phluVpMAt2ku7H+cbcBJlopXjkWlwxrk/xGqMemr7JkGPGemPrLLX7A==",
+      "deprecated": "This version has a security vulnerability. Please upgrade to a patched version. See https://nextjs.org/blog/security-update-2025-12-11 for more details.",
+      "license": "MIT",
+      "dependencies": {
+        "@next/env": "14.2.3",
+        "@swc/helpers": "0.5.5",
+        "busboy": "1.6.0",
+        "caniuse-lite": "^1.0.30001579",
+        "graceful-fs": "^4.2.11",
+        "postcss": "8.4.31",
+        "styled-jsx": "5.1.1"
+      },
+      "bin": {
+        "next": "dist/bin/next"
+      },
+      "engines": {
+        "node": ">=18.17.0"
+      },
+      "optionalDependencies": {
+        "@next/swc-darwin-arm64": "14.2.3",
+        "@next/swc-darwin-x64": "14.2.3",
+        "@next/swc-linux-arm64-gnu": "14.2.3",
+        "@next/swc-linux-arm64-musl": "14.2.3",
+        "@next/swc-linux-x64-gnu": "14.2.3",
+        "@next/swc-linux-x64-musl": "14.2.3",
+        "@next/swc-win32-arm64-msvc": "14.2.3",
+        "@next/swc-win32-ia32-msvc": "14.2.3",
+        "@next/swc-win32-x64-msvc": "14.2.3"
+      },
+      "peerDependencies": {
+        "@opentelemetry/api": "^1.1.0",
+        "@playwright/test": "^1.41.2",
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "sass": "^1.3.0"
+      },
+      "peerDependenciesMeta": {
+        "@opentelemetry/api": {
+          "optional": true
+        },
+        "@playwright/test": {
+          "optional": true
+        },
+        "sass": {
+          "optional": true
+        }
+      }
+    },
+    "node_modules/picocolors": {
+      "version": "1.1.1",
+      "resolved": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
+      "license": "ISC"
+    },
+    "node_modules/postcss": {
+      "version": "8.4.31",
+      "resolved": "https://registry.npmjs.org/postcss/-/postcss-8.4.31.tgz",
+      "integrity": "sha512-PS08Iboia9mts/2ygV3eLpY5ghnUcfLV/EXTOW1E2qYxJKGGBUtNjN76FYHnMs36RmARn41bC0AZmn+rR0OVpQ==",
+      "funding": [
+        {
+          "type": "opencollective",
+          "url": "https://opencollective.com/postcss/"
+        },
+        {
+          "type": "tidelift",
+          "url": "https://tidelift.com/funding/github/npm/postcss"
+        },
+        {
+          "type": "github",
+          "url": "https://github.com/sponsors/ai"
+        }
+      ],
+      "license": "MIT",
+      "dependencies": {
+        "nanoid": "^3.3.6",
+        "picocolors": "^1.0.0",
+        "source-map-js": "^1.0.2"
+      },
+      "engines": {
+        "node": "^10 || ^12 || >=14"
+      }
+    },
+    "node_modules/react": {
+      "version": "18.3.1",
+      "resolved": "https://registry.npmjs.org/react/-/react-18.3.1.tgz",
+      "integrity": "sha512-wS+hAgJShR0KhEvPJArfuPVN1+Hz1t0Y6n5jLrGQbkb4urgPE/0Rve+1kMB1v/oWgHgm4WIcV+i7F2pTVj+2iQ==",
+      "license": "MIT",
+      "peer": true,
+      "dependencies": {
+        "loose-envify": "^1.1.0"
+      },
+      "engines": {
+        "node": ">=0.10.0"
+      }
+    },
+    "node_modules/react-dom": {
+      "version": "18.3.1",
+      "resolved": "https://registry.npmjs.org/react-dom/-/react-dom-18.3.1.tgz",
+      "integrity": "sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==",
+      "license": "MIT",
+      "peer": true,
+      "dependencies": {
+        "loose-envify": "^1.1.0",
+        "scheduler": "^0.23.2"
+      },
+      "peerDependencies": {
+        "react": "^18.3.1"
+      }
+    },
+    "node_modules/scheduler": {
+      "version": "0.23.2",
+      "resolved": "https://registry.npmjs.org/scheduler/-/scheduler-0.23.2.tgz",
+      "integrity": "sha512-UOShsPwz7NrMUqhR6t0hWjFduvOzbtv7toDH1/hIrfRNIDBnnBWd0CwJTGvTpngVlmwGCdP9/Zl/tVrDqcuYzQ==",
+      "license": "MIT",
+      "dependencies": {
+        "loose-envify": "^1.1.0"
+      }
+    },
+    "node_modules/source-map-js": {
+      "version": "1.2.1",
+      "resolved": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
+      "license": "BSD-3-Clause",
+      "engines": {
+        "node": ">=0.10.0"
+      }
+    },
+    "node_modules/streamsearch": {
+      "version": "1.1.0",
+      "resolved": "https://registry.npmjs.org/streamsearch/-/streamsearch-1.1.0.tgz",
+      "integrity": "sha512-Mcc5wHehp9aXz1ax6bZUyY5afg9u2rv5cqQI3mRrYkGC8rW2hM02jWuwjtL++LS5qinSyhj2QfLyNsuc+VsExg==",
+      "engines": {
+        "node": ">=10.0.0"
+      }
+    },
+    "node_modules/styled-jsx": {
+      "version": "5.1.1",
+      "resolved": "https://registry.npmjs.org/styled-jsx/-/styled-jsx-5.1.1.tgz",
+      "integrity": "sha512-pW7uC1l4mBZ8ugbiZrcIsiIvVx1UmTfw7UkC3Um2tmfUq9Bhk8IiyEIPl6F8agHgjzku6j0xQEZbfA5uSgSaCw==",
+      "license": "MIT",
+      "dependencies": {
+        "client-only": "0.0.1"
+      },
+      "engines": {
+        "node": ">= 12.0.0"
+      },
+      "peerDependencies": {
+        "react": ">= 16.8.0 || 17.x.x || ^18.0.0-0"
+      },
+      "peerDependenciesMeta": {
+        "@babel/core": {
+          "optional": true
+        },
+        "babel-plugin-macros": {
+          "optional": true
+        }
+      }
+    },
+    "node_modules/tslib": {
+      "version": "2.8.1",
+      "resolved": "https://registry.npmjs.org/tslib/-/tslib-2.8.1.tgz",
+      "integrity": "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w==",
+      "license": "0BSD"
+    },
+    "node_modules/typescript": {
+      "version": "5.9.3",
+      "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+      "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+      "dev": true,
+      "license": "Apache-2.0",
+      "bin": {
+        "tsc": "bin/tsc",
+        "tsserver": "bin/tsserver"
+      },
+      "engines": {
+        "node": ">=14.17"
+      }
+    },
+    "node_modules/undici-types": {
+      "version": "6.21.0",
+      "resolved": "https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz",
+      "integrity": "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==",
+      "dev": true,
+      "license": "MIT"
+    }
+  }
+}
+
+----- FILE: apps/panel/tsconfig.json -----
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "types": ["node"]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}
+
+----- FILE: infra/docker/compose/.env.example -----
+POSTGRES_DB=voxeil
+POSTGRES_USER=voxeil
+POSTGRES_PASSWORD=replace_me
+POSTGRES_PORT=5432
+
+REDIS_PORT=6379
+
+CONTROLLER_PORT=8080
+PANEL_PORT=3000
+
+ADMIN_API_KEY=replace_me
+CONTROLLER_API_KEY=replace_me
+PANEL_ADMIN_PASSWORD=replace_me
+CONTROLLER_BASE_URL=http://controller:8080
+
+SITE_NODEPORT_START=31000
+SITE_NODEPORT_END=31999
+
+KUBECONFIG_HOST_PATH=C:/Users/you/.kube/config
+KUBECONFIG_CONTAINER_PATH=/kube/config
+----- FILE: infra/docker/compose/docker-compose.yml -----
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped  
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - voxeil
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - voxeil
+
+  controller:
+    build:
+      context: ../../../apps/controller
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      PORT: "8080"
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      SITE_NODEPORT_START: ${SITE_NODEPORT_START}
+      SITE_NODEPORT_END: ${SITE_NODEPORT_END}
+      KUBECONFIG: ${KUBECONFIG_CONTAINER_PATH}
+    volumes:
+      - "${KUBECONFIG_HOST_PATH}:${KUBECONFIG_CONTAINER_PATH}:ro"
+    ports:
+      - "${CONTROLLER_PORT}:8080"
+    networks:
+      - voxeil
+
+  panel:
+    build:
+      context: ../../../apps/panel
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - controller
+    environment:
+      PORT: "3000"
+      CONTROLLER_API_KEY: ${CONTROLLER_API_KEY}
+      CONTROLLER_BASE_URL: ${CONTROLLER_BASE_URL}
+      PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD}
+    ports:
+      - "${PANEL_PORT}:3000"
+    networks:
+      - voxeil
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  voxeil:
+
+----- FILE: infra/k8s/docs/README.md -----
+# Kubernetes Manifests
+
+## Apply Platform Manifests
+
+1) Ensure the platform images are set in the manifests:
+   - `infra/k8s/platform/controller-deploy.yaml` -> `REPLACE_CONTROLLER_IMAGE`
+   - `infra/k8s/platform/panel-deploy.yaml` -> `REPLACE_PANEL_IMAGE`
+2) Create the platform secret in the `platform` namespace (keys: `ADMIN_API_KEY`, `PANEL_ADMIN_PASSWORD`, `SITE_NODEPORT_START`, `SITE_NODEPORT_END`).
+3) Create the GHCR pull secret in the `platform` namespace (name: `ghcr-pull-secret`).
+4) Apply the platform manifests:
+
+```
+kubectl apply -f infra/k8s/platform
+```
+
+## Apply Tenant Templates
+
+Tenant templates are designed to be applied per tenant namespace.
+
+1) Create a tenant namespace (example):
+
+```
+kubectl create namespace tenant-acme
+```
+
+2) Apply all tenant templates to that namespace:
+
+```
+kubectl -n tenant-acme apply -f infra/k8s/templates/tenant
+```
+
+----- FILE: infra/k8s/platform/controller-deploy.yaml -----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: controller
+  template:
+    metadata:
+      labels:
+        app: controller
+    spec:
+      serviceAccountName: controller-sa
+      containers:
+        - name: controller
+          image: REPLACE_CONTROLLER_IMAGE
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: ADMIN_API_KEY
+            - name: SITE_NODEPORT_START
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: SITE_NODEPORT_START
+            - name: SITE_NODEPORT_END
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: SITE_NODEPORT_END
+----- FILE: infra/k8s/platform/controller-nodeport.yaml -----
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-nodeport
+  namespace: platform
+spec:
+  type: NodePort
+  selector:
+    app: controller
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: REPLACE_CONTROLLER_NODEPORT
+
+----- FILE: infra/k8s/platform/controller-svc.yaml -----
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller
+  namespace: platform
+spec:
+  type: ClusterIP
+  selector:
+    app: controller
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+----- FILE: infra/k8s/platform/namespace.yaml -----
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+
+----- FILE: infra/k8s/platform/panel-deploy.yaml -----
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: panel
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: panel
+  template:
+    metadata:
+      labels:
+        app: panel
+    spec:
+      containers:
+        - name: panel
+          image: REPLACE_PANEL_IMAGE
+          ports:
+            - containerPort: 3000
+          env:
+            - name: CONTROLLER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: ADMIN_API_KEY
+            - name: PANEL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_PASSWORD
+            - name: CONTROLLER_BASE_URL
+              value: "http://controller.platform.svc.cluster.local:8080"
+
+----- FILE: infra/k8s/platform/panel-svc.yaml -----
+apiVersion: v1
+kind: Service
+metadata:
+  name: panel
+  namespace: platform
+spec:
+  type: NodePort
+  selector:
+    app: panel
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: REPLACE_PANEL_NODEPORT
+
+----- FILE: infra/k8s/platform/rbac.yaml -----
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: controller-sa
+  namespace: platform
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: controller-role
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get","list","create","delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get","list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: controller-binding
+subjects:
+  - kind: ServiceAccount
+    name: controller-sa
+    namespace: platform
+roleRef:
+  kind: ClusterRole
+  name: controller-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: controller-platform-secrets
+  namespace: platform
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: controller-platform-secrets-binding
+  namespace: platform
+subjects:
+  - kind: ServiceAccount
+    name: controller-sa
+    namespace: platform
+roleRef:
+  kind: Role
+  name: controller-platform-secrets
+  apiGroup: rbac.authorization.k8s.io
+----- FILE: infra/k8s/templates/tenant/limitrange.yaml -----
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: site-limits
+  # namespace is set by the controller per tenant
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: 1000m
+        memory: 1Gi
+      min:
+        cpu: "0"
+        memory: 0Mi
+
+----- FILE: infra/k8s/templates/tenant/networkpolicy-allow-ingress.yaml -----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-ingress
+  # namespace is set by the controller per tenant
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - {} # allow all ingress (NodePort traffic hits pods)
+
+----- FILE: infra/k8s/templates/tenant/networkpolicy-deny-all.yaml -----
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  # namespace is set by the controller per tenant
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+----- FILE: infra/k8s/templates/tenant/resourcequota.yaml -----
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: site-quota
+  # namespace is set by the controller per tenant
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    requests.storage: 1Gi
+    limits.cpu: "2"
+    limits.memory: 2Gi
+    pods: "1"
+    services: "5"
+    configmaps: "10"
+    persistentvolumeclaims: "1"
+
+----- FILE: install.sh -----
+#!/usr/bin/env bash
+set -euo pipefail
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1"; exit 1; }
+}
+
+need_cmd sudo
+need_cmd curl
+need_cmd tar
+need_cmd mktemp
+
+OWNER="${OWNER:-ARK322}"
+REPO="${REPO:-voxeil-panel}"
+REF="${REF:-main}"
+
+TMP_DIR="$(mktemp -d)"
+cleanup() { rm -rf "${TMP_DIR}"; }
+trap cleanup EXIT
+
+ARCHIVE_URL="https://github.com/${OWNER}/${REPO}/archive/${REF}.tar.gz"
+ARCHIVE_PATH="${TMP_DIR}/repo.tar.gz"
+
+echo "Downloading ${OWNER}/${REPO}@${REF}..."
+curl -fsSL "${ARCHIVE_URL}" -o "${ARCHIVE_PATH}"
+
+tar -xzf "${ARCHIVE_PATH}" -C "${TMP_DIR}"
+
+EXTRACTED_DIR="${TMP_DIR}/${REPO}-${REF}"
+if [[ ! -d "${EXTRACTED_DIR}" ]]; then
+  # fallback if GitHub names the folder differently
+  EXTRACTED_DIR="$(find "${TMP_DIR}" -maxdepth 1 -type d -name "${REPO}-*" | head -n 1 || true)"
+fi
+
+if [[ -z "${EXTRACTED_DIR}" || ! -d "${EXTRACTED_DIR}" ]]; then
+  echo "Failed to locate extracted repo directory."
+  exit 1
+fi
+
+cd "${EXTRACTED_DIR}"
+chmod +x installer/installer.sh
+
+echo "Starting installer..."
+exec sudo bash installer/installer.sh "$@"
+
+----- FILE: installer/installer.sh -----
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ========= helpers =========
+need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
+rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48; }
+
+echo "== Voxeil Panel Installer =="
+
+need_cmd curl
+need_cmd sed
+need_cmd mktemp
+
+# ========= GHCR credentials =========
+if [[ -z "${GHCR_USERNAME:-}" ]]; then
+  echo "GHCR_USERNAME env var is required."
+  exit 1
+fi
+if [[ -z "${GHCR_TOKEN:-}" ]]; then
+  echo "GHCR_TOKEN env var is required."
+  exit 1
+fi
+GHCR_EMAIL="${GHCR_EMAIL:-}"
+
+# ========= inputs =========
+read -rp "Panel NodePort [30080]: " PANEL_NODEPORT
+PANEL_NODEPORT="${PANEL_NODEPORT:-30080}"
+
+read -rp "Expose controller via NodePort for admin use? [y/N]: " EXPOSE_CONTROLLER
+EXPOSE_CONTROLLER="${EXPOSE_CONTROLLER:-N}"
+read -rp "Controller NodePort [30081]: " CONTROLLER_NODEPORT
+CONTROLLER_NODEPORT="${CONTROLLER_NODEPORT:-30081}"
+
+read -rp "Site NodePort range start [31000]: " SITE_PORT_START
+SITE_PORT_START="${SITE_PORT_START:-31000}"
+
+read -rp "Site NodePort range end [31999]: " SITE_PORT_END
+SITE_PORT_END="${SITE_PORT_END:-31999}"
+
+read -rp "Allowlist your IP/CIDR for NodePorts (recommended) [empty=skip]: " ALLOW_IP
+
+read -rp "Controller image (full ref, e.g. registry/user/controller:tag): " CONTROLLER_IMAGE
+if [[ -z "${CONTROLLER_IMAGE}" ]]; then echo "controller image required"; exit 1; fi
+
+read -rp "Panel image (full ref, e.g. registry/user/panel:tag): " PANEL_IMAGE
+if [[ -z "${PANEL_IMAGE}" ]]; then echo "panel image required"; exit 1; fi
+
+CONTROLLER_API_KEY="$(rand)"
+PANEL_ADMIN_PASSWORD="$(rand)"
+
+echo ""
+echo "Config:"
+echo "  Panel NodePort: ${PANEL_NODEPORT}"
+echo "  Controller NodePort (optional): ${CONTROLLER_NODEPORT} (enabled? ${EXPOSE_CONTROLLER})"
+echo "  Site NodePort range: ${SITE_PORT_START}-${SITE_PORT_END}"
+echo "  Allowlist: ${ALLOW_IP:-<none>}"
+echo "  GHCR Username: ${GHCR_USERNAME}"
+echo "  GHCR Email: ${GHCR_EMAIL:-<none>}"
+echo ""
+
+# ========= install k3s if needed =========
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "Installing k3s..."
+  curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+fi
+
+need_cmd kubectl
+
+echo "Waiting for node to be ready..."
+kubectl wait --for=condition=Ready node --all --timeout=180s
+
+# ========= render manifests to temp dir =========
+RENDER_DIR="$(mktemp -d)"
+
+if [[ ! -d infra/k8s/platform ]]; then
+  echo "infra/k8s/platform is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+cp -r infra/k8s/platform "${RENDER_DIR}/platform"
+
+cat > "${RENDER_DIR}/platform/platform-secrets.yaml" <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-secrets
+  namespace: platform
+type: Opaque
+stringData:
+  ADMIN_API_KEY: "${CONTROLLER_API_KEY}"
+  PANEL_ADMIN_PASSWORD: "${PANEL_ADMIN_PASSWORD}"
+  SITE_NODEPORT_START: "${SITE_PORT_START}"
+  SITE_NODEPORT_END: "${SITE_PORT_END}"
+EOF
+
+echo "Templating manifests..."
+sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE}|g" "${RENDER_DIR}/platform/controller-deploy.yaml"
+sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE}|g" "${RENDER_DIR}/platform/panel-deploy.yaml"
+sed -i "s|REPLACE_PANEL_NODEPORT|${PANEL_NODEPORT}|g" "${RENDER_DIR}/platform/panel-svc.yaml"
+sed -i "s|REPLACE_CONTROLLER_NODEPORT|${CONTROLLER_NODEPORT}|g" "${RENDER_DIR}/platform/controller-nodeport.yaml"
+
+# ========= apply =========
+echo "Applying platform manifests..."
+kubectl apply -f "${RENDER_DIR}/platform/namespace.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/rbac.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/platform-secrets.yaml"
+kubectl create secret docker-registry ghcr-pull-secret \
+  -n platform \
+  --docker-server=ghcr.io \
+  --docker-username="${GHCR_USERNAME}" \
+  --docker-password="${GHCR_TOKEN}" \
+  ${GHCR_EMAIL:+--docker-email="${GHCR_EMAIL}"} \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f "${RENDER_DIR}/platform/controller-deploy.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/controller-svc.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/panel-deploy.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/panel-svc.yaml"
+
+if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
+  kubectl apply -f "${RENDER_DIR}/platform/controller-nodeport.yaml"
+fi
+
+# ========= optional: UFW allowlist =========
+if command -v ufw >/dev/null 2>&1 && [[ -n "${ALLOW_IP}" ]]; then
+  echo "Configuring UFW allowlist..."
+  ufw --force enable
+  ufw allow from "${ALLOW_IP}" to any port "${PANEL_NODEPORT}" proto tcp
+  ufw allow from "${ALLOW_IP}" to any port "${SITE_PORT_START}:${SITE_PORT_END}" proto tcp
+  if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
+    ufw allow from "${ALLOW_IP}" to any port "${CONTROLLER_NODEPORT}" proto tcp
+  fi
+else
+  echo "UFW skipped (no allowlist provided or ufw missing)."
+fi
+
+# ========= wait for readiness =========
+echo "Waiting for controller and panel to become available..."
+kubectl wait --for=condition=Available deployment/controller -n platform --timeout=180s
+kubectl wait --for=condition=Available deployment/panel -n platform --timeout=180s
+
+echo ""
+echo "Done."
+echo "Panel: http://<VPS_IP>:${PANEL_NODEPORT}"
+echo "Panel admin password: ${PANEL_ADMIN_PASSWORD}"
+echo "Controller API key: ${CONTROLLER_API_KEY}"
+echo ""
+
+----- FILE: README.md -----
+## Voxeil Panel (MVP)
+
+Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal UI shipped in this repo.
+
+### Components
+- `apps/controller`: Fastify API that owns all Kubernetes access (namespaces, quotas, PVCs, network policies).
+- `apps/panel`: Next.js UI that talks only to the controller service inside the cluster.
+- `infra/k8s/platform`: k3s-compatible manifests with placeholders (`REPLACE_*`) for images and NodePorts.
+- `infra/k8s/templates/tenant`: Baseline ResourceQuota, LimitRange, and default-deny NetworkPolicy used for every tenant namespace.
+
+### Install
+1) Build/push your own images (no hardcoded registry):
+   - Controller: `apps/controller`
+   - Panel: `apps/panel`
+   - Maintenance page: `voxeil-maintenance` (served from GHCR)
+2) One-liner install (no git clone required):
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash
+   ```
+   - Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
+   - Provide GHCR credentials via env vars before running:
+     - `GHCR_USERNAME`
+     - `GHCR_TOKEN` (PAT with `read:packages`)
+     - `GHCR_EMAIL` (optional)
+   The installer will ask for:
+   - Panel NodePort
+   - Optional controller NodePort (admin-only)
+   - Site NodePort range
+   - IP allowlist (used with UFW if available)
+   - Controller + panel image references
+3) Outputs:
+   - Panel admin password (stored in `platform-secrets`)
+   - Controller API key (stored in `platform-secrets`)
+   - Panel URL: `http://<VPS_IP>:<PANEL_NODEPORT>`
+  - Note: `SITE_NODEPORT_START/END` are reserved for Phase 3 and currently unused by the controller.
+
+### Phase 2 publish
+- Creating a site provisions the namespace and immediately publishes a shared maintenance page.
+- Deployments happen only via `POST /sites/:slug/deploy` (manual).
+- Domains and subdomains are treated as separate sites (separate namespaces).
+- Ingress is HTTP-only for now; TLS is deferred to Phase 3.
+
+### Security baseline
+- Controller enforces `X-API-Key` on all routes except `/health`.
+- Panel never talks directly to the Kubernetes API; it proxies via the controller service.
+- Tenants get a dedicated namespace with ResourceQuota, LimitRange, and default-deny NetworkPolicy (DNS egress only).
+- Controller creates tenant Deployments, Services, and Ingress on site creation.
+- GHCR images are pulled via the `ghcr-pull-secret` copied into each tenant namespace.
+- TLS and cert-manager are not enabled yet; HTTP ingress only.
+
+### Controller API
+- `POST /sites` with `{ domain, cpu, ramGi, diskGi }`
+- `GET /sites`
+- `POST /sites/:slug/deploy` with `{ image, containerPort }`
+- `PATCH /sites/:slug/limits` with `{ cpu?, ramGi?, diskGi? }`
+- `DELETE /sites/:slug`
+
+### Future TODOs
+- Add HTTPS/ingress once domain support is enabled.
+- Extend quota/limit presets per plan.
+- Add per-tenant API keys and audit logging.
+
+================ FOOTER CHECKLIST =====
+1) YES - apps/controller/src/http/routes.ts; apps/controller/src/sites/site.service.ts
+2) YES - apps/controller/src/k8s/namespace.ts
+3) YES - apps/controller/src/sites/site.service.ts; apps/controller/src/k8s/publish.ts
+4) NO - apps/controller/src/sites/site.service.ts; apps/controller/src/k8s/publish.ts
+5) YES - installer/installer.sh; infra/k8s/platform/controller-deploy.yaml
+6) YES - installer/installer.sh; apps/controller/src/k8s/secrets.ts
+7) YES - infra/k8s/platform/rbac.yaml

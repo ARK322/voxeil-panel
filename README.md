@@ -8,15 +8,20 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 - `infra/k8s/platform`: k3s-compatible manifests with placeholders (`REPLACE_*`) for images and NodePorts.
 - `infra/k8s/templates/tenant`: Baseline ResourceQuota, LimitRange, and default-deny NetworkPolicy used for every tenant namespace.
 
-### Install (domainless MVP)
+### Install
 1) Build/push your own images (no hardcoded registry):
    - Controller: `apps/controller`
    - Panel: `apps/panel`
+   - Maintenance page: `voxeil-maintenance` (served from GHCR)
 2) One-liner install (no git clone required):
    ```bash
    curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash
    ```
    - Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
+   - Provide GHCR credentials via env vars before running:
+     - `GHCR_USERNAME`
+     - `GHCR_TOKEN` (PAT with `read:packages`)
+     - `GHCR_EMAIL` (optional)
    The installer will ask for:
    - Panel NodePort
    - Optional controller NodePort (admin-only)
@@ -27,18 +32,26 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
    - Panel admin password (stored in `platform-secrets`)
    - Controller API key (stored in `platform-secrets`)
    - Panel URL: `http://<VPS_IP>:<PANEL_NODEPORT>`
-   - Note: `SITE_NODEPORT_START/END` are reserved for Phase 2 and currently unused by the controller.
+  - Note: `SITE_NODEPORT_START/END` are reserved for Phase 3 and currently unused by the controller.
+
+### Phase 2 publish
+- Creating a site provisions the namespace and immediately publishes a shared maintenance page.
+- Deployments happen only via `POST /sites/:slug/deploy` (manual).
+- Domains and subdomains are treated as separate sites (separate namespaces).
+- Ingress is HTTP-only for now; TLS is deferred to Phase 3.
 
 ### Security baseline
 - Controller enforces `X-API-Key` on all routes except `/health`.
 - Panel never talks directly to the Kubernetes API; it proxies via the controller service.
 - Tenants get a dedicated namespace with ResourceQuota, LimitRange, and default-deny NetworkPolicy (DNS egress only).
-- Controller does not create tenant Deployments, Services, Ingress, or cert-manager resources (namespace isolation only).
-- No domains or registry paths are hardcoded; everything is provided at install time.
+- Controller creates tenant Deployments, Services, and Ingress on site creation.
+- GHCR images are pulled via the `ghcr-pull-secret` copied into each tenant namespace.
+- TLS and cert-manager are not enabled yet; HTTP ingress only.
 
 ### Controller API
 - `POST /sites` with `{ domain, cpu, ramGi, diskGi }`
 - `GET /sites`
+- `POST /sites/:slug/deploy` with `{ image, containerPort }`
 - `PATCH /sites/:slug/limits` with `{ cpu?, ramGi?, diskGi? }`
 - `DELETE /sites/:slug`
 

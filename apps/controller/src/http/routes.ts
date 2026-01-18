@@ -1,6 +1,15 @@
 import type { FastifyInstance } from "fastify";
-import { CreateSiteSchema, PatchLimitsSchema } from "../sites/site.dto.js";
-import { createSite, deleteSite, listSites, updateSiteLimits } from "../sites/site.service.js";
+import { z } from "zod";
+import { CreateSiteSchema, DeploySiteSchema, PatchLimitsSchema } from "../sites/site.dto.js";
+import {
+  createSite,
+  deleteSite,
+  deploySite,
+  listSites,
+  updateSiteLimits
+} from "../sites/site.service.js";
+
+const SlugParamSchema = z.string().min(1, "Slug is required.");
 
 export function registerRoutes(app: FastifyInstance) {
   app.post("/sites", async (req, reply) => {
@@ -18,9 +27,16 @@ export function registerRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
-  app.delete("/sites/:slug", async (req, reply) => {
+  app.post("/sites/:slug/deploy", async (req, reply) => {
     const slug = String((req.params as { slug: string }).slug ?? "");
-    await deleteSite(slug);
-    return reply.code(204).send();
+    const body = DeploySiteSchema.parse(req.body);
+    const result = await deploySite(slug, body);
+    return reply.send(result);
+  });
+
+  app.delete("/sites/:slug", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await deleteSite(slug);
+    return reply.code(200).send({ ok: true, slug: result.slug });
   });
 }

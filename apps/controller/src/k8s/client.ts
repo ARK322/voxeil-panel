@@ -8,6 +8,7 @@ export const LABELS = {
 type Clients = {
   kc: k8s.KubeConfig;
   core: k8s.CoreV1Api;
+  apps: k8s.AppsV1Api;
   net: k8s.NetworkingV1Api;
 };
 
@@ -25,6 +26,7 @@ export function getClients(): Clients {
   cached = {
     kc,
     core: kc.makeApiClient(k8s.CoreV1Api),
+    apps: kc.makeApiClient(k8s.AppsV1Api),
     net: kc.makeApiClient(k8s.NetworkingV1Api)
   };
 
