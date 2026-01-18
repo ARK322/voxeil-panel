@@ -1,0 +1,2117 @@
+REPO: voxeil-panel
+TIMESTAMP: 2026-01-18T18:18:46.8588389+03:00
+
+TREE:
+.github/
+  workflows/
+    controller.yml
+.gitignore
+apps/
+  controller/
+    Dockerfile
+    package.json
+    src/
+      http/
+        errors.ts
+        routes.ts
+      index.ts
+      k8s/
+        apply.ts
+        client.ts
+        namespace.ts
+        pvc.ts
+        quantity.ts
+        quota.ts
+      sites/
+        site.dto.ts
+        site.service.ts
+        site.slug.ts
+      templates/
+        load.ts
+        render.ts
+    templates/
+      tenant/
+        limitrange.yaml
+        networkpolicy-allow-ingress.yaml
+        networkpolicy-deny-all.yaml
+        resourcequota.yaml
+    tsconfig.json
+  panel/
+    app/
+      actions.ts
+      globals.css
+      layout.tsx
+      lib/
+        controller.ts
+        session.ts
+      login/
+        login-actions.ts
+        login-form.tsx
+        page.tsx
+      page.tsx
+    Dockerfile
+    next.config.mjs
+    next-env.d.ts
+    package.json
+    tsconfig.json
+infra/
+  docker/
+    compose/
+      .env.example
+      docker-compose.yml
+  k8s/
+    docs/
+      README.md
+    platform/
+      controller-deploy.yaml
+      controller-nodeport.yaml
+      controller-svc.yaml
+      namespace.yaml
+      panel-deploy.yaml
+      panel-svc.yaml
+      rbac.yaml
+    templates/
+      tenant/
+        limitrange.yaml
+        networkpolicy-allow-ingress.yaml
+        networkpolicy-deny-all.yaml
+        resourcequota.yaml
+install.sh
+installer/
+  installer.sh
+README.md
+
+FILES:
+===== FILE: .github\workflows\controller.yml =====
+name: build-and-push-controller
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "apps/controller/**"
+      - ".github/workflows/controller.yml"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./apps/controller
+          file: ./apps/controller/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/vhp-controller:latest
+            ghcr.io/${{ github.repository_owner }}/vhp-controller:${{ github.sha }}
+
+===== FILE: .gitignore =====
+node_modules
+.next
+dist
+npm-debug.log
+*.log
+
+===== FILE: apps\controller\Dockerfile =====
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json tsconfig.json ./
+COPY src ./src
+RUN npm i
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/package.json /app/package.json
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/dist /app/dist
+COPY templates /app/templates
+EXPOSE 8080
+CMD ["node", "dist/index.js"]
+
+===== FILE: apps\controller\package.json =====
+{
+    "name": "vhp-controller",
+    "private": true,
+    "type": "module",
+    "scripts": {
+      "dev": "tsx watch src/index.ts",
+      "build": "tsc -p tsconfig.json",
+      "start": "node dist/index.js"
+    },
+    "dependencies": {
+      "@kubernetes/client-node": "^0.22.3",
+      "fastify": "^4.28.1",
+      "zod": "^3.23.8"
+    },
+    "devDependencies": {
+      "@types/node": "^20.11.19",
+      "tsx": "^4.16.2",
+      "typescript": "^5.6.3"
+    }
+  }
+  
+===== FILE: apps\controller\src\http\errors.ts =====
+export class HttpError extends Error {
+  statusCode: number;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.statusCode = statusCode;
+  }
+}
+
+===== FILE: apps\controller\src\http\routes.ts =====
+import type { FastifyInstance } from "fastify";
+import { CreateSiteSchema, PatchLimitsSchema } from "../sites/site.dto.js";
+import { createSite, deleteSite, listSites, updateSiteLimits } from "../sites/site.service.js";
+
+export function registerRoutes(app: FastifyInstance) {
+  app.post("/sites", async (req, reply) => {
+    const body = CreateSiteSchema.parse(req.body);
+    const result = await createSite(body);
+    return reply.send(result);
+  });
+
+  app.get("/sites", async () => listSites());
+
+  app.patch("/sites/:slug/limits", async (req, reply) => {
+    const slug = String((req.params as { slug: string }).slug ?? "");
+    const body = PatchLimitsSchema.parse(req.body);
+    const result = await updateSiteLimits(slug, body);
+    return reply.send(result);
+  });
+
+  app.delete("/sites/:slug", async (req, reply) => {
+    const slug = String((req.params as { slug: string }).slug ?? "");
+    await deleteSite(slug);
+    return reply.code(204).send();
+  });
+}
+
+===== FILE: apps\controller\src\index.ts =====
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
+import { z } from "zod";
+import { registerRoutes } from "./http/routes.js";
+import { HttpError } from "./http/errors.js";
+
+const app = Fastify({ logger: true });
+
+const ADMIN_API_KEY = process.env.ADMIN_API_KEY;
+if (!ADMIN_API_KEY) {
+  throw new Error("ADMIN_API_KEY env var is required (provided via Secret).");
+}
+
+app.addHook("onRequest", async (req: FastifyRequest, reply: FastifyReply) => {
+  if (req.url.startsWith("/health")) return;
+  const header = req.headers["x-api-key"];
+  const provided = Array.isArray(header) ? header[0] : header;
+  if (!provided || provided !== ADMIN_API_KEY) {
+    return reply.code(401).send({ error: "unauthorized" });
+  }
+});
+
+app.setErrorHandler((error, _req, reply) => {
+  if (error instanceof HttpError) {
+    return reply.code(error.statusCode).send({ error: error.message });
+  }
+  if (error instanceof z.ZodError) {
+    return reply.code(400).send({ error: "invalid_request", details: error.flatten() });
+  }
+  app.log.error({ err: error }, "Unhandled error");
+  return reply.code(500).send({ error: "internal_error" });
+});
+
+app.get("/health", async () => ({ ok: true }));
+
+registerRoutes(app);
+
+const port = Number(process.env.PORT ?? 8080);
+app.listen({ host: "0.0.0.0", port });
+
+===== FILE: apps\controller\src\k8s\apply.ts =====
+import type {
+  V1LimitRange,
+  V1NetworkPolicy,
+  V1ResourceQuota
+} from "@kubernetes/client-node";
+import { getClients } from "./client.js";
+
+async function replaceWithResourceVersion<T extends { metadata?: { resourceVersion?: string } }>(
+  next: T,
+  read: () => Promise<{ body: T }>,
+  replace: (nextWithVersion: T) => Promise<unknown>
+): Promise<void> {
+  const existing = await read();
+  const nextWithVersion = {
+    ...next,
+    metadata: {
+      ...next.metadata,
+      resourceVersion: existing.body.metadata?.resourceVersion
+    }
+  };
+  await replace(nextWithVersion);
+}
+
+export async function upsertResourceQuota(resourceQuota: V1ResourceQuota): Promise<void> {
+  const { core } = getClients();
+  const name = resourceQuota.metadata?.name ?? "site-quota";
+  const namespace = resourceQuota.metadata?.namespace ?? "default";
+  try {
+    await core.createNamespacedResourceQuota(namespace, resourceQuota);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      resourceQuota,
+      () => core.readNamespacedResourceQuota(name, namespace),
+      (next) => core.replaceNamespacedResourceQuota(name, namespace, next)
+    );
+  }
+}
+
+export async function upsertLimitRange(limitRange: V1LimitRange): Promise<void> {
+  const { core } = getClients();
+  const name = limitRange.metadata?.name ?? "site-limits";
+  const namespace = limitRange.metadata?.namespace ?? "default";
+  try {
+    await core.createNamespacedLimitRange(namespace, limitRange);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      limitRange,
+      () => core.readNamespacedLimitRange(name, namespace),
+      (next) => core.replaceNamespacedLimitRange(name, namespace, next)
+    );
+  }
+}
+
+export async function upsertNetworkPolicy(policy: V1NetworkPolicy): Promise<void> {
+  const { net } = getClients();
+  const name = policy.metadata?.name ?? "policy";
+  const namespace = policy.metadata?.namespace ?? "default";
+  try {
+    await net.createNamespacedNetworkPolicy(namespace, policy);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    await replaceWithResourceVersion(
+      policy,
+      () => net.readNamespacedNetworkPolicy(name, namespace),
+      (next) => net.replaceNamespacedNetworkPolicy(name, namespace, next)
+    );
+  }
+}
+
+===== FILE: apps\controller\src\k8s\client.ts =====
+import k8s from "@kubernetes/client-node";
+
+export const LABELS = {
+  managedBy: "vhp-controller",
+  siteSlug: "vhp/site-slug"
+} as const;
+
+type Clients = {
+  kc: k8s.KubeConfig;
+  core: k8s.CoreV1Api;
+  net: k8s.NetworkingV1Api;
+};
+
+let cached: Clients | null = null;
+
+export function getClients(): Clients {
+  if (cached) return cached;
+  const kc = new k8s.KubeConfig();
+  try {
+    kc.loadFromCluster();
+  } catch {
+    kc.loadFromDefault();
+  }
+
+  cached = {
+    kc,
+    core: kc.makeApiClient(k8s.CoreV1Api),
+    net: kc.makeApiClient(k8s.NetworkingV1Api)
+  };
+
+  return cached;
+}
+
+===== FILE: apps\controller\src\k8s\namespace.ts =====
+import { getClients, LABELS } from "./client.js";
+import { HttpError } from "../http/errors.js";
+
+export const TENANT_PREFIX = "tenant-";
+
+export async function allocateTenantNamespace(baseSlug: string): Promise<{
+  slug: string;
+  namespace: string;
+}> {
+  const { core } = getClients();
+  const slug = baseSlug;
+  const namespace = `${TENANT_PREFIX}${slug}`;
+  try {
+    await core.createNamespace({
+      metadata: {
+        name: namespace,
+        labels: {
+          [LABELS.managedBy]: LABELS.managedBy,
+          [LABELS.siteSlug]: slug
+        }
+      }
+    });
+    return { slug, namespace };
+  } catch (error: any) {
+    if (error?.response?.statusCode === 409) {
+      throw new HttpError(409, "Site already exists for this slug/domain.");
+    }
+    throw error;
+  }
+}
+
+export async function requireNamespace(namespace: string): Promise<void> {
+  const { core } = getClients();
+  try {
+    await core.readNamespace(namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(404, "Namespace not found.");
+    }
+    throw error;
+  }
+}
+
+export async function deleteNamespace(namespace: string): Promise<void> {
+  const { core } = getClients();
+  try {
+    await core.deleteNamespace(namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(404, "Namespace not found.");
+    }
+    throw error;
+  }
+}
+
+export async function listTenantNamespaces(): Promise<string[]> {
+  const { core } = getClients();
+  const result = await core.listNamespace();
+  return result.body.items
+    .map((item) => item.metadata?.name)
+    .filter((name): name is string => Boolean(name && name.startsWith(TENANT_PREFIX)));
+}
+
+export function slugFromNamespace(namespace: string): string {
+  if (!namespace.startsWith(TENANT_PREFIX)) return namespace;
+  return namespace.slice(TENANT_PREFIX.length);
+}
+
+===== FILE: apps\controller\src\k8s\pvc.ts =====
+import { getClients } from "./client.js";
+import { parseGiToNumber } from "./quantity.js";
+import { HttpError } from "../http/errors.js";
+
+export const TENANT_PVC_NAME = "site-data";
+
+export async function ensurePvc(namespace: string, sizeGi: number): Promise<void> {
+  const { core } = getClients();
+  try {
+    await core.createNamespacedPersistentVolumeClaim(namespace, {
+      metadata: { name: TENANT_PVC_NAME },
+      spec: {
+        accessModes: ["ReadWriteOnce"],
+        resources: {
+          requests: {
+            storage: `${sizeGi}Gi`
+          }
+        }
+      }
+    });
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+  }
+}
+
+export async function getPvcSizeGi(namespace: string): Promise<number | null> {
+  const { core } = getClients();
+  try {
+    const pvc = await core.readNamespacedPersistentVolumeClaim(TENANT_PVC_NAME, namespace);
+    const value = pvc.body.spec?.resources?.requests?.storage;
+    return parseGiToNumber(value);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) return null;
+    throw error;
+  }
+}
+
+export async function expandPvcIfNeeded(namespace: string, nextSizeGi: number): Promise<void> {
+  const { core } = getClients();
+  let pvc;
+  try {
+    pvc = await core.readNamespacedPersistentVolumeClaim(TENANT_PVC_NAME, namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      throw new HttpError(409, "PVC site-data not found.");
+    }
+    throw error;
+  }
+  const currentGi = parseGiToNumber(pvc.body.spec?.resources?.requests?.storage);
+  if (currentGi != null && nextSizeGi <= currentGi) {
+    throw new HttpError(400, "diskGi must be greater than current size.");
+  }
+
+  const resourceVersion = pvc.body.metadata?.resourceVersion;
+  if (!resourceVersion) {
+    throw new HttpError(500, "PVC resourceVersion missing.");
+  }
+
+  const next = {
+    ...pvc.body,
+    spec: {
+      ...pvc.body.spec,
+      resources: {
+        ...pvc.body.spec?.resources,
+        requests: {
+          ...pvc.body.spec?.resources?.requests,
+          storage: `${nextSizeGi}Gi`
+        }
+      }
+    },
+    metadata: {
+      ...pvc.body.metadata,
+      resourceVersion
+    }
+  };
+
+  await core.replaceNamespacedPersistentVolumeClaim(TENANT_PVC_NAME, namespace, next);
+}
+
+===== FILE: apps\controller\src\k8s\quantity.ts =====
+export function parseCpuToNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.endsWith("m")) {
+    const number = Number(trimmed.slice(0, -1));
+    return Number.isFinite(number) ? number / 1000 : null;
+  }
+  const number = Number(trimmed);
+  return Number.isFinite(number) ? number : null;
+}
+
+export function parseGiToNumber(value: string | undefined): number | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (trimmed.endsWith("Gi")) {
+    const number = Number(trimmed.slice(0, -2));
+    return Number.isFinite(number) ? number : null;
+  }
+  if (trimmed.endsWith("Mi")) {
+    const number = Number(trimmed.slice(0, -2));
+    return Number.isFinite(number) ? number / 1024 : null;
+  }
+  const number = Number(trimmed);
+  return Number.isFinite(number) ? number : null;
+}
+
+===== FILE: apps\controller\src\k8s\quota.ts =====
+import { getClients } from "./client.js";
+import { parseCpuToNumber, parseGiToNumber } from "./quantity.js";
+import { HttpError } from "../http/errors.js";
+
+export type LimitsPatch = {
+  cpu?: number;
+  ramGi?: number;
+  diskGi?: number;
+};
+
+export type ResolvedLimits = {
+  cpu: number;
+  ramGi: number;
+  diskGi: number;
+};
+
+export type QuotaStatus = {
+  exists: boolean;
+  limits?: ResolvedLimits;
+};
+
+export async function readQuotaStatus(
+  namespace: string,
+  quotaName: string
+): Promise<QuotaStatus> {
+  const { core } = getClients();
+  try {
+    const result = await core.readNamespacedResourceQuota(quotaName, namespace);
+    const hard = result.body.spec?.hard ?? {};
+    const cpu = parseCpuToNumber(hard["requests.cpu"]);
+    const ramGi = parseGiToNumber(hard["requests.memory"]);
+    const diskGi = parseGiToNumber(hard["requests.storage"]);
+    if (cpu == null || ramGi == null || diskGi == null) {
+      return { exists: true };
+    }
+    return { exists: true, limits: { cpu, ramGi, diskGi } };
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) return { exists: false };
+    throw error;
+  }
+}
+
+export async function updateQuotaLimits(
+  namespace: string,
+  quotaName: string,
+  patch: LimitsPatch
+): Promise<ResolvedLimits> {
+  const { core } = getClients();
+  const current = await core.readNamespacedResourceQuota(quotaName, namespace);
+  const resourceVersion = current.body.metadata?.resourceVersion;
+  if (!resourceVersion) {
+    throw new HttpError(500, "ResourceQuota resourceVersion missing.");
+  }
+
+  const hard = { ...(current.body.spec?.hard ?? {}) };
+  const currentCpu =
+    parseCpuToNumber(hard["requests.cpu"]) ?? parseCpuToNumber(hard["limits.cpu"]) ?? 0;
+  const currentRamGi =
+    parseGiToNumber(hard["requests.memory"]) ?? parseGiToNumber(hard["limits.memory"]) ?? 0;
+  const currentDiskGi = parseGiToNumber(hard["requests.storage"]) ?? 0;
+
+  const desiredCpu = patch.cpu ?? currentCpu;
+  const desiredRamGi = patch.ramGi ?? currentRamGi;
+  const desiredDiskGi = patch.diskGi ?? currentDiskGi;
+
+  hard["requests.cpu"] = String(desiredCpu);
+  hard["limits.cpu"] = String(desiredCpu);
+  hard["requests.memory"] = `${desiredRamGi}Gi`;
+  hard["limits.memory"] = `${desiredRamGi}Gi`;
+  hard["requests.storage"] = `${desiredDiskGi}Gi`;
+  hard["pods"] = "1";
+  hard["persistentvolumeclaims"] = "1";
+
+  const next = {
+    ...current.body,
+    spec: {
+      ...current.body.spec,
+      hard
+    },
+    metadata: {
+      ...current.body.metadata,
+      resourceVersion
+    }
+  };
+
+  await core.replaceNamespacedResourceQuota(quotaName, namespace, next);
+
+  return {
+    cpu: desiredCpu,
+    ramGi: desiredRamGi,
+    diskGi: desiredDiskGi
+  };
+}
+
+===== FILE: apps\controller\src\sites\site.dto.ts =====
+import { z } from "zod";
+
+export const CreateSiteSchema = z.object({
+  domain: z.string().min(1),
+  cpu: z.number().int().positive(),
+  ramGi: z.number().int().positive(),
+  diskGi: z.number().int().positive()
+});
+
+export const PatchLimitsSchema = z
+  .object({
+    cpu: z.number().int().positive().optional(),
+    ramGi: z.number().int().positive().optional(),
+    diskGi: z.number().int().positive().optional()
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "At least one limit must be provided"
+  });
+
+export type CreateSiteInput = z.infer<typeof CreateSiteSchema>;
+export type PatchLimitsInput = z.infer<typeof PatchLimitsSchema>;
+
+export type SiteLimits = {
+  cpu: number;
+  ramGi: number;
+  diskGi: number;
+  pods: 1;
+};
+
+export type CreateSiteResponse = {
+  domain: string;
+  slug: string;
+  namespace: string;
+  limits: SiteLimits;
+};
+
+export type SiteLimitsResponse = {
+  slug: string;
+  namespace: string;
+  limits: SiteLimits;
+};
+
+export type SiteListItem = {
+  slug: string;
+  namespace: string;
+  ready: boolean;
+};
+
+===== FILE: apps\controller\src\sites\site.service.ts =====
+import { HttpError } from "../http/errors.js";
+import { loadTenantTemplates } from "../templates/load.js";
+import {
+  renderLimitRange,
+  renderNetworkPolicy,
+  renderResourceQuota
+} from "../templates/render.js";
+import { upsertLimitRange, upsertNetworkPolicy, upsertResourceQuota } from "../k8s/apply.js";
+import {
+  allocateTenantNamespace,
+  deleteNamespace,
+  listTenantNamespaces,
+  requireNamespace,
+  slugFromNamespace
+} from "../k8s/namespace.js";
+import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
+import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
+import { slugFromDomain, validateSlug } from "./site.slug.js";
+import type {
+  CreateSiteInput,
+  PatchLimitsInput,
+  CreateSiteResponse,
+  SiteListItem,
+  SiteLimitsResponse
+} from "./site.dto.js";
+
+export async function createSite(input: CreateSiteInput): Promise<CreateSiteResponse> {
+  let baseSlug: string;
+  try {
+    baseSlug = slugFromDomain(input.domain);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid domain.");
+  }
+  const { slug, namespace } = await allocateTenantNamespace(baseSlug);
+
+  const templates = await loadTenantTemplates();
+  const resourceQuota = renderResourceQuota(templates.resourceQuota, namespace, {
+    cpu: input.cpu,
+    ramGi: input.ramGi,
+    diskGi: input.diskGi
+  });
+  const limitRange = renderLimitRange(templates.limitRange, namespace, {
+    cpu: input.cpu,
+    ramGi: input.ramGi
+  });
+  const denyAll = renderNetworkPolicy(templates.networkPolicyDenyAll, namespace);
+  const allowIngress = renderNetworkPolicy(templates.networkPolicyAllowIngress, namespace);
+
+  await Promise.all([
+    upsertResourceQuota(resourceQuota),
+    upsertLimitRange(limitRange),
+    upsertNetworkPolicy(denyAll),
+    upsertNetworkPolicy(allowIngress),
+    ensurePvc(namespace, input.diskGi)
+  ]);
+
+  return {
+    domain: input.domain,
+    slug,
+    namespace,
+    limits: {
+      cpu: input.cpu,
+      ramGi: input.ramGi,
+      diskGi: input.diskGi,
+      pods: 1
+    }
+  };
+}
+
+export async function listSites(): Promise<SiteListItem[]> {
+  const templates = await loadTenantTemplates();
+  const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
+  const namespaces = await listTenantNamespaces();
+  const items: SiteListItem[] = [];
+
+  for (const namespace of namespaces) {
+    const slug = slugFromNamespace(namespace);
+    try {
+      const [quotaStatus, pvcSize] = await Promise.all([
+        readQuotaStatus(namespace, quotaName),
+        getPvcSizeGi(namespace)
+      ]);
+
+      const ready = quotaStatus.exists && pvcSize != null;
+      items.push({ slug, namespace, ready });
+    } catch {
+      items.push({ slug, namespace, ready: false });
+    }
+  }
+
+  return items;
+}
+
+export async function updateSiteLimits(
+  slug: string,
+  patch: PatchLimitsInput
+): Promise<SiteLimitsResponse> {
+  if (!slug) {
+    throw new HttpError(400, "Slug is required.");
+  }
+  const namespace = `tenant-${slug}`;
+  await requireNamespace(namespace);
+
+  const templates = await loadTenantTemplates();
+  const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
+
+  if (patch.diskGi !== undefined) {
+    await expandPvcIfNeeded(namespace, patch.diskGi);
+  }
+
+  const updated = await updateQuotaLimits(namespace, quotaName, patch);
+  if (patch.cpu !== undefined || patch.ramGi !== undefined) {
+    const limitRange = renderLimitRange(templates.limitRange, namespace, {
+      cpu: updated.cpu,
+      ramGi: updated.ramGi
+    });
+    await upsertLimitRange(limitRange);
+  }
+
+  return {
+    slug,
+    namespace,
+    limits: {
+      cpu: updated.cpu,
+      ramGi: updated.ramGi,
+      diskGi: updated.diskGi,
+      pods: 1
+    }
+  };
+}
+
+export async function deleteSite(slug: string): Promise<void> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespace = `tenant-${normalized}`;
+  await requireNamespace(namespace);
+  await deleteNamespace(namespace);
+}
+
+===== FILE: apps\controller\src\sites\site.slug.ts =====
+export function slugFromDomain(input: string): string {
+  let value = input.trim().toLowerCase();
+  if (!value) {
+    throw new Error("Domain is required.");
+  }
+
+  if (value.includes("://")) {
+    try {
+      value = new URL(value).hostname.toLowerCase();
+    } catch {
+      // fall through to best-effort parsing below
+    }
+  }
+
+  value = value.split("/")[0] ?? value;
+  value = value.split(":")[0] ?? value;
+  value = value.replace(/\.$/, "");
+
+  const parts = value.split(".").filter(Boolean);
+  value = parts.join(".");
+
+  value = value.replace(/[^a-z0-9]+/g, "-");
+  value = value.replace(/-+/g, "-").replace(/^-+|-+$/g, "");
+
+  if (!value) {
+    throw new Error("Domain cannot be normalized into a slug.");
+  }
+
+  return value;
+}
+
+export function validateSlug(input: string): string {
+  const value = input.trim().toLowerCase();
+  if (!value) {
+    throw new Error("Slug is required.");
+  }
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value)) {
+    throw new Error("Slug must be lowercase and contain only a-z, 0-9, or hyphen.");
+  }
+  return value;
+}
+===== FILE: apps\controller\src\templates\load.ts =====
+import { promises as fs, existsSync } from "node:fs";
+import path from "node:path";
+import k8s from "@kubernetes/client-node";
+import type {
+  V1LimitRange,
+  V1NetworkPolicy,
+  V1ResourceQuota
+} from "@kubernetes/client-node";
+
+export type TenantTemplates = {
+  resourceQuota: V1ResourceQuota;
+  limitRange: V1LimitRange;
+  networkPolicyDenyAll: V1NetworkPolicy;
+  networkPolicyAllowIngress: V1NetworkPolicy;
+};
+
+let cached: TenantTemplates | null = null;
+
+function resolveTemplatesDir(): string {
+  const candidates = [
+    path.resolve(process.cwd(), "templates", "tenant"),
+    path.resolve(process.cwd(), "infra", "k8s", "templates", "tenant"),
+    path.resolve(process.cwd(), "..", "..", "infra", "k8s", "templates", "tenant"),
+    path.resolve(process.cwd(), "..", "infra", "k8s", "templates", "tenant")
+  ];
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0];
+}
+
+async function readYaml<T>(filePath: string): Promise<T> {
+  if (!existsSync(filePath)) {
+    throw new Error(`Template file not found: ${filePath}`);
+  }
+  const raw = await fs.readFile(filePath, "utf8");
+  return k8s.loadYaml(raw) as T;
+}
+
+export async function loadTenantTemplates(): Promise<TenantTemplates> {
+  if (cached) return cached;
+  const dir = resolveTemplatesDir();
+  const resourceQuota = await readYaml<V1ResourceQuota>(path.join(dir, "resourcequota.yaml"));
+  const limitRange = await readYaml<V1LimitRange>(path.join(dir, "limitrange.yaml"));
+  const networkPolicyDenyAll = await readYaml<V1NetworkPolicy>(
+    path.join(dir, "networkpolicy-deny-all.yaml")
+  );
+  const networkPolicyAllowIngress = await readYaml<V1NetworkPolicy>(
+    path.join(dir, "networkpolicy-allow-ingress.yaml")
+  );
+
+  cached = {
+    resourceQuota,
+    limitRange,
+    networkPolicyDenyAll,
+    networkPolicyAllowIngress
+  };
+  return cached;
+}
+
+===== FILE: apps\controller\src\templates\render.ts =====
+import type {
+  V1LimitRange,
+  V1NetworkPolicy,
+  V1ResourceQuota
+} from "@kubernetes/client-node";
+
+type Limits = {
+  cpu: number;
+  ramGi: number;
+  diskGi: number;
+};
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
+export function renderResourceQuota(
+  template: V1ResourceQuota,
+  namespace: string,
+  limits: Limits
+): V1ResourceQuota {
+  const quota = clone(template);
+  quota.metadata = {
+    ...quota.metadata,
+    name: template.metadata?.name ?? "site-quota",
+    namespace
+  };
+  quota.spec = quota.spec ?? {};
+  quota.spec.hard = {
+    ...quota.spec.hard,
+    "pods": "1",
+    "requests.cpu": String(limits.cpu),
+    "requests.memory": `${limits.ramGi}Gi`,
+    "limits.cpu": String(limits.cpu),
+    "limits.memory": `${limits.ramGi}Gi`,
+    "persistentvolumeclaims": "1",
+    "requests.storage": `${limits.diskGi}Gi`
+  };
+  return quota;
+}
+
+export function renderLimitRange(
+  template: V1LimitRange,
+  namespace: string,
+  limits?: Pick<Limits, "cpu" | "ramGi">
+): V1LimitRange {
+  const limitRange = clone(template);
+  limitRange.metadata = {
+    ...limitRange.metadata,
+    name: template.metadata?.name ?? "site-limits",
+    namespace
+  };
+  if (limits) {
+    const next = {
+      cpu: String(limits.cpu),
+      memory: `${limits.ramGi}Gi`
+    };
+    if (!limitRange.spec) {
+      limitRange.spec = {
+        limits: [
+          { type: "Container", max: next, _default: next, defaultRequest: next, min: { cpu: "0", memory: "0Mi" } }
+        ]
+      };
+    } else if (!limitRange.spec.limits || limitRange.spec.limits.length === 0) {
+      limitRange.spec.limits = [
+        { type: "Container", max: next, _default: next, defaultRequest: next, min: { cpu: "0", memory: "0Mi" } }
+      ];
+    } else {
+      const limit = limitRange.spec.limits[0];
+      limit.max = { ...(limit.max ?? {}), ...next };
+      limit._default = { ...(limit._default ?? {}), ...next };
+      limit.defaultRequest = { ...(limit.defaultRequest ?? {}), ...next };
+      // Keep min permissive so valid plans never get rejected.
+      limit.min = { ...(limit.min ?? {}), cpu: "0", memory: "0Mi" };
+    }
+  }
+  return limitRange;
+}
+
+export function renderNetworkPolicy(
+  template: V1NetworkPolicy,
+  namespace: string
+): V1NetworkPolicy {
+  const policy = clone(template);
+  policy.metadata = {
+    ...policy.metadata,
+    name: template.metadata?.name ?? "policy",
+    namespace
+  };
+  return policy;
+}
+
+===== FILE: apps\controller\templates\tenant\limitrange.yaml =====
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: site-limits
+  # namespace is set by the controller per tenant
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: 1000m
+        memory: 1Gi
+      min:
+        cpu: "0"
+        memory: 0Mi
+
+===== FILE: apps\controller\templates\tenant\networkpolicy-allow-ingress.yaml =====
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-ingress
+  # namespace is set by the controller per tenant
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - {} # allow all ingress (NodePort traffic hits pods)
+
+===== FILE: apps\controller\templates\tenant\networkpolicy-deny-all.yaml =====
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  # namespace is set by the controller per tenant
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+===== FILE: apps\controller\templates\tenant\resourcequota.yaml =====
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: site-quota
+  # namespace is set by the controller per tenant
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    requests.storage: 1Gi
+    limits.cpu: "2"
+    limits.memory: 2Gi
+    pods: "1"
+    services: "5"
+    configmaps: "10"
+    persistentvolumeclaims: "1"
+
+===== FILE: apps\controller\tsconfig.json =====
+{
+    "compilerOptions": {
+      "target": "ES2022",
+      "module": "ES2022",
+      "moduleResolution": "Bundler",
+      "outDir": "dist",
+      "strict": true,
+    "skipLibCheck": true,
+    "types": ["node"]
+    },
+    "include": ["src/**/*.ts"]
+  }
+  
+===== FILE: apps\panel\app\actions.ts =====
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
+import { createSite, deleteSite } from "./lib/controller.js";
+import { clearSession, requireSession } from "./lib/session.js";
+
+export async function createSiteAction(formData: FormData) {
+  requireSession();
+
+  const siteId = String(formData.get("siteId") ?? "").trim();
+  const image = String(formData.get("image") ?? "").trim();
+  const containerPort = Number(formData.get("containerPort") ?? "3000");
+
+  if (!siteId || !image || Number.isNaN(containerPort)) {
+    throw new Error("siteId, image, and containerPort are required.");
+  }
+
+  await createSite({ siteId, image, containerPort });
+  revalidatePath("/");
+}
+
+export async function deleteSiteAction(formData: FormData) {
+  requireSession();
+  const siteId = String(formData.get("siteId") ?? "").trim();
+  if (!siteId) throw new Error("siteId is required.");
+
+  await deleteSite(siteId);
+  revalidatePath("/");
+}
+
+export async function logoutAction() {
+  clearSession();
+  redirect("/login");
+}
+
+===== FILE: apps\panel\app\globals.css =====
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #f4f5f7;
+  color: #0f172a;
+}
+
+body {
+  margin: 0;
+}
+
+main {
+  max-width: 960px;
+  margin: 48px auto;
+  padding: 24px;
+  background: #ffffff;
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.06);
+}
+
+button {
+  cursor: pointer;
+}
+
+===== FILE: apps\panel\app\layout.tsx =====
+import "./globals.css";
+import type { ReactNode } from "react";
+
+export const metadata = {
+  title: "Voxeil Panel",
+  description: "Minimal self-hosted Kubernetes panel"
+};
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        {children}
+      </body>
+    </html>
+  );
+}
+
+===== FILE: apps\panel\app\lib\controller.ts =====
+const CONTROLLER_BASE =
+  process.env.CONTROLLER_BASE_URL ?? "http://controller.platform.svc.cluster.local:8080";
+const CONTROLLER_API_KEY = process.env.CONTROLLER_API_KEY;
+
+if (!CONTROLLER_API_KEY) {
+  throw new Error("CONTROLLER_API_KEY is not set (injected via Secret).");
+}
+
+type ControllerInit = RequestInit & { headers?: Record<string, string> };
+
+async function controllerFetch(path: string, init?: ControllerInit) {
+  const headers = {
+    ...(init?.headers ?? {}),
+    "x-api-key": CONTROLLER_API_KEY,
+    "content-type": init?.headers?.["content-type"] ?? "application/json"
+  };
+
+  const res = await fetch(`${CONTROLLER_BASE}${path}`, {
+    ...init,
+    headers
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Controller error (${res.status}): ${text}`);
+  }
+
+  return res;
+}
+
+export type SiteInfo = {
+  namespace: string;
+  siteId: string | null;
+};
+
+export async function listSites(): Promise<SiteInfo[]> {
+  const res = await controllerFetch("/sites", { method: "GET" });
+  return res.json();
+}
+
+export async function createSite(input: {
+  siteId: string;
+  image: string;
+  containerPort: number;
+}) {
+  await controllerFetch("/sites", {
+    method: "POST",
+    body: JSON.stringify(input)
+  });
+}
+
+export async function deleteSite(siteId: string) {
+  await controllerFetch(`/sites/${siteId}`, { method: "DELETE" });
+}
+
+===== FILE: apps\panel\app\lib\session.ts =====
+import crypto from "crypto";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+
+const SESSION_COOKIE = "vhp_panel_session";
+const SESSION_TTL_SECONDS = 60 * 60 * 12; // 12h
+
+function sessionValue(): string {
+  const password = process.env.PANEL_ADMIN_PASSWORD;
+  if (!password) {
+    throw new Error("PANEL_ADMIN_PASSWORD is not set (injected via Secret).");
+  }
+  return crypto.createHash("sha256").update(password).digest("hex");
+}
+
+export function hasSession(): boolean {
+  const current = cookies().get(SESSION_COOKIE)?.value;
+  return current === sessionValue();
+}
+
+export function requireSession() {
+  if (!hasSession()) redirect("/login");
+}
+
+export function establishSession() {
+  cookies().set({
+    name: SESSION_COOKIE,
+    value: sessionValue(),
+    httpOnly: true,
+    sameSite: "lax",
+    secure: false,
+    path: "/",
+    maxAge: SESSION_TTL_SECONDS
+  });
+}
+
+export function clearSession() {
+  cookies().delete(SESSION_COOKIE);
+}
+
+===== FILE: apps\panel\app\login\login-actions.ts =====
+"use server";
+
+import { establishSession, hasSession } from "../lib/session.js";
+
+type LoginState = { success: boolean; error?: string };
+
+export async function loginAction(
+  _prevState: LoginState,
+  formData: FormData
+): Promise<LoginState> {
+  if (hasSession()) return { success: true };
+
+  const provided = String(formData.get("password") ?? "");
+  const adminPassword = process.env.PANEL_ADMIN_PASSWORD;
+  if (!adminPassword) {
+    return { success: false, error: "PANEL_ADMIN_PASSWORD is not set." };
+  }
+
+  if (provided !== adminPassword) {
+    return { success: false, error: "Invalid password." };
+  }
+
+  establishSession();
+  return { success: true };
+}
+
+===== FILE: apps\panel\app\login\login-form.tsx =====
+"use client";
+
+import { useEffect } from "react";
+import { useFormState } from "react-dom";
+import { useRouter } from "next/navigation";
+import { loginAction } from "./login-actions";
+
+const initialState = { success: false, error: "" };
+
+export function LoginForm() {
+  const router = useRouter();
+  const [state, formAction] = useFormState(loginAction, initialState);
+
+  useEffect(() => {
+    if (state?.success) router.push("/");
+  }, [state?.success, router]);
+
+  return (
+    <form action={formAction} style={{ display: "grid", gap: "12px", maxWidth: 320 }}>
+      <label style={{ display: "grid", gap: 6 }}>
+        <span>Admin password</span>
+        <input name="password" type="password" required placeholder="Generated by installer" />
+      </label>
+      {state?.error ? <div style={{ color: "crimson" }}>{state.error}</div> : null}
+      <button type="submit" style={{ padding: "10px 16px" }}>Login</button>
+    </form>
+  );
+}
+
+===== FILE: apps\panel\app\login\page.tsx =====
+import { redirect } from "next/navigation";
+import { hasSession } from "../lib/session.js";
+import { LoginForm } from "./login-form";
+
+export default function LoginPage() {
+  if (hasSession()) redirect("/");
+
+  return (
+    <main>
+      <h1>Voxeil Panel</h1>
+      <p>Enter the admin password generated by the installer.</p>
+      <LoginForm />
+    </main>
+  );
+}
+
+===== FILE: apps\panel\app\page.tsx =====
+import { createSiteAction, deleteSiteAction, logoutAction } from "./actions";
+import { listSites } from "./lib/controller.js";
+import { requireSession } from "./lib/session.js";
+
+export default async function HomePage() {
+  await requireSession();
+  const sites = await listSites();
+
+  return (
+    <main>
+      <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <h1 style={{ margin: 0 }}>Sites</h1>
+          <p style={{ margin: 0, color: "#475569" }}>One tenant = one namespace.</p>
+        </div>
+        <form action={logoutAction}>
+          <button type="submit">Logout</button>
+        </form>
+      </header>
+
+      <section style={{ marginTop: 24 }}>
+        <h2>Create site</h2>
+        <form action={createSiteAction} style={{ display: "grid", gap: 12, maxWidth: 420 }}>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Site ID (lowercase, a-z0-9-)</span>
+            <input name="siteId" minLength={3} maxLength={40} pattern="[a-z0-9-]+" required />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Image (registry/user:tag)</span>
+            <input name="image" required />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Container port</span>
+            <input name="containerPort" type="number" defaultValue={3000} min={1} required />
+          </label>
+          <button type="submit" style={{ padding: "10px 16px" }}>Create</button>
+        </form>
+      </section>
+
+      <section style={{ marginTop: 32 }}>
+        <h2>Existing sites</h2>
+        {sites.length === 0 ? (
+          <p>No sites yet.</p>
+        ) : (
+          <ul style={{ listStyle: "none", padding: 0, display: "grid", gap: 12 }}>
+            {sites.map(site => (
+              <li key={site.namespace} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 600 }}>{site.siteId ?? "unknown"}</div>
+                    <div style={{ color: "#475569", fontSize: 14 }}>{site.namespace}</div>
+                  </div>
+                  {site.siteId ? (
+                    <form action={deleteSiteAction}>
+                      <input type="hidden" name="siteId" value={site.siteId} />
+                      <button type="submit" style={{ color: "crimson" }}>Delete</button>
+                    </form>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </main>
+  );
+}
+
+===== FILE: apps\panel\Dockerfile =====
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json tsconfig.json next.config.mjs ./
+COPY next-env.d.ts ./next-env.d.ts
+COPY app ./app
+RUN npm install
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/package.json /app/package.json
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/.next /app/.next
+COPY --from=build /app/app /app/app
+EXPOSE 3000
+CMD ["npm", "run", "start"]
+
+===== FILE: apps\panel\next.config.mjs =====
+/** @type {import('next').NextConfig} */
+const nextConfig = {
+  experimental: {
+    serverActions: true
+  }
+};
+
+export default nextConfig;
+
+===== FILE: apps\panel\next-env.d.ts =====
+/// <reference types="next" />
+/// <reference types="next/types/global" />
+/// <reference types="next/navigation-types/compat/navigation" />
+
+
+===== FILE: apps\panel\package.json =====
+{
+  "name": "vhp-panel",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14.2.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.19",
+    "typescript": "^5.6.3"
+  }
+}
+
+===== FILE: apps\panel\tsconfig.json =====
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "jsx": "preserve",
+    "types": ["node"]
+  },
+  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx"],
+  "exclude": ["node_modules"]
+}
+
+===== FILE: infra\docker\compose\.env.example =====
+POSTGRES_DB=voxeil
+POSTGRES_USER=voxeil
+POSTGRES_PASSWORD=replace_me
+POSTGRES_PORT=5432
+
+REDIS_PORT=6379
+
+CONTROLLER_PORT=8080
+PANEL_PORT=3000
+
+ADMIN_API_KEY=replace_me
+CONTROLLER_API_KEY=replace_me
+PANEL_ADMIN_PASSWORD=replace_me
+CONTROLLER_BASE_URL=http://controller:8080
+
+SITE_NODEPORT_START=31000
+SITE_NODEPORT_END=31999
+
+KUBECONFIG_HOST_PATH=C:/Users/you/.kube/config
+KUBECONFIG_CONTAINER_PATH=/kube/config
+===== FILE: infra\docker\compose\docker-compose.yml =====
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped  
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - voxeil
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "${REDIS_PORT}:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - voxeil
+
+  controller:
+    build:
+      context: ../../../apps/controller
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      PORT: "8080"
+      ADMIN_API_KEY: ${ADMIN_API_KEY}
+      SITE_NODEPORT_START: ${SITE_NODEPORT_START}
+      SITE_NODEPORT_END: ${SITE_NODEPORT_END}
+      KUBECONFIG: ${KUBECONFIG_CONTAINER_PATH}
+    volumes:
+      - "${KUBECONFIG_HOST_PATH}:${KUBECONFIG_CONTAINER_PATH}:ro"
+    ports:
+      - "${CONTROLLER_PORT}:8080"
+    networks:
+      - voxeil
+
+  panel:
+    build:
+      context: ../../../apps/panel
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - controller
+    environment:
+      PORT: "3000"
+      CONTROLLER_API_KEY: ${CONTROLLER_API_KEY}
+      CONTROLLER_BASE_URL: ${CONTROLLER_BASE_URL}
+      PANEL_ADMIN_PASSWORD: ${PANEL_ADMIN_PASSWORD}
+    ports:
+      - "${PANEL_PORT}:3000"
+    networks:
+      - voxeil
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  voxeil:
+
+===== FILE: infra\k8s\docs\README.md =====
+# Kubernetes Manifests
+
+## Apply Platform Manifests
+
+1) Ensure the platform images are set in the manifests:
+   - `infra/k8s/platform/controller-deploy.yaml` -> `REPLACE_CONTROLLER_IMAGE`
+   - `infra/k8s/platform/panel-deploy.yaml` -> `REPLACE_PANEL_IMAGE`
+2) Create the platform secret in the `platform` namespace (keys: `ADMIN_API_KEY`, `PANEL_ADMIN_PASSWORD`, `SITE_NODEPORT_START`, `SITE_NODEPORT_END`).
+3) Apply the platform manifests:
+
+```
+kubectl apply -f infra/k8s/platform
+```
+
+## Apply Tenant Templates
+
+Tenant templates are designed to be applied per tenant namespace.
+
+1) Create a tenant namespace (example):
+
+```
+kubectl create namespace tenant-acme
+```
+
+2) Apply all tenant templates to that namespace:
+
+```
+kubectl -n tenant-acme apply -f infra/k8s/templates/tenant
+```
+
+===== FILE: infra\k8s\platform\controller-deploy.yaml =====
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: controller
+  template:
+    metadata:
+      labels:
+        app: controller
+    spec:
+      serviceAccountName: controller-sa
+      containers:
+        - name: controller
+          image: REPLACE_CONTROLLER_IMAGE
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PORT
+              value: "8080"
+            - name: ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: ADMIN_API_KEY
+            - name: SITE_NODEPORT_START
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: SITE_NODEPORT_START
+            - name: SITE_NODEPORT_END
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: SITE_NODEPORT_END
+===== FILE: infra\k8s\platform\controller-nodeport.yaml =====
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller-nodeport
+  namespace: platform
+spec:
+  type: NodePort
+  selector:
+    app: controller
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: REPLACE_CONTROLLER_NODEPORT
+
+===== FILE: infra\k8s\platform\controller-svc.yaml =====
+apiVersion: v1
+kind: Service
+metadata:
+  name: controller
+  namespace: platform
+spec:
+  type: ClusterIP
+  selector:
+    app: controller
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+===== FILE: infra\k8s\platform\namespace.yaml =====
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: platform
+
+===== FILE: infra\k8s\platform\panel-deploy.yaml =====
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: panel
+  namespace: platform
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: panel
+  template:
+    metadata:
+      labels:
+        app: panel
+    spec:
+      containers:
+        - name: panel
+          image: REPLACE_PANEL_IMAGE
+          ports:
+            - containerPort: 3000
+          env:
+            - name: CONTROLLER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: ADMIN_API_KEY
+            - name: PANEL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_PASSWORD
+            - name: CONTROLLER_BASE_URL
+              value: "http://controller.platform.svc.cluster.local:8080"
+
+===== FILE: infra\k8s\platform\panel-svc.yaml =====
+apiVersion: v1
+kind: Service
+metadata:
+  name: panel
+  namespace: platform
+spec:
+  type: NodePort
+  selector:
+    app: panel
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000
+      nodePort: REPLACE_PANEL_NODEPORT
+
+===== FILE: infra\k8s\platform\rbac.yaml =====
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: controller-sa
+  namespace: platform
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: controller-role
+rules:
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get","list","create","delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get","list","create","patch","update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get","list"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: controller-binding
+subjects:
+  - kind: ServiceAccount
+    name: controller-sa
+    namespace: platform
+roleRef:
+  kind: ClusterRole
+  name: controller-role
+  apiGroup: rbac.authorization.k8s.io
+
+===== FILE: infra\k8s\templates\tenant\limitrange.yaml =====
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: site-limits
+  # namespace is set by the controller per tenant
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 512Mi
+      defaultRequest:
+        cpu: 100m
+        memory: 128Mi
+      max:
+        cpu: 1000m
+        memory: 1Gi
+      min:
+        cpu: "0"
+        memory: 0Mi
+
+===== FILE: infra\k8s\templates\tenant\networkpolicy-allow-ingress.yaml =====
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-all-ingress
+  # namespace is set by the controller per tenant
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+  ingress:
+    - {} # allow all ingress (NodePort traffic hits pods)
+
+===== FILE: infra\k8s\templates\tenant\networkpolicy-deny-all.yaml =====
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  # namespace is set by the controller per tenant
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+
+===== FILE: infra\k8s\templates\tenant\resourcequota.yaml =====
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: site-quota
+  # namespace is set by the controller per tenant
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1Gi
+    requests.storage: 1Gi
+    limits.cpu: "2"
+    limits.memory: 2Gi
+    pods: "1"
+    services: "5"
+    configmaps: "10"
+    persistentvolumeclaims: "1"
+
+===== FILE: install.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1"; exit 1; }
+}
+
+need_cmd sudo
+need_cmd curl
+need_cmd tar
+need_cmd mktemp
+
+OWNER="${OWNER:-ARK322}"
+REPO="${REPO:-voxeil-panel}"
+REF="${REF:-main}"
+
+TMP_DIR="$(mktemp -d)"
+cleanup() { rm -rf "${TMP_DIR}"; }
+trap cleanup EXIT
+
+ARCHIVE_URL="https://github.com/${OWNER}/${REPO}/archive/${REF}.tar.gz"
+ARCHIVE_PATH="${TMP_DIR}/repo.tar.gz"
+
+echo "Downloading ${OWNER}/${REPO}@${REF}..."
+curl -fsSL "${ARCHIVE_URL}" -o "${ARCHIVE_PATH}"
+
+tar -xzf "${ARCHIVE_PATH}" -C "${TMP_DIR}"
+
+EXTRACTED_DIR="${TMP_DIR}/${REPO}-${REF}"
+if [[ ! -d "${EXTRACTED_DIR}" ]]; then
+  # fallback if GitHub names the folder differently
+  EXTRACTED_DIR="$(find "${TMP_DIR}" -maxdepth 1 -type d -name "${REPO}-*" | head -n 1 || true)"
+fi
+
+if [[ -z "${EXTRACTED_DIR}" || ! -d "${EXTRACTED_DIR}" ]]; then
+  echo "Failed to locate extracted repo directory."
+  exit 1
+fi
+
+cd "${EXTRACTED_DIR}"
+chmod +x installer/installer.sh
+
+echo "Starting installer..."
+exec sudo bash installer/installer.sh "$@"
+
+===== FILE: installer\installer.sh =====
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ========= helpers =========
+need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
+rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48; }
+
+echo "== Voxeil Panel Installer =="
+
+need_cmd curl
+need_cmd sed
+need_cmd mktemp
+
+# ========= inputs =========
+read -rp "Panel NodePort [30080]: " PANEL_NODEPORT
+PANEL_NODEPORT="${PANEL_NODEPORT:-30080}"
+
+read -rp "Expose controller via NodePort for admin use? [y/N]: " EXPOSE_CONTROLLER
+EXPOSE_CONTROLLER="${EXPOSE_CONTROLLER:-N}"
+read -rp "Controller NodePort [30081]: " CONTROLLER_NODEPORT
+CONTROLLER_NODEPORT="${CONTROLLER_NODEPORT:-30081}"
+
+read -rp "Site NodePort range start [31000]: " SITE_PORT_START
+SITE_PORT_START="${SITE_PORT_START:-31000}"
+
+read -rp "Site NodePort range end [31999]: " SITE_PORT_END
+SITE_PORT_END="${SITE_PORT_END:-31999}"
+
+read -rp "Allowlist your IP/CIDR for NodePorts (recommended) [empty=skip]: " ALLOW_IP
+
+read -rp "Controller image (full ref, e.g. registry/user/controller:tag): " CONTROLLER_IMAGE
+if [[ -z "${CONTROLLER_IMAGE}" ]]; then echo "controller image required"; exit 1; fi
+
+read -rp "Panel image (full ref, e.g. registry/user/panel:tag): " PANEL_IMAGE
+if [[ -z "${PANEL_IMAGE}" ]]; then echo "panel image required"; exit 1; fi
+
+CONTROLLER_API_KEY="$(rand)"
+PANEL_ADMIN_PASSWORD="$(rand)"
+
+echo ""
+echo "Config:"
+echo "  Panel NodePort: ${PANEL_NODEPORT}"
+echo "  Controller NodePort (optional): ${CONTROLLER_NODEPORT} (enabled? ${EXPOSE_CONTROLLER})"
+echo "  Site NodePort range: ${SITE_PORT_START}-${SITE_PORT_END}"
+echo "  Allowlist: ${ALLOW_IP:-<none>}"
+echo ""
+
+# ========= install k3s if needed =========
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "Installing k3s..."
+  curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+fi
+
+need_cmd kubectl
+
+echo "Waiting for node to be ready..."
+kubectl wait --for=condition=Ready node --all --timeout=180s
+
+# ========= render manifests to temp dir =========
+RENDER_DIR="$(mktemp -d)"
+
+if [[ ! -d infra/k8s/platform ]]; then
+  echo "infra/k8s/platform is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+cp -r infra/k8s/platform "${RENDER_DIR}/platform"
+
+cat > "${RENDER_DIR}/platform/platform-secrets.yaml" <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: platform-secrets
+  namespace: platform
+type: Opaque
+stringData:
+  ADMIN_API_KEY: "${CONTROLLER_API_KEY}"
+  PANEL_ADMIN_PASSWORD: "${PANEL_ADMIN_PASSWORD}"
+  SITE_NODEPORT_START: "${SITE_PORT_START}"
+  SITE_NODEPORT_END: "${SITE_PORT_END}"
+EOF
+
+echo "Templating manifests..."
+sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE}|g" "${RENDER_DIR}/platform/controller-deploy.yaml"
+sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE}|g" "${RENDER_DIR}/platform/panel-deploy.yaml"
+sed -i "s|REPLACE_PANEL_NODEPORT|${PANEL_NODEPORT}|g" "${RENDER_DIR}/platform/panel-svc.yaml"
+sed -i "s|REPLACE_CONTROLLER_NODEPORT|${CONTROLLER_NODEPORT}|g" "${RENDER_DIR}/platform/controller-nodeport.yaml"
+
+# ========= apply =========
+echo "Applying platform manifests..."
+kubectl apply -f "${RENDER_DIR}/platform/namespace.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/rbac.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/platform-secrets.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/controller-deploy.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/controller-svc.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/panel-deploy.yaml"
+kubectl apply -f "${RENDER_DIR}/platform/panel-svc.yaml"
+
+if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
+  kubectl apply -f "${RENDER_DIR}/platform/controller-nodeport.yaml"
+fi
+
+# ========= optional: UFW allowlist =========
+if command -v ufw >/dev/null 2>&1 && [[ -n "${ALLOW_IP}" ]]; then
+  echo "Configuring UFW allowlist..."
+  ufw --force enable
+  ufw allow from "${ALLOW_IP}" to any port "${PANEL_NODEPORT}" proto tcp
+  ufw allow from "${ALLOW_IP}" to any port "${SITE_PORT_START}:${SITE_PORT_END}" proto tcp
+  if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
+    ufw allow from "${ALLOW_IP}" to any port "${CONTROLLER_NODEPORT}" proto tcp
+  fi
+else
+  echo "UFW skipped (no allowlist provided or ufw missing)."
+fi
+
+# ========= wait for readiness =========
+echo "Waiting for controller and panel to become available..."
+kubectl wait --for=condition=Available deployment/controller -n platform --timeout=180s
+kubectl wait --for=condition=Available deployment/panel -n platform --timeout=180s
+
+echo ""
+echo "Done."
+echo "Panel: http://<VPS_IP>:${PANEL_NODEPORT}"
+echo "Panel admin password: ${PANEL_ADMIN_PASSWORD}"
+echo "Controller API key: ${CONTROLLER_API_KEY}"
+echo ""
+
+===== FILE: README.md =====
+## Voxeil Panel (MVP)
+
+Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal UI shipped in this repo.
+
+### Components
+- `apps/controller`: Fastify API that owns all Kubernetes access (namespaces, quotas, PVCs, network policies).
+- `apps/panel`: Next.js UI that talks only to the controller service inside the cluster.
+- `infra/k8s/platform`: k3s-compatible manifests with placeholders (`REPLACE_*`) for images and NodePorts.
+- `infra/k8s/templates/tenant`: Baseline ResourceQuota, LimitRange, and default-deny NetworkPolicy used for every tenant namespace.
+
+### Install (domainless MVP)
+1) Build/push your own images (no hardcoded registry):
+   - Controller: `apps/controller`
+   - Panel: `apps/panel`
+2) One-liner install (no git clone required):
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash
+   ```
+   - Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
+   The installer will ask for:
+   - Panel NodePort
+   - Optional controller NodePort (admin-only)
+   - Site NodePort range
+   - IP allowlist (used with UFW if available)
+   - Controller + panel image references
+3) Outputs:
+   - Panel admin password (stored in `platform-secrets`)
+   - Controller API key (stored in `platform-secrets`)
+   - Panel URL: `http://<VPS_IP>:<PANEL_NODEPORT>`
+   - Note: `SITE_NODEPORT_START/END` are reserved for Phase 2 and currently unused by the controller.
+
+### Security baseline
+- Controller enforces `X-API-Key` on all routes except `/health`.
+- Panel never talks directly to the Kubernetes API; it proxies via the controller service.
+- Tenants get a dedicated namespace with ResourceQuota, LimitRange, and default-deny NetworkPolicy (DNS egress only).
+- Controller does not create tenant Deployments, Services, Ingress, or cert-manager resources (namespace isolation only).
+- No domains or registry paths are hardcoded; everything is provided at install time.
+
+### Controller API
+- `POST /sites` with `{ domain, cpu, ramGi, diskGi }`
+- `GET /sites`
+- `PATCH /sites/:slug/limits` with `{ cpu?, ramGi?, diskGi? }`
+- `DELETE /sites/:slug`
+
+### Future TODOs
+- Add HTTPS/ingress once domain support is enabled.
+- Extend quota/limit presets per plan.
+- Add per-tenant API keys and audit logging.
+FOOTER:
+ADMIN_API_KEY is expected from a Kubernetes Secret (platform-secrets) injected into deployments; no Secret manifest is committed in infra/k8s, and the installer generates platform-secrets.yaml during install (docs also describe manual creation).

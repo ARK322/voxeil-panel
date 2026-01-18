@@ -33,12 +33,14 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 - Controller enforces `X-API-Key` on all routes except `/health`.
 - Panel never talks directly to the Kubernetes API; it proxies via the controller service.
 - Tenants get a dedicated namespace with ResourceQuota, LimitRange, and default-deny NetworkPolicy (DNS egress only).
+- Controller does not create tenant Deployments, Services, Ingress, or cert-manager resources (namespace isolation only).
 - No domains or registry paths are hardcoded; everything is provided at install time.
 
 ### Controller API
 - `POST /sites` with `{ domain, cpu, ramGi, diskGi }`
 - `GET /sites`
 - `PATCH /sites/:slug/limits` with `{ cpu?, ramGi?, diskGi? }`
+- `DELETE /sites/:slug`
 
 ### Future TODOs
 - Add HTTPS/ingress once domain support is enabled.

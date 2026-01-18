@@ -57,15 +57,21 @@ export function renderLimitRange(
     };
     if (!limitRange.spec) {
       limitRange.spec = {
-        limits: [{ type: "Container", max: next, default: next, defaultRequest: next }]
+        limits: [
+          { type: "Container", max: next, _default: next, defaultRequest: next, min: { cpu: "0", memory: "0Mi" } }
+        ]
       };
     } else if (!limitRange.spec.limits || limitRange.spec.limits.length === 0) {
-      limitRange.spec.limits = [{ type: "Container", max: next, default: next, defaultRequest: next }];
+      limitRange.spec.limits = [
+        { type: "Container", max: next, _default: next, defaultRequest: next, min: { cpu: "0", memory: "0Mi" } }
+      ];
     } else {
       const limit = limitRange.spec.limits[0];
       limit.max = { ...(limit.max ?? {}), ...next };
-      limit.default = { ...(limit.default ?? {}), ...next };
+      limit._default = { ...(limit._default ?? {}), ...next };
       limit.defaultRequest = { ...(limit.defaultRequest ?? {}), ...next };
+      // Keep min permissive so valid plans never get rejected.
+      limit.min = { ...(limit.min ?? {}), cpu: "0", memory: "0Mi" };
     }
   }
   return limitRange;
