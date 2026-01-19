@@ -21,6 +21,15 @@ if [[ -z "${GHCR_TOKEN:-}" ]]; then
   exit 1
 fi
 GHCR_EMAIL="${GHCR_EMAIL:-}"
+TLS_ENABLED_RAW="${TLS_ENABLED:-false}"
+case "${TLS_ENABLED_RAW,,}" in
+  true|1|yes) TLS_ENABLED=true ;;
+  *) TLS_ENABLED=false ;;
+esac
+if [[ "${TLS_ENABLED}" == "true" && -z "${LETSENCRYPT_EMAIL:-}" ]]; then
+  echo "LETSENCRYPT_EMAIL env var is required for TLS (cert-manager)."
+  exit 1
+fi
 
 # ========= inputs =========
 read -rp "Panel NodePort [30080]: " PANEL_NODEPORT
@@ -56,6 +65,11 @@ echo "  Site NodePort range: ${SITE_PORT_START}-${SITE_PORT_END}"
 echo "  Allowlist: ${ALLOW_IP:-<none>}"
 echo "  GHCR Username: ${GHCR_USERNAME}"
 echo "  GHCR Email: ${GHCR_EMAIL:-<none>}"
+if [[ "${TLS_ENABLED}" == "true" ]]; then
+  echo "  Let's Encrypt Email: ${LETSENCRYPT_EMAIL}"
+else
+  echo "  TLS: disabled"
+fi
 echo ""
 
 # ========= install k3s if needed =========
@@ -77,6 +91,9 @@ if [[ ! -d infra/k8s/platform ]]; then
   exit 1
 fi
 cp -r infra/k8s/platform "${RENDER_DIR}/platform"
+if [[ "${TLS_ENABLED}" == "true" ]]; then
+  cp -r infra/k8s/cert-manager "${RENDER_DIR}/cert-manager"
+fi
 
 cat > "${RENDER_DIR}/platform/platform-secrets.yaml" <<EOF
 apiVersion: v1
@@ -97,6 +114,9 @@ sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE}|g" "${RENDER_DIR}/platfor
 sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE}|g" "${RENDER_DIR}/platform/panel-deploy.yaml"
 sed -i "s|REPLACE_PANEL_NODEPORT|${PANEL_NODEPORT}|g" "${RENDER_DIR}/platform/panel-svc.yaml"
 sed -i "s|REPLACE_CONTROLLER_NODEPORT|${CONTROLLER_NODEPORT}|g" "${RENDER_DIR}/platform/controller-nodeport.yaml"
+if [[ "${TLS_ENABLED}" == "true" ]]; then
+  sed -i "s|REPLACE_LETSENCRYPT_EMAIL|${LETSENCRYPT_EMAIL}|g" "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
+fi
 
 # ========= apply =========
 echo "Applying platform manifests..."
@@ -114,6 +134,14 @@ kubectl apply -f "${RENDER_DIR}/platform/controller-deploy.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/controller-svc.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/panel-deploy.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/panel-svc.yaml"
+
+if [[ "${TLS_ENABLED}" == "true" ]]; then
+  echo "TLS enabled; installing cert-manager and issuers."
+  kubectl apply -f "${RENDER_DIR}/cert-manager/cert-manager.yaml"
+  kubectl apply -f "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
+else
+  echo "TLS disabled; skipping cert-manager and issuers."
+fi
 
 if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
   kubectl apply -f "${RENDER_DIR}/platform/controller-nodeport.yaml"

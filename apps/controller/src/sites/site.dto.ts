@@ -4,7 +4,8 @@ export const CreateSiteSchema = z.object({
   domain: z.string().min(1),
   cpu: z.number().int().positive(),
   ramGi: z.number().int().positive(),
-  diskGi: z.number().int().positive()
+  diskGi: z.number().int().positive(),
+  tlsEnabled: z.boolean().optional()
 });
 
 export const PatchLimitsSchema = z
@@ -22,9 +23,17 @@ export const DeploySiteSchema = z.object({
   containerPort: z.number().int().positive()
 });
 
+export const TlsIssuerSchema = z.enum(["letsencrypt-staging", "letsencrypt-prod"]);
+
+export const PatchTlsSchema = z.object({
+  enabled: z.boolean(),
+  issuer: TlsIssuerSchema.optional()
+});
+
 export type CreateSiteInput = z.infer<typeof CreateSiteSchema>;
 export type PatchLimitsInput = z.infer<typeof PatchLimitsSchema>;
 export type DeploySiteInput = z.infer<typeof DeploySiteSchema>;
+export type PatchTlsInput = z.infer<typeof PatchTlsSchema>;
 
 export type SiteLimits = {
   cpu: number;
@@ -53,8 +62,23 @@ export type DeploySiteResponse = {
   containerPort: number;
 };
 
+export type PatchTlsResponse = {
+  ok: true;
+  slug: string;
+  tlsEnabled: boolean;
+  issuer: string;
+};
+
 export type SiteListItem = {
   slug: string;
   namespace: string;
   ready: boolean;
+  domain?: string;
+  image?: string;
+  containerPort?: number;
+  tlsEnabled?: boolean;
+  tlsIssuer?: string;
+  cpu?: number;
+  ramGi?: number;
+  diskGi?: number;
 };

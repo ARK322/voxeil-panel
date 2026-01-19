@@ -17,26 +17,33 @@ import {
   allocateTenantNamespace,
   deleteTenantNamespace,
   listTenantNamespaces,
+  patchNamespaceAnnotations,
+  readTenantNamespace,
   requireNamespace,
   slugFromNamespace
 } from "../k8s/namespace.js";
+import { patchIngress } from "../k8s/ingress.js";
 import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
 import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
 import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
 import { ensureGhcrPullSecret } from "../k8s/secrets.js";
+import { SITE_ANNOTATIONS } from "../k8s/annotations.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
 import type {
   CreateSiteInput,
   PatchLimitsInput,
+  PatchTlsInput,
   CreateSiteResponse,
   DeploySiteInput,
   DeploySiteResponse,
+  PatchTlsResponse,
   SiteListItem,
   SiteLimitsResponse
 } from "./site.dto.js";
 
 const DEFAULT_MAINTENANCE_IMAGE = "ghcr.io/OWNER/voxeil-maintenance:latest";
 const DEFAULT_MAINTENANCE_PORT = 3000;
+const DEFAULT_TLS_ISSUER = "letsencrypt-staging";
 
 function resolveMaintenanceImage(): string {
   const value = process.env.GHCR_MAINTENANCE_IMAGE ?? DEFAULT_MAINTENANCE_IMAGE;
@@ -55,6 +62,20 @@ function resolveMaintenancePort(): number {
   return port;
 }
 
+function parseBooleanAnnotation(value?: string): boolean | undefined {
+  if (!value) return undefined;
+  const normalized = value.toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return undefined;
+}
+
+function parseNumberAnnotation(value?: string): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
 export async function createSite(input: CreateSiteInput): Promise<CreateSiteResponse> {
   let baseSlug: string;
   try {
@@ -62,7 +83,19 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
   } catch (error: any) {
     throw new HttpError(400, error?.message ?? "Invalid domain.");
   }
-  const { slug, namespace } = await allocateTenantNamespace(baseSlug);
+  const maintenanceImage = resolveMaintenanceImage();
+  const maintenancePort = resolveMaintenancePort();
+  const tlsEnabled = input.tlsEnabled ?? false;
+  const { slug, namespace } = await allocateTenantNamespace(baseSlug, {
+    [SITE_ANNOTATIONS.domain]: input.domain,
+    [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
+    [SITE_ANNOTATIONS.tlsIssuer]: DEFAULT_TLS_ISSUER,
+    [SITE_ANNOTATIONS.image]: maintenanceImage,
+    [SITE_ANNOTATIONS.containerPort]: String(maintenancePort),
+    [SITE_ANNOTATIONS.cpu]: String(input.cpu),
+    [SITE_ANNOTATIONS.ramGi]: String(input.ramGi),
+    [SITE_ANNOTATIONS.diskGi]: String(input.diskGi)
+  });
 
   const templates = await loadTenantTemplates();
   const resourceQuota = renderResourceQuota(templates.resourceQuota, namespace, {
@@ -94,8 +127,8 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
     namespace,
     slug,
     host,
-    image: resolveMaintenanceImage(),
-    containerPort: resolveMaintenancePort(),
+    image: maintenanceImage,
+    containerPort: maintenancePort,
     cpu: input.cpu,
     ramGi: input.ramGi
   };
@@ -124,7 +157,9 @@ export async function listSites(): Promise<SiteListItem[]> {
   const namespaces = await listTenantNamespaces();
   const items: SiteListItem[] = [];
 
-  for (const namespace of namespaces) {
+  for (const namespaceEntry of namespaces) {
+    const namespace = namespaceEntry.name;
+    const annotations = namespaceEntry.annotations;
     const slug = slugFromNamespace(namespace);
     try {
       const [quotaStatus, pvcSize] = await Promise.all([
@@ -133,9 +168,33 @@ export async function listSites(): Promise<SiteListItem[]> {
       ]);
 
       const ready = quotaStatus.exists && pvcSize != null;
-      items.push({ slug, namespace, ready });
+      items.push({
+        slug,
+        namespace,
+        ready,
+        domain: annotations[SITE_ANNOTATIONS.domain],
+        image: annotations[SITE_ANNOTATIONS.image],
+        containerPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.containerPort]),
+        tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]),
+        tlsIssuer: annotations[SITE_ANNOTATIONS.tlsIssuer],
+        cpu: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.cpu]),
+        ramGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.ramGi]),
+        diskGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.diskGi])
+      });
     } catch {
-      items.push({ slug, namespace, ready: false });
+      items.push({
+        slug,
+        namespace,
+        ready: false,
+        domain: annotations[SITE_ANNOTATIONS.domain],
+        image: annotations[SITE_ANNOTATIONS.image],
+        containerPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.containerPort]),
+        tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]),
+        tlsIssuer: annotations[SITE_ANNOTATIONS.tlsIssuer],
+        cpu: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.cpu]),
+        ramGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.ramGi]),
+        diskGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.diskGi])
+      });
     }
   }
 
@@ -167,6 +226,12 @@ export async function updateSiteLimits(
     });
     await upsertLimitRange(limitRange);
   }
+
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.cpu]: String(updated.cpu),
+    [SITE_ANNOTATIONS.ramGi]: String(updated.ramGi),
+    [SITE_ANNOTATIONS.diskGi]: String(updated.diskGi)
+  });
 
   return {
     slug,
@@ -217,6 +282,11 @@ export async function deploySite(
     upsertService(buildService(spec))
   ]);
 
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.image]: input.image,
+    [SITE_ANNOTATIONS.containerPort]: String(input.containerPort)
+  });
+
   return {
     slug: normalized,
     namespace,
@@ -234,4 +304,56 @@ export async function deleteSite(slug: string): Promise<{ slug: string }> {
   }
   await deleteTenantNamespace(normalized);
   return { slug: normalized };
+}
+
+export async function updateSiteTls(
+  slug: string,
+  input: PatchTlsInput
+): Promise<PatchTlsResponse> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const host = namespaceEntry.annotations[SITE_ANNOTATIONS.domain]?.trim();
+  if (!host) {
+    throw new HttpError(500, "Site domain is missing.");
+  }
+  const issuer = input.issuer ?? DEFAULT_TLS_ISSUER;
+  const tlsEnabled = input.enabled;
+
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
+    [SITE_ANNOTATIONS.tlsIssuer]: issuer
+  });
+
+  await patchIngress("web", namespace, {
+    metadata: {
+      annotations: {
+        "cert-manager.io/cluster-issuer": tlsEnabled ? issuer : null,
+        "traefik.ingress.kubernetes.io/router.entrypoints": tlsEnabled ? "websecure" : "web",
+        "traefik.ingress.kubernetes.io/router.tls": tlsEnabled ? "true" : "false"
+      }
+    },
+    spec: {
+      tls: tlsEnabled
+        ? [
+            {
+              hosts: [host],
+              secretName: `tls-${normalized}`
+            }
+          ]
+        : null
+    }
+  });
+
+  return {
+    ok: true,
+    slug: normalized,
+    tlsEnabled,
+    issuer
+  };
 }

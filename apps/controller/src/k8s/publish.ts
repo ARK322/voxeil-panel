@@ -102,6 +102,10 @@ export function buildService(spec: PublishSpec): V1Service {
 }
 
 export function buildIngress(spec: PublishSpec): V1Ingress {
+  const tlsEnabled =
+    (process.env.TLS_ENABLED ?? "false").toLowerCase() === "true";
+  const certIssuerName =
+    process.env.CERT_ISSUER_NAME ?? "letsencrypt-staging";
   const baseIngress: V1Ingress = {
     apiVersion: "networking.k8s.io/v1",
     kind: "Ingress",
@@ -133,7 +137,17 @@ export function buildIngress(spec: PublishSpec): V1Ingress {
             ]
           }
         }
-      ]
+      ],
+      ...(tlsEnabled
+        ? {
+            tls: [
+              {
+                hosts: [spec.host],
+                secretName: `tls-${spec.slug}`
+              }
+            ]
+          }
+        : {})
     }
   };
 
@@ -143,8 +157,15 @@ export function buildIngress(spec: PublishSpec): V1Ingress {
       ...baseIngress.metadata,
       annotations: {
         ...(baseIngress.metadata?.annotations ?? {}),
-        "traefik.ingress.kubernetes.io/router.entrypoints": "web",
-        "traefik.ingress.kubernetes.io/router.tls": "false"
+        "traefik.ingress.kubernetes.io/router.entrypoints": tlsEnabled
+          ? "websecure"
+          : "web",
+        "traefik.ingress.kubernetes.io/router.tls": tlsEnabled
+          ? "true"
+          : "false",
+        ...(tlsEnabled
+          ? { "cert-manager.io/cluster-issuer": certIssuerName }
+          : {})
       }
     }
   };

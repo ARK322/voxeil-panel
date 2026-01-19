@@ -1,11 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { CreateSiteSchema, DeploySiteSchema, PatchLimitsSchema } from "../sites/site.dto.js";
+import {
+  CreateSiteSchema,
+  DeploySiteSchema,
+  PatchLimitsSchema,
+  PatchTlsSchema
+} from "../sites/site.dto.js";
 import {
   createSite,
   deleteSite,
   deploySite,
   listSites,
+  updateSiteTls,
   updateSiteLimits
 } from "../sites/site.service.js";
 
@@ -31,6 +37,13 @@ export function registerRoutes(app: FastifyInstance) {
     const slug = String((req.params as { slug: string }).slug ?? "");
     const body = DeploySiteSchema.parse(req.body);
     const result = await deploySite(slug, body);
+    return reply.send(result);
+  });
+
+  app.patch("/sites/:slug/tls", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const body = PatchTlsSchema.parse(req.body);
+    const result = await updateSiteTls(slug, body);
     return reply.send(result);
   });
 
