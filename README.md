@@ -9,8 +9,9 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 - `infra/k8s/templates/tenant`: Baseline ResourceQuota, LimitRange, and default-deny NetworkPolicy used for every tenant namespace.
 
 ### Data model note
-- Control-plane DB: one shared PostgreSQL instance for controller state.
-- Tenant site DBs: per-site database + role/user inside a shared PostgreSQL "db zone".
+- Control-plane DB: one shared PostgreSQL instance for controller state in `db-zone`.
+- Tenant site DBs: per-site database + role/user inside that same shared PostgreSQL cluster.
+- Shared services run in their own namespaces (`db-zone`, `mail-zone`, `backup-zone`); tenant namespaces only host site workloads.
 
 ### Install
 1) Build/push your own images (no hardcoded registry):
@@ -44,13 +45,9 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 - Domains and subdomains are treated as separate sites (separate namespaces).
 
 ### Phase 3 TLS (cert-manager)
-- Install cert-manager from `infra/k8s/cert-manager/cert-manager.yaml` (pinned release).
-- Apply ClusterIssuers in `infra/k8s/cert-manager/cluster-issuers.yaml` after setting `REPLACE_LETSENCRYPT_EMAIL`.
-  - `letsencrypt-staging` uses the staging ACME endpoint.
-  - `letsencrypt-prod` uses the production ACME endpoint.
-- Enable TLS for new ingresses by setting:
-  - `TLS_ENABLED=true`
-  - `CERT_ISSUER_NAME=letsencrypt-staging` (or `letsencrypt-prod`)
+- cert-manager is cluster-wide and always installed by the installer.
+- TLS is site-based and opt-in via `PATCH /sites/:slug/tls`.
+- `LETSENCRYPT_EMAIL` is required only when enabling TLS for a site.
 - TLS secret naming: `tls-<slug>` (per-site, deterministic).
 
 ### Security baseline
@@ -59,7 +56,7 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 - Tenants get a dedicated namespace with ResourceQuota, LimitRange, and default-deny NetworkPolicy (DNS egress only).
 - Controller creates tenant Deployments, Services, and Ingress on site creation.
 - GHCR images are pulled via the `ghcr-pull-secret` copied into each tenant namespace.
-- TLS is optional and controlled by controller env vars; HTTP ingress remains the default.
+- TLS is optional and site-based; HTTP ingress remains the default.
 
 ### Controller API
 - `POST /sites` with `{ domain, cpu, ramGi, diskGi }`

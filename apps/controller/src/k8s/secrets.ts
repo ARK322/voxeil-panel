@@ -45,3 +45,48 @@ export async function ensureGhcrPullSecret(namespace: string, slug: string): Pro
     if (error?.response?.statusCode !== 409) throw error;
   }
 }
+
+export async function readSecret(namespace: string, name: string): Promise<V1Secret | null> {
+  const { core } = getClients();
+  try {
+    const result = await core.readNamespacedSecret(name, namespace);
+    return result.body;
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) return null;
+    throw error;
+  }
+}
+
+export async function upsertSecret(secret: V1Secret): Promise<void> {
+  const { core } = getClients();
+  const name = secret.metadata?.name;
+  const namespace = secret.metadata?.namespace;
+  if (!name || !namespace) {
+    throw new HttpError(500, "Secret name/namespace missing.");
+  }
+  try {
+    await core.createNamespacedSecret(namespace, secret);
+  } catch (error: any) {
+    if (error?.response?.statusCode !== 409) throw error;
+    const patch = core.patchNamespacedSecret as unknown as (
+      name: string,
+      namespace: string,
+      body: unknown,
+      pretty?: string,
+      dryRun?: string,
+      fieldManager?: string,
+      fieldValidation?: string,
+      options?: { headers: { "Content-Type": string } }
+    ) => Promise<unknown>;
+    await patch(
+      name,
+      namespace,
+      secret,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { headers: { "Content-Type": "application/merge-patch+json" } }
+    );
+  }
+}

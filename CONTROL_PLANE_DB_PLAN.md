@@ -3,13 +3,15 @@
 ## Scope and Principles
 - This database is only for the controller/panel control-plane state.
 - Tenant app databases (customer DBs) are not stored here; only metadata references.
-- Mail zone and DB zone exist as shared infrastructure; their internal data stays in their own systems.
+- Mail zone, DB zone, and backup zone exist as shared infrastructure; their internal data stays in their own systems.
+- Shared services always run in their own namespaces (zones), never in tenant namespaces.
 - This is a planning document only; no runtime integration is introduced yet.
 
 ## DB Model Decisions
-- Control-plane DB is one shared PostgreSQL instance (infra namespace).
-- Tenant site DBs live inside one shared PostgreSQL cluster ("db zone"), with a per-site database and role/user.
-- Mail zone is also shared, with per-site mail resources tracked in control-plane metadata.
+- Control-plane DB is one shared PostgreSQL instance in the `db-zone` namespace.
+- Tenant site DBs live inside that shared PostgreSQL cluster (`db-zone`), with a per-site database and role/user.
+- Mail zone is shared in the `mail-zone` namespace, with per-site mail resources tracked in control-plane metadata.
+- Backup runner is shared in the `backup-zone` namespace and stores only backup metadata in the control-plane DB.
 - No per-site PostgreSQL pods in MVP.
 
 ## PostgreSQL Schema (DDL-Style Proposal)
@@ -91,7 +93,7 @@ CREATE INDEX site_tls_status_idx ON site_tls (tls_status);
 -- Zones: shared infrastructure zones (mail/db/dns)
 CREATE TABLE zones (
   id UUID PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('dns', 'mail', 'db')),
+  kind TEXT NOT NULL CHECK (kind IN ('dns', 'mail', 'db', 'backup')),
   name TEXT NOT NULL,
   provider TEXT NULL,
   external_id TEXT NULL,
@@ -138,6 +140,45 @@ CREATE TABLE site_databases (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Mail domains: per-site mail domain mappings (shared mail zone)
+CREATE TABLE mail_domains (
+  id UUID PRIMARY KEY,
+  site_id UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK (provider IN ('mailcow')),
+  external_id TEXT NULL,
+  status TEXT NOT NULL CHECK (status IN (
+    'pending', 'ready', 'failed', 'deleting'
+  )),
+  last_error TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT mail_domains_site_domain_uniq UNIQUE (site_id, domain),
+  CONSTRAINT mail_domains_domain_uniq UNIQUE (domain)
+);
+
+CREATE INDEX mail_domains_site_id_idx ON mail_domains (site_id);
+CREATE INDEX mail_domains_status_idx ON mail_domains (status);
+
+-- Mailboxes: mailbox metadata tracked in the control-plane only
+CREATE TABLE mailboxes (
+  id UUID PRIMARY KEY,
+  mail_domain_id UUID NOT NULL REFERENCES mail_domains(id) ON DELETE CASCADE,
+  local_part TEXT NOT NULL,
+  quota_mb INT NULL CHECK (quota_mb >= 0),
+  external_id TEXT NULL,
+  status TEXT NOT NULL CHECK (status IN (
+    'pending', 'ready', 'failed', 'deleting'
+  )),
+  last_error TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT mailboxes_domain_local_uniq UNIQUE (mail_domain_id, local_part)
+);
+
+CREATE INDEX mailboxes_domain_id_idx ON mailboxes (mail_domain_id);
+CREATE INDEX mailboxes_status_idx ON mailboxes (status);
+
 -- Jobs: async controller tasks
 CREATE TABLE jobs (
   id UUID PRIMARY KEY,
@@ -183,6 +224,18 @@ CREATE INDEX audit_logs_created_at_idx ON audit_logs (created_at);
 - Cronjob fields: `schedule`, `command`, `timezone`, `suspend`, `last_run_at`.
 
 ## Migration / Reconcile Plan
+
+### Schema migrations (v1 → v2)
+
+**v1 (baseline control-plane schema)**:
+- `sites`, `site_limits`, `site_deploy`, `site_tls`, `zones`, `site_resources`, `site_databases`, `jobs`, `audit_logs`.
+
+**v2 (mail mapping metadata)**:
+1) Add `mail_domains` and `mailboxes` tables.
+2) Backfill:
+   - For each tenant namespace with mail annotations, insert `mail_domains` with `provider='mailcow'`.
+   - Insert `mailboxes` only if mailbox metadata exists (optional future endpoints).
+3) Add indexes/constraints as defined above.
 
 ### Phase 0 (Today): Annotations are Source of Truth
 - Controller reads and writes desired state from K8s namespace annotations.

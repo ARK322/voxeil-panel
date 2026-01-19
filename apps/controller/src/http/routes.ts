@@ -6,14 +6,18 @@ import {
   PatchLimitsSchema,
   PatchTlsSchema
 } from "../sites/site.dto.js";
+import { RestoreDbSchema, RestoreFilesSchema } from "../backup/backup.dto.js";
 import {
   createSite,
   deleteSite,
   deploySite,
+  enableSiteMail,
+  enableSiteDb,
   listSites,
   updateSiteTls,
   updateSiteLimits
 } from "../sites/site.service.js";
+import { restoreSiteDb, restoreSiteFiles } from "../backup/restore.service.js";
 
 const SlugParamSchema = z.string().min(1, "Slug is required.");
 
@@ -44,6 +48,32 @@ export function registerRoutes(app: FastifyInstance) {
     const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
     const body = PatchTlsSchema.parse(req.body);
     const result = await updateSiteTls(slug, body);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/mail/enable", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await enableSiteMail(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/db/enable", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await enableSiteDb(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/restore/files", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const body = RestoreFilesSchema.parse(req.body ?? {});
+    const result = await restoreSiteFiles(slug, body);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/restore/db", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const body = RestoreDbSchema.parse(req.body ?? {});
+    const result = await restoreSiteDb(slug, body);
     return reply.send(result);
   });
 

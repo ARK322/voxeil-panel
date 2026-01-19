@@ -24,7 +24,8 @@ export async function allocateTenantNamespace(
         name: namespace,
         labels: {
           [LABELS.managedBy]: LABELS.managedBy,
-          [LABELS.siteSlug]: slug
+          [LABELS.siteSlug]: slug,
+          "managed-by": "controller"
         },
         annotations: {
           ...annotations

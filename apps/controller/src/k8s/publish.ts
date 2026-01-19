@@ -14,6 +14,8 @@ type PublishSpec = {
   cpu: number;
   ramGi: number;
   host: string;
+  tlsEnabled?: boolean;
+  tlsIssuer?: string;
 };
 
 function buildSelector(slug: string): Record<string, string> {
@@ -102,10 +104,8 @@ export function buildService(spec: PublishSpec): V1Service {
 }
 
 export function buildIngress(spec: PublishSpec): V1Ingress {
-  const tlsEnabled =
-    (process.env.TLS_ENABLED ?? "false").toLowerCase() === "true";
-  const certIssuerName =
-    process.env.CERT_ISSUER_NAME ?? "letsencrypt-staging";
+  const tlsEnabled = spec.tlsEnabled ?? false;
+  const certIssuerName = spec.tlsIssuer ?? "letsencrypt-staging";
   const baseIngress: V1Ingress = {
     apiVersion: "networking.k8s.io/v1",
     kind: "Ingress",

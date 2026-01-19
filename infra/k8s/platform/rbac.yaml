@@ -35,7 +35,7 @@ rules:
     verbs: ["get","list","create","patch","update"]
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["create"]
+    verbs: ["get","list","create","patch","update"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get","list"]
@@ -79,3 +79,4 @@ roleRef:
   kind: Role
   name: controller-platform-secrets
   apiGroup: rbac.authorization.k8s.io
+

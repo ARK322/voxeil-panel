@@ -22,10 +22,7 @@ spec:
           env:
             - name: PORT
               value: "8080"
-            - name: TLS_ENABLED
-              value: "false"
-            - name: CERT_ISSUER_NAME
-              value: "letsencrypt-staging"
+
             - name: ADMIN_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -41,3 +38,30 @@ spec:
                 secretKeyRef:
                   name: platform-secrets
                   key: SITE_NODEPORT_END
+            - name: MAILCOW_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: MAILCOW_API_URL
+            - name: MAILCOW_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: MAILCOW_API_KEY
+            - name: MAILCOW_VERIFY_TLS
+              value: "true"
+            - name: DB_HOST
+              value: "postgres.infra.svc.cluster.local"
+            - name: DB_PORT
+              value: "5432"
+            - name: DB_ADMIN_USER
+              value: "postgres"
+            - name: DB_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: DB_ADMIN_PASSWORD
+            - name: DB_NAME_PREFIX
+              value: "db_"
+            - name: DB_USER_PREFIX
+              value: "u_"

@@ -26,9 +26,17 @@ import { patchIngress } from "../k8s/ingress.js";
 import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
 import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
 import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
-import { ensureGhcrPullSecret } from "../k8s/secrets.js";
+import { ensureGhcrPullSecret, readSecret, upsertSecret } from "../k8s/secrets.js";
+import { LABELS } from "../k8s/client.js";
 import { SITE_ANNOTATIONS } from "../k8s/annotations.js";
+import {
+  ensureDatabaseAndRole,
+  generateDbPassword,
+  resolveDbName,
+  resolveDbUser
+} from "../db/admin.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
+import { ensureMailcowDomain } from "../mailcow/client.js";
 import type {
   CreateSiteInput,
   PatchLimitsInput,
@@ -44,6 +52,7 @@ import type {
 const DEFAULT_MAINTENANCE_IMAGE = "ghcr.io/OWNER/voxeil-maintenance:latest";
 const DEFAULT_MAINTENANCE_PORT = 3000;
 const DEFAULT_TLS_ISSUER = "letsencrypt-staging";
+const SITE_DB_SECRET_NAME = "site-db";
 
 function resolveMaintenanceImage(): string {
   const value = process.env.GHCR_MAINTENANCE_IMAGE ?? DEFAULT_MAINTENANCE_IMAGE;
@@ -76,6 +85,20 @@ function parseNumberAnnotation(value?: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function requireDbHostConfig(): { host: string; port: string } {
+  const host = process.env.DB_HOST?.trim();
+  const port = process.env.DB_PORT?.trim() || "5432";
+  if (!host) {
+    throw new HttpError(500, "DB_HOST must be configured.");
+  }
+  return { host, port };
+}
+
+function decodeSecretValue(value?: string): string | undefined {
+  if (!value) return undefined;
+  return Buffer.from(value, "base64").toString("utf8");
+}
+
 export async function createSite(input: CreateSiteInput): Promise<CreateSiteResponse> {
   let baseSlug: string;
   try {
@@ -85,7 +108,7 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
   }
   const maintenanceImage = resolveMaintenanceImage();
   const maintenancePort = resolveMaintenancePort();
-  const tlsEnabled = input.tlsEnabled ?? false;
+  const tlsEnabled = false;
   const { slug, namespace } = await allocateTenantNamespace(baseSlug, {
     [SITE_ANNOTATIONS.domain]: input.domain,
     [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
@@ -355,5 +378,128 @@ export async function updateSiteTls(
     slug: normalized,
     tlsEnabled,
     issuer
+  };
+}
+
+export async function enableSiteMail(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  domain: string;
+  mailEnabled: true;
+  provider: "mailcow";
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const domain = namespaceEntry.annotations[SITE_ANNOTATIONS.domain]?.trim();
+  if (!domain) {
+    throw new HttpError(409, "Site domain not found in namespace annotations.");
+  }
+
+  try {
+    await ensureMailcowDomain(domain);
+    await patchNamespaceAnnotations(namespace, {
+      [SITE_ANNOTATIONS.mailEnabled]: "true",
+      [SITE_ANNOTATIONS.mailProvider]: "mailcow",
+      [SITE_ANNOTATIONS.mailStatus]: "ready",
+      [SITE_ANNOTATIONS.mailLastError]: ""
+    });
+  } catch (error: any) {
+    const message = String(error?.message ?? "Mailcow error.");
+    await patchNamespaceAnnotations(namespace, {
+      [SITE_ANNOTATIONS.mailStatus]: "error",
+      [SITE_ANNOTATIONS.mailLastError]: message
+    });
+    throw new HttpError(502, "Mail provider error.");
+  }
+
+  return {
+    ok: true,
+    slug: normalized,
+    domain,
+    mailEnabled: true,
+    provider: "mailcow"
+  };
+}
+
+export async function enableSiteDb(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  dbEnabled: true;
+  dbName: string;
+  secretName: string;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const { host, port } = requireDbHostConfig();
+
+  const dbName = resolveDbName(normalized);
+  const dbUser = resolveDbUser(normalized);
+
+  const existingSecret = await readSecret(namespace, SITE_DB_SECRET_NAME);
+  const existingPassword = decodeSecretValue(existingSecret?.data?.DB_PASSWORD);
+  let dbPassword = existingPassword;
+  let setPasswordForExisting = false;
+
+  if (!dbPassword) {
+    dbPassword = generateDbPassword();
+    setPasswordForExisting = true;
+  }
+
+  await ensureDatabaseAndRole({
+    dbName,
+    dbUser,
+    passwordToSet: dbPassword,
+    setPasswordForExisting
+  });
+
+  const encodedUser = encodeURIComponent(dbUser);
+  const encodedPassword = encodeURIComponent(dbPassword);
+  const databaseUrl = `postgres://${encodedUser}:${encodedPassword}@${host}:${port}/${dbName}`;
+  await upsertSecret({
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: {
+      name: SITE_DB_SECRET_NAME,
+      namespace,
+      labels: {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: normalized
+      }
+    },
+    type: "Opaque",
+    stringData: {
+      DATABASE_URL: databaseUrl,
+      DB_HOST: host,
+      DB_PORT: port,
+      DB_NAME: dbName,
+      DB_USER: dbUser,
+      DB_PASSWORD: dbPassword
+    }
+  });
+
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.dbEnabled]: "true",
+    [SITE_ANNOTATIONS.dbName]: dbName,
+    [SITE_ANNOTATIONS.dbUser]: dbUser
+  });
+
+  return {
+    ok: true,
+    slug: normalized,
+    dbEnabled: true,
+    dbName,
+    secretName: SITE_DB_SECRET_NAME
   };
 }

@@ -21,41 +21,28 @@ if [[ -z "${GHCR_TOKEN:-}" ]]; then
   exit 1
 fi
 GHCR_EMAIL="${GHCR_EMAIL:-}"
+LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-}"
 TLS_ENABLED_RAW="${TLS_ENABLED:-false}"
 case "${TLS_ENABLED_RAW,,}" in
   true|1|yes) TLS_ENABLED=true ;;
   *) TLS_ENABLED=false ;;
 esac
-if [[ "${TLS_ENABLED}" == "true" && -z "${LETSENCRYPT_EMAIL:-}" ]]; then
-  echo "LETSENCRYPT_EMAIL env var is required for TLS (cert-manager)."
-  exit 1
-fi
 
-# ========= inputs =========
-read -rp "Panel NodePort [30080]: " PANEL_NODEPORT
+# ========= inputs (defaults only) =========
 PANEL_NODEPORT="${PANEL_NODEPORT:-30080}"
-
-read -rp "Expose controller via NodePort for admin use? [y/N]: " EXPOSE_CONTROLLER
 EXPOSE_CONTROLLER="${EXPOSE_CONTROLLER:-N}"
-read -rp "Controller NodePort [30081]: " CONTROLLER_NODEPORT
 CONTROLLER_NODEPORT="${CONTROLLER_NODEPORT:-30081}"
-
-read -rp "Site NodePort range start [31000]: " SITE_PORT_START
 SITE_PORT_START="${SITE_PORT_START:-31000}"
-
-read -rp "Site NodePort range end [31999]: " SITE_PORT_END
 SITE_PORT_END="${SITE_PORT_END:-31999}"
-
-read -rp "Allowlist your IP/CIDR for NodePorts (recommended) [empty=skip]: " ALLOW_IP
-
-read -rp "Controller image (full ref, e.g. registry/user/controller:tag): " CONTROLLER_IMAGE
-if [[ -z "${CONTROLLER_IMAGE}" ]]; then echo "controller image required"; exit 1; fi
-
-read -rp "Panel image (full ref, e.g. registry/user/panel:tag): " PANEL_IMAGE
-if [[ -z "${PANEL_IMAGE}" ]]; then echo "panel image required"; exit 1; fi
+ALLOW_IP="${ALLOW_IP:-}"
+CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-}"
+PANEL_IMAGE="${PANEL_IMAGE:-}"
+if [[ -z "${CONTROLLER_IMAGE}" ]]; then echo "CONTROLLER_IMAGE env var is required."; exit 1; fi
+if [[ -z "${PANEL_IMAGE}" ]]; then echo "PANEL_IMAGE env var is required."; exit 1; fi
 
 CONTROLLER_API_KEY="$(rand)"
 PANEL_ADMIN_PASSWORD="$(rand)"
+POSTGRES_PASSWORD="$(rand)"
 
 echo ""
 echo "Config:"
@@ -65,10 +52,16 @@ echo "  Site NodePort range: ${SITE_PORT_START}-${SITE_PORT_END}"
 echo "  Allowlist: ${ALLOW_IP:-<none>}"
 echo "  GHCR Username: ${GHCR_USERNAME}"
 echo "  GHCR Email: ${GHCR_EMAIL:-<none>}"
-if [[ "${TLS_ENABLED}" == "true" ]]; then
+if [[ -n "${LETSENCRYPT_EMAIL}" ]]; then
   echo "  Let's Encrypt Email: ${LETSENCRYPT_EMAIL}"
 else
-  echo "  TLS: disabled"
+  echo "  Let's Encrypt Email: <unset>"
+fi
+if [[ "${TLS_ENABLED}" == "true" && -z "${LETSENCRYPT_EMAIL}" ]]; then
+  echo "  Warning: TLS requested but LETSENCRYPT_EMAIL is missing."
+fi
+if [[ "${TLS_ENABLED}" != "true" ]]; then
+  echo "  TLS: disabled (site-based; opt-in)"
 fi
 echo ""
 
@@ -91,9 +84,13 @@ if [[ ! -d infra/k8s/platform ]]; then
   exit 1
 fi
 cp -r infra/k8s/platform "${RENDER_DIR}/platform"
-if [[ "${TLS_ENABLED}" == "true" ]]; then
-  cp -r infra/k8s/cert-manager "${RENDER_DIR}/cert-manager"
+if [[ -d infra/k8s/infra-db ]]; then
+  cp -r infra/k8s/infra-db "${RENDER_DIR}/infra-db"
 fi
+if [[ -d infra/k8s/backup ]]; then
+  cp -r infra/k8s/backup "${RENDER_DIR}/backup"
+fi
+cp -r infra/k8s/cert-manager "${RENDER_DIR}/cert-manager"
 
 cat > "${RENDER_DIR}/platform/platform-secrets.yaml" <<EOF
 apiVersion: v1
@@ -107,6 +104,7 @@ stringData:
   PANEL_ADMIN_PASSWORD: "${PANEL_ADMIN_PASSWORD}"
   SITE_NODEPORT_START: "${SITE_PORT_START}"
   SITE_NODEPORT_END: "${SITE_PORT_END}"
+  DB_ADMIN_PASSWORD: "${POSTGRES_PASSWORD}"
 EOF
 
 echo "Templating manifests..."
@@ -114,8 +112,11 @@ sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE}|g" "${RENDER_DIR}/platfor
 sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE}|g" "${RENDER_DIR}/platform/panel-deploy.yaml"
 sed -i "s|REPLACE_PANEL_NODEPORT|${PANEL_NODEPORT}|g" "${RENDER_DIR}/platform/panel-svc.yaml"
 sed -i "s|REPLACE_CONTROLLER_NODEPORT|${CONTROLLER_NODEPORT}|g" "${RENDER_DIR}/platform/controller-nodeport.yaml"
-if [[ "${TLS_ENABLED}" == "true" ]]; then
+if [[ -n "${LETSENCRYPT_EMAIL}" ]]; then
   sed -i "s|REPLACE_LETSENCRYPT_EMAIL|${LETSENCRYPT_EMAIL}|g" "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
+fi
+if [[ -d "${RENDER_DIR}/infra-db" ]]; then
+  sed -i "s|REPLACE_POSTGRES_PASSWORD|${POSTGRES_PASSWORD}|g" "${RENDER_DIR}/infra-db/postgres-secret.yaml"
 fi
 
 # ========= apply =========
@@ -135,12 +136,26 @@ kubectl apply -f "${RENDER_DIR}/platform/controller-svc.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/panel-deploy.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/panel-svc.yaml"
 
-if [[ "${TLS_ENABLED}" == "true" ]]; then
-  echo "TLS enabled; installing cert-manager and issuers."
-  kubectl apply -f "${RENDER_DIR}/cert-manager/cert-manager.yaml"
+if [[ -d "${RENDER_DIR}/infra-db" ]]; then
+  echo "Applying infra DB manifests..."
+  kubectl apply -f "${RENDER_DIR}/infra-db"
+fi
+
+if [[ -d "${RENDER_DIR}/backup" ]]; then
+  echo "Applying backup manifests..."
+  if ! kubectl apply -f "${RENDER_DIR}/backup"; then
+    echo "Warning: failed to apply backup manifests; continuing install."
+  fi
+fi
+
+echo "Installing cert-manager (cluster-wide)..."
+kubectl apply -f "${RENDER_DIR}/cert-manager/cert-manager.yaml"
+if [[ -n "${LETSENCRYPT_EMAIL}" ]]; then
+  echo "Applying ClusterIssuers."
   kubectl apply -f "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
 else
-  echo "TLS disabled; skipping cert-manager and issuers."
+  echo "Warning: LETSENCRYPT_EMAIL is not set; skipping ClusterIssuers."
+  echo "         TLS cannot be enabled for sites until an email is configured."
 fi
 
 if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
@@ -170,4 +185,6 @@ echo "Done."
 echo "Panel: http://<VPS_IP>:${PANEL_NODEPORT}"
 echo "Panel admin password: ${PANEL_ADMIN_PASSWORD}"
 echo "Controller API key: ${CONTROLLER_API_KEY}"
+echo "Postgres: postgres.infra.svc.cluster.local:5432 (admin user: postgres)"
+echo "Controller DB creds stored in platform-secrets (DB_ADMIN_PASSWORD)."
 echo ""
