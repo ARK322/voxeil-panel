@@ -59,11 +59,70 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 - TLS is optional and site-based; HTTP ingress remains the default.
 
 ### Controller API
-- `POST /sites` with `{ domain, cpu, ramGi, diskGi }`
+All routes require `X-API-Key` (except `/health`). The UI uses purge-only deletion via `POST /sites/:slug/purge`.
+Disable endpoints are reversible and do not delete data. Purge endpoints delete data/resources and require `{ "confirm": "DELETE" }`.
+
+Confirm payload example:
+- `{ "confirm": "DELETE" }`
+
+Sites:
+- `POST /sites`
+  - Body: `{ "domain": "app.example.com", "cpu": 1, "ramGi": 2, "diskGi": 10, "tlsEnabled": false, "tlsIssuer": "letsencrypt-prod" }`
+  - Response: `{ "domain": "app.example.com", "slug": "app-example-com", "namespace": "tenant-app-example-com", "limits": { "cpu": 1, "ramGi": 2, "diskGi": 10, "pods": 1 } }`
 - `GET /sites`
-- `POST /sites/:slug/deploy` with `{ image, containerPort }`
-- `PATCH /sites/:slug/limits` with `{ cpu?, ramGi?, diskGi? }`
-- `DELETE /sites/:slug`
+  - Response: `[ { "slug": "app-example-com", "namespace": "tenant-app-example-com", "ready": true, "domain": "app.example.com", "image": "...", "containerPort": 3000, "cpu": 1, "ramGi": 2, "diskGi": 10, "tlsEnabled": false, "tlsIssuer": "letsencrypt-prod", "dbEnabled": false, "mailEnabled": false, "backupEnabled": true, "dbName": "db_app-example-com", "dbUser": "u_app-example-com", "dbSecret": "site-db" } ]`
+- `POST /sites/:slug/purge` (irreversible)
+  - Body: `{ "confirm": "DELETE" }`
+  - Deletes tenant namespace, drops db/user, deletes mail domain + mailboxes, and removes `/backups/sites/<slug>`.
+  - Response: `{ "ok": true, "slug": "app-example-com", "purged": true }`
+
+TLS (site-based, default OFF):
+- `PATCH /sites/:slug/tls`
+  - Body: `{ "enabled": true, "issuer": "letsencrypt-prod" }`
+  - Body (disable + cleanup): `{ "enabled": false, "cleanupSecret": true }`
+  - Response: `{ "ok": true, "slug": "app-example-com", "tlsEnabled": false, "issuer": "letsencrypt-prod" }`
+
+DB feature (shared Postgres zone, per-site db/user):
+- `POST /sites/:slug/db/enable` (idempotent)
+  - Response: `{ "ok": true, "slug": "app-example-com", "dbEnabled": true, "dbName": "db_app-example-com", "secretName": "site-db" }`
+- `POST /sites/:slug/db/disable` (reversible)
+  - Deletes the tenant `site-db` Secret only.
+  - Response: `{ "ok": true, "slug": "app-example-com", "dbEnabled": false }`
+- `POST /sites/:slug/db/purge` (irreversible)
+  - Body: `{ "confirm": "DELETE" }`
+  - Drops `db_<slug>` and role `u_<slug>`, deletes `site-db` Secret.
+  - Response: `{ "ok": true, "slug": "app-example-com", "dbEnabled": false }`
+
+Mail feature (shared Mailcow zone):
+- `POST /sites/:slug/mail/enable` (idempotent)
+  - Body: `{ "domain": "example.com" }`
+  - Response: `{ "ok": true, "slug": "app-example-com", "domain": "example.com", "mailEnabled": true, "provider": "mailcow" }`
+- `POST /sites/:slug/mail/disable` (reversible)
+  - Disables mail for the site without deleting domains or mailboxes.
+  - Response: `{ "ok": true, "slug": "app-example-com", "domain": "example.com", "mailEnabled": false, "provider": "mailcow" }`
+- `POST /sites/:slug/mail/purge` (irreversible)
+  - Body: `{ "confirm": "DELETE" }`
+  - Deletes all mailboxes/aliases and removes the domain.
+  - Response: `{ "ok": true, "slug": "app-example-com", "domain": "example.com", "mailEnabled": false, "purged": true, "provider": "mailcow" }`
+- `POST /sites/:slug/mail/mailboxes`
+  - Body: `{ "localPart": "hello", "password": "secret", "quotaMb": 512 }`
+  - Response: `{ "ok": true, "slug": "app-example-com", "address": "hello@example.com" }`
+- `DELETE /sites/:slug/mail/mailboxes/:address`
+  - Response: `{ "ok": true, "slug": "app-example-com", "address": "hello@example.com" }`
+Backup feature (shared backup zone):
+- `POST /sites/:slug/backup/enable` (idempotent)
+  - Response: `{ "ok": true, "slug": "app-example-com", "backupEnabled": true }`
+- `POST /sites/:slug/backup/disable` (reversible)
+  - Response: `{ "ok": true, "slug": "app-example-com", "backupEnabled": false }`
+- `POST /sites/:slug/backup/purge` (irreversible)
+  - Body: `{ "confirm": "DELETE" }`
+  - Deletes `/backups/sites/<slug>` if present.
+  - Response: `{ "ok": true, "slug": "app-example-com", "backupEnabled": false, "purged": true }`
+
+Internal/admin endpoints (UI does not use):
+- `DELETE /sites/:slug` (soft delete)
+  - Deletes tenant namespace only. DB, mail, and backups are preserved.
+  - Response: `{ "ok": true, "slug": "app-example-com" }`
 
 ### Future TODOs
 - Add HTTPS/ingress once domain support is enabled.

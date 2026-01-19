@@ -1,127 +1,94 @@
-REPO TREE
-========
-C:\Users\budeko\Documents\GitHub\voxeil-panel
-|-- .github
-|   `-- workflows
-|       `-- controller.yml
-|-- apps
-|   |-- controller
-|   |   |-- src
-|   |   |   |-- backup
-|   |   |   |   |-- backup.dto.ts
-|   |   |   |   |-- helpers.ts
-|   |   |   |   `-- restore.service.ts
-|   |   |   |-- db
-|   |   |   |   `-- admin.ts
-|   |   |   |-- http
-|   |   |   |   |-- errors.ts
-|   |   |   |   `-- routes.ts
-|   |   |   |-- k8s
-|   |   |   |   |-- annotations.ts
-|   |   |   |   |-- apply.ts
-|   |   |   |   |-- client.ts
-|   |   |   |   |-- ingress.ts
-|   |   |   |   |-- namespace.ts
-|   |   |   |   |-- publish.ts
-|   |   |   |   |-- pvc.ts
-|   |   |   |   |-- quantity.ts
-|   |   |   |   |-- quota.ts
-|   |   |   |   `-- secrets.ts
-|   |   |   |-- mailcow
-|   |   |   |   `-- client.ts
-|   |   |   |-- sites
-|   |   |   |   |-- site.dto.ts
-|   |   |   |   |-- site.service.ts
-|   |   |   |   `-- site.slug.ts
-|   |   |   |-- templates
-|   |   |   |   |-- load.ts
-|   |   |   |   `-- render.ts
-|   |   |   `-- index.ts
-|   |   |-- templates
-|   |   |   `-- tenant
-|   |   |       |-- limitrange.yaml
-|   |   |       |-- networkpolicy-allow-ingress.yaml
-|   |   |       |-- networkpolicy-deny-all.yaml
-|   |   |       `-- resourcequota.yaml
-|   |   |-- .env.example
-|   |   |-- Dockerfile
-|   |   |-- package-lock.json
-|   |   |-- package.json
-|   |   `-- tsconfig.json
-|   `-- panel
-|       |-- app
-|       |   |-- lib
-|       |   |   |-- controller.ts
-|       |   |   `-- session.ts
-|       |   |-- login
-|       |   |   |-- login-actions.ts
-|       |   |   |-- login-form.tsx
-|       |   |   `-- page.tsx
-|       |   |-- actions.ts
-|       |   |-- globals.css
-|       |   |-- layout.tsx
-|       |   `-- page.tsx
-|       |-- Dockerfile
-|       |-- next-env.d.ts
-|       |-- next.config.mjs
-|       |-- package-lock.json
-|       |-- package.json
-|       `-- tsconfig.json
-|-- docs
-|   `-- runbooks
-|       |-- backup-restore.md
-|       `-- db-zone.md
-|-- infra
-|   |-- docker
-|   |   `-- compose
-|   |       |-- .env.example
-|   |       `-- docker-compose.yml
-|   `-- k8s
-|       |-- backup
-|       |   |-- backup-namespace.yaml
-|       |   |-- cronjob.yaml
-|       |   `-- rbac.yaml
-|       |-- cert-manager
-|       |   |-- cert-manager.yaml
-|       |   `-- cluster-issuers.yaml
-|       |-- docs
-|       |   `-- README.md
-|       |-- infra-db
-|       |   |-- namespace.yaml
-|       |   |-- networkpolicy.yaml
-|       |   |-- postgres-secret.yaml
-|       |   |-- postgres-service.yaml
-|       |   `-- postgres-statefulset.yaml
-|       |-- platform
-|       |   |-- controller-deploy.yaml
-|       |   |-- controller-nodeport.yaml
-|       |   |-- controller-svc.yaml
-|       |   |-- namespace.yaml
-|       |   |-- panel-deploy.yaml
-|       |   |-- panel-svc.yaml
-|       |   `-- rbac.yaml
-|       `-- templates
-|           `-- tenant
-|               |-- limitrange.yaml
-|               |-- networkpolicy-allow-ingress.yaml
-|               |-- networkpolicy-deny-all.yaml
-|               `-- resourcequota.yaml
-|-- installer
-|   `-- installer.sh
-|-- scripts
-|   `-- backup
-|       `-- run.sh
-|-- _export_repo.py
-|-- .gitignore
-|-- CONTROL_PLANE_DB_PLAN.md
-|-- install.sh
-|-- MAILCOW_ZONE_PLAN.md
-`-- README.md
+﻿FULL REPO EXPORT (purge-only UI contract)
+Timestamp: 2026-01-19T19:53:21.6914934Z
+Git branch: main
+Git commit: ecae2e35a2f674722fe9ae829b8bbed7042a7548
 
-FILE CONTENTS (latest)
-======================
+================ TREE ================
+.github/workflows/controller.yml
+.gitignore
+_export_repo.py
+apps/controller/.env.example
+apps/controller/Dockerfile
+apps/controller/package.json
+apps/controller/package-lock.json
+apps/controller/src/backup/backup.dto.ts
+apps/controller/src/backup/helpers.ts
+apps/controller/src/backup/restore.service.ts
+apps/controller/src/db/admin.ts
+apps/controller/src/http/errors.ts
+apps/controller/src/http/routes.ts
+apps/controller/src/index.ts
+apps/controller/src/k8s/annotations.ts
+apps/controller/src/k8s/apply.ts
+apps/controller/src/k8s/client.ts
+apps/controller/src/k8s/ingress.ts
+apps/controller/src/k8s/namespace.ts
+apps/controller/src/k8s/publish.ts
+apps/controller/src/k8s/pvc.ts
+apps/controller/src/k8s/quantity.ts
+apps/controller/src/k8s/quota.ts
+apps/controller/src/k8s/secrets.ts
+apps/controller/src/mailcow/client.ts
+apps/controller/src/sites/site.dto.ts
+apps/controller/src/sites/site.service.ts
+apps/controller/src/sites/site.slug.ts
+apps/controller/src/templates/load.ts
+apps/controller/src/templates/render.ts
+apps/controller/templates/tenant/limitrange.yaml
+apps/controller/templates/tenant/networkpolicy-allow-ingress.yaml
+apps/controller/templates/tenant/networkpolicy-deny-all.yaml
+apps/controller/templates/tenant/resourcequota.yaml
+apps/controller/tsconfig.json
+apps/panel/app/actions.ts
+apps/panel/app/globals.css
+apps/panel/app/layout.tsx
+apps/panel/app/lib/controller.ts
+apps/panel/app/lib/session.ts
+apps/panel/app/login/login-actions.ts
+apps/panel/app/login/login-form.tsx
+apps/panel/app/login/page.tsx
+apps/panel/app/page.tsx
+apps/panel/Dockerfile
+apps/panel/next.config.mjs
+apps/panel/next-env.d.ts
+apps/panel/package.json
+apps/panel/package-lock.json
+apps/panel/tsconfig.json
+CONTROL_PLANE_DB_PLAN.md
+docs/runbooks/backup-restore.md
+docs/runbooks/db-zone.md
+infra/docker/compose/.env.example
+infra/docker/compose/docker-compose.yml
+infra/k8s/backup/backup-namespace.yaml
+infra/k8s/backup/cronjob.yaml
+infra/k8s/backup/rbac.yaml
+infra/k8s/cert-manager/cert-manager.yaml
+infra/k8s/cert-manager/cluster-issuers.yaml
+infra/k8s/docs/README.md
+infra/k8s/infra-db/namespace.yaml
+infra/k8s/infra-db/networkpolicy.yaml
+infra/k8s/infra-db/postgres-secret.yaml
+infra/k8s/infra-db/postgres-service.yaml
+infra/k8s/infra-db/postgres-statefulset.yaml
+infra/k8s/platform/controller-deploy.yaml
+infra/k8s/platform/controller-nodeport.yaml
+infra/k8s/platform/controller-svc.yaml
+infra/k8s/platform/namespace.yaml
+infra/k8s/platform/panel-deploy.yaml
+infra/k8s/platform/panel-svc.yaml
+infra/k8s/platform/rbac.yaml
+infra/k8s/templates/tenant/limitrange.yaml
+infra/k8s/templates/tenant/networkpolicy-allow-ingress.yaml
+infra/k8s/templates/tenant/networkpolicy-deny-all.yaml
+infra/k8s/templates/tenant/resourcequota.yaml
+install.sh
+installer/installer.sh
+MAILCOW_ZONE_PLAN.md
+README.md
+scripts/backup/run.sh
 
---- FILE: .github/workflows/controller.yml ---
+================ FILES ================
+----- FILE: .github/workflows/controller.yml -----
 name: build-and-push-controller
 
 on:
@@ -162,438 +129,17 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/vhp-controller:latest
             ghcr.io/${{ github.repository_owner }}/vhp-controller:${{ github.sha }}
 
---- FILE: .gitignore ---
+
+----- FILE: .gitignore -----
 node_modules
 .next
 dist
 npm-debug.log
 *.log
 
---- FILE: CONTROL_PLANE_DB_PLAN.md ---
-# Control-Plane DB Plan (PostgreSQL)
 
-## Scope and Principles
-- This database is only for the controller/panel control-plane state.
-- Tenant app databases (customer DBs) are not stored here; only metadata references.
-- Mail zone, DB zone, and backup zone exist as shared infrastructure; their internal data stays in their own systems.
-- Shared services always run in their own namespaces (zones), never in tenant namespaces.
-- This is a planning document only; no runtime integration is introduced yet.
-
-## DB Model Decisions
-- Control-plane DB is one shared PostgreSQL instance in the `db-zone` namespace.
-- Tenant site DBs live inside that shared PostgreSQL cluster (`db-zone`), with a per-site database and role/user.
-- Mail zone is shared in the `mail-zone` namespace, with per-site mail resources tracked in control-plane metadata.
-- Backup runner is shared in the `backup-zone` namespace and stores only backup metadata in the control-plane DB.
-- No per-site PostgreSQL pods in MVP.
-
-## PostgreSQL Schema (DDL-Style Proposal)
-
-### Enum Strategy
-Use `CHECK` constraints for all status/kind enums for consistency.
-
-### Tables
-
-```sql
--- Sites: primary control-plane record for each tenant app
-CREATE TABLE sites (
-  id UUID PRIMARY KEY,
-  slug TEXT NOT NULL,
-  primary_domain TEXT NOT NULL,
-  namespace TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN (
-    'provisioning', 'active', 'suspended', 'deleting', 'deleted', 'error'
-  )),
-  dns_zone_id UUID NULL REFERENCES zones(id),
-  mail_zone_id UUID NULL REFERENCES zones(id),
-  db_zone_id UUID NULL REFERENCES zones(id),
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  deleted_at TIMESTAMPTZ NULL,
-  CONSTRAINT sites_slug_uniq UNIQUE (slug),
-  CONSTRAINT sites_domain_uniq UNIQUE (primary_domain),
-  CONSTRAINT sites_namespace_uniq UNIQUE (namespace)
-);
-
-CREATE INDEX sites_status_idx ON sites (status);
-CREATE INDEX sites_created_at_idx ON sites (created_at);
-CREATE INDEX sites_slug_idx ON sites (slug);
-CREATE INDEX sites_domain_idx ON sites (primary_domain);
-CREATE INDEX sites_namespace_idx ON sites (namespace);
-
--- Site limits: resource caps for a site
-CREATE TABLE site_limits (
-  site_id UUID PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
-  cpu_millicores INT NOT NULL CHECK (cpu_millicores >= 0),
-  memory_mb INT NOT NULL CHECK (memory_mb >= 0),
-  disk_gb INT NOT NULL CHECK (disk_gb >= 0),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Site deploy: desired image + runtime deployment parameters
-CREATE TABLE site_deploy (
-  site_id UUID PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
-  image_repository TEXT NOT NULL,
-  image_tag TEXT NULL,
-  image_digest TEXT NULL,
-  port INT NOT NULL CHECK (port > 0 AND port <= 65535),
-  replicas INT NOT NULL DEFAULT 1 CHECK (replicas >= 0),
-  deploy_status TEXT NOT NULL CHECK (deploy_status IN (
-    'pending', 'deploying', 'ready', 'failed'
-  )),
-  last_error TEXT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX site_deploy_status_idx ON site_deploy (deploy_status);
-
--- Site TLS: desired TLS config for ingress
-CREATE TABLE site_tls (
-  site_id UUID PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
-  enabled BOOLEAN NOT NULL DEFAULT false,
-  issuer TEXT NULL,
-  secret_name TEXT NULL,
-  tls_status TEXT NOT NULL CHECK (tls_status IN (
-    'disabled', 'pending', 'ready', 'failed'
-  )),
-  last_error TEXT NULL,
-  renewed_at TIMESTAMPTZ NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX site_tls_status_idx ON site_tls (tls_status);
-
--- Zones: shared infrastructure zones (mail/db/dns)
-CREATE TABLE zones (
-  id UUID PRIMARY KEY,
-  kind TEXT NOT NULL CHECK (kind IN ('dns', 'mail', 'db', 'backup')),
-  name TEXT NOT NULL,
-  provider TEXT NULL,
-  external_id TEXT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT zones_kind_name_uniq UNIQUE (kind, name),
-  CONSTRAINT zones_external_id_uniq UNIQUE (external_id)
-);
-
-CREATE INDEX zones_kind_idx ON zones (kind);
-
--- Site resources: provisioning records for K8s/infra assets
-CREATE TABLE site_resources (
-  id UUID PRIMARY KEY,
-  site_id UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-  kind TEXT NOT NULL CHECK (kind IN (
-    'namespace', 'deployment', 'service', 'ingress', 'pvc', 'secret', 'job', 'cronjob'
-  )),
-  status TEXT NOT NULL CHECK (status IN (
-    'pending', 'ready', 'failed', 'deleting'
-  )),
-  external_id TEXT NULL,
-  last_error TEXT NULL,
-  observed_at TIMESTAMPTZ NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX site_resources_site_id_idx ON site_resources (site_id);
-CREATE INDEX site_resources_status_idx ON site_resources (status);
-CREATE INDEX site_resources_kind_idx ON site_resources (kind);
-CREATE INDEX site_resources_external_id_idx ON site_resources (external_id);
-
--- Site databases: per-site DB provisioning metadata (shared db zone)
-CREATE TABLE site_databases (
-  site_id UUID PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
-  engine TEXT NOT NULL CHECK (engine IN ('postgres')),
-  db_name TEXT NOT NULL,
-  db_user TEXT NOT NULL,
-  credential_ref TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN (
-    'pending', 'ready', 'failed', 'deleting'
-  )),
-  last_error TEXT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- Mail domains: per-site mail domain mappings (shared mail zone)
-CREATE TABLE mail_domains (
-  id UUID PRIMARY KEY,
-  site_id UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-  domain TEXT NOT NULL,
-  provider TEXT NOT NULL CHECK (provider IN ('mailcow')),
-  external_id TEXT NULL,
-  status TEXT NOT NULL CHECK (status IN (
-    'pending', 'ready', 'failed', 'deleting'
-  )),
-  last_error TEXT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT mail_domains_site_domain_uniq UNIQUE (site_id, domain),
-  CONSTRAINT mail_domains_domain_uniq UNIQUE (domain)
-);
-
-CREATE INDEX mail_domains_site_id_idx ON mail_domains (site_id);
-CREATE INDEX mail_domains_status_idx ON mail_domains (status);
-
--- Mailboxes: mailbox metadata tracked in the control-plane only
-CREATE TABLE mailboxes (
-  id UUID PRIMARY KEY,
-  mail_domain_id UUID NOT NULL REFERENCES mail_domains(id) ON DELETE CASCADE,
-  local_part TEXT NOT NULL,
-  quota_mb INT NULL CHECK (quota_mb >= 0),
-  external_id TEXT NULL,
-  status TEXT NOT NULL CHECK (status IN (
-    'pending', 'ready', 'failed', 'deleting'
-  )),
-  last_error TEXT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT mailboxes_domain_local_uniq UNIQUE (mail_domain_id, local_part)
-);
-
-CREATE INDEX mailboxes_domain_id_idx ON mailboxes (mail_domain_id);
-CREATE INDEX mailboxes_status_idx ON mailboxes (status);
-
--- Jobs: async controller tasks
-CREATE TABLE jobs (
-  id UUID PRIMARY KEY,
-  site_id UUID NULL REFERENCES sites(id) ON DELETE SET NULL,
-  type TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN (
-    'queued', 'running', 'succeeded', 'failed', 'canceled'
-  )),
-  payload JSONB NULL,
-  attempts INT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-  max_attempts INT NOT NULL DEFAULT 3 CHECK (max_attempts > 0),
-  run_at TIMESTAMPTZ NULL,
-  last_error TEXT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX jobs_status_idx ON jobs (status);
-CREATE INDEX jobs_run_at_idx ON jobs (run_at);
-CREATE INDEX jobs_site_id_idx ON jobs (site_id);
-CREATE INDEX jobs_created_at_idx ON jobs (created_at);
-
--- Audit logs: immutable control-plane events
-CREATE TABLE audit_logs (
-  id UUID PRIMARY KEY,
-  site_id UUID NULL REFERENCES sites(id) ON DELETE SET NULL,
-  actor_type TEXT NOT NULL,
-  actor_id TEXT NOT NULL,
-  action TEXT NOT NULL,
-  target_type TEXT NOT NULL,
-  target_id TEXT NOT NULL,
-  metadata JSONB NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX audit_logs_site_id_idx ON audit_logs (site_id);
-CREATE INDEX audit_logs_action_idx ON audit_logs (action);
-CREATE INDEX audit_logs_created_at_idx ON audit_logs (created_at);
-```
-
-### Future Additions (Placeholders Only)
-- GitHub deploy fields: `github_owner`, `github_repo`, `github_ref`, `github_app_installation_id`, `github_commit_sha`.
-- Cronjob fields: `schedule`, `command`, `timezone`, `suspend`, `last_run_at`.
-
-## Migration / Reconcile Plan
-
-### Schema migrations (v1 → v2)
-
-**v1 (baseline control-plane schema)**:
-- `sites`, `site_limits`, `site_deploy`, `site_tls`, `zones`, `site_resources`, `site_databases`, `jobs`, `audit_logs`.
-
-**v2 (mail mapping metadata)**:
-1) Add `mail_domains` and `mailboxes` tables.
-2) Backfill:
-   - For each tenant namespace with mail annotations, insert `mail_domains` with `provider='mailcow'`.
-   - Insert `mailboxes` only if mailbox metadata exists (optional future endpoints).
-3) Add indexes/constraints as defined above.
-
-### Phase 0 (Today): Annotations are Source of Truth
-- Controller reads and writes desired state from K8s namespace annotations.
-- No DB integration; only current behavior.
-
-### Phase 1: Dual-Read + Write-Through
-- Introduce DB, but controller keeps annotations as source of truth.
-- On any change, write to annotations and mirror into DB.
-- Reads may consult DB to validate and report drift, but annotations still drive behavior.
-
-### Phase 2: Backfill Job
-- Enumerate tenant namespaces by label (e.g., `managed-by=voxeil` and `slug=<value>`).
-- For each namespace:
-  - Read annotations (domain, tls, image, port, cpu/ram/disk).
-  - Upsert into `sites`, `site_limits`, `site_deploy`, and `site_tls`.
-  - Create `site_resources` records for observed K8s objects.
-  - Record drift or invalid values (e.g., missing domain, non-numeric limits) into `jobs` or `audit_logs`.
-
-### Phase 3: DB Becomes Source of Truth
-- Controller reads DB for desired state.
-- Reconciler ensures K8s resources match DB (create/update/delete).
-- Annotations become derived output and are updated only when DB changes.
-
-### Phase 4: Minimal Annotation Usage (Optional)
-- Reduce annotations to only minimal identifiers (slug/domain) for discovery.
-- Everything else remains DB-driven.
-
-### Conflict Handling
-- If DB says `tls=true` but ingress lacks TLS, reconciler creates/repairs TLS and records a drift entry.
-- If annotations conflict with DB during Phase 1/2, prefer annotation values for live behavior but log a drift item and surface a warning.
-- If a resource exists in K8s but not in DB during Phase 3, treat it as orphaned and either adopt or delete based on policy.
-
-### Rollback Plan
-- If DB is unavailable or inconsistent, controller falls back to annotation reads.
-- Disable DB write-through and continue annotation-only operation.
-- Resume backfill once DB health is restored.
-
-### Minimal Operational Checks
-- DB connectivity and migration version are healthy.
-- Backfill job backlog is empty or within tolerance.
-- Reconciler error rate is low and no sustained drift.
-- Recent audit logs show expected update cadence.
-
---- FILE: MAILCOW_ZONE_PLAN.md ---
-﻿# Mailcow Zone Plan (Read-Only Design)
-
-This document defines a shared Mailcow zone architecture and the controller-side contracts needed to enable/disable mail per site. No implementation changes are made here.
-
-## A) Architecture
-
-- **Shared mail zone in its own namespace**: Mailcow runs once in the `mail-zone` namespace as a shared service.
-- **Tenant namespaces stay isolated**: Tenant namespaces do not run mail pods. Mail domains/accounts are managed through the Mailcow API only.
-- **DNS requirements (per mail domain)**:
-  - `MX` record pointing to the Mailcow host (priority 10 or preferred).
-  - `A/AAAA` record for `mail.<domain>` (or chosen hostname) pointing to Mailcow ingress IP.
-  - `TXT` SPF: `v=spf1 mx -all` (or `include:` if using upstream relay).
-  - `TXT` DKIM: selector record published from Mailcow (e.g., `default._domainkey.<domain>`).
-  - `TXT` DMARC: `_dmarc.<domain>` with policy (start with `p=quarantine` or `p=none`).
-  - `CNAME` autoconfig: `autoconfig.<domain>` -> `mail.<domain>`.
-  - `CNAME` autodiscover: `autodiscover.<domain>` -> `mail.<domain>`.
-- **Network/Ingress**:
-  - SMTP: `25`, SMTPS `465`, Submission `587`.
-  - IMAP: `143` and IMAPS `993`.
-  - POP3: `110` and POP3S `995` (optional if enabled).
-  - HTTP/HTTPS: `80/443` for Mailcow UI/API and `autoconfig`/`autodiscover` endpoints.
-  - **k3s/Traefik**: some of these are TCP entrypoints, not HTTP; plan explicit TCP entrypoints for 25/465/587/143/993/110/995.
-
-## B) Integration contracts (controller side)
-
-No implementation yet; define controller endpoints only.
-
-**Endpoints**:
-- `POST /sites/:slug/mail/enable` `{}`
-- `POST /sites/:slug/mail/disable` `{}`
-
-**Optional future**:
-- `POST /sites/:slug/mail/mailboxes` `{ localPart, password, quotaMb }`
-- `GET /sites/:slug/mail/status`
-
-**Required controller env vars**:
-- `MAILCOW_API_URL` (e.g., `https://mail.example.com/api/v1`)
-- `MAILCOW_API_KEY` (admin or restricted API key)
-- `MAILCOW_HOSTNAME` (optional; explicit hostname for UI links/records)
-
-**Secrets handling**:
-- Store secrets in a Kubernetes `Secret` under the platform namespace.
-- Controller reads via env vars; do not place secrets in config maps or code.
-
-## C) Namespace-annotation "state" keys (temporary DB)
-
-Use existing annotation prefix convention (e.g., `voxeil.io` or similar):
-- `<prefix>/mail-enabled`
-- `<prefix>/mail-provider`
-- `<prefix>/mail-domain`
-- `<prefix>/mail-status`
-- `<prefix>/mail-last-error`
-
-## D) Infra plan (later implementation steps)
-
-- **Manifests location**: `infra/k8s/mailcow/` (deployments, services, ingress/traefik TCP, secrets references).
-- **Installer**: add an optional "install mail zone" step to provision Mailcow and required ingress/TCP entrypoints.
-- **RBAC**: none required for mail operations; controller uses external Mailcow API only.
-- **UI exposure**: Mailcow admin UI should be admin-only; restrict via ingress auth or IP allowlist.
-
-## E) Safety / operational notes
-
-- **Rate limits & reputation**: enforce sensible sending limits; protect shared IP reputation.
-- **rDNS & deliverability**: ensure rDNS aligns with `mail.<domain>`; misalignment hurts deliverability.
-- **Port 25 blocks**: many VPS providers block outbound 25; plan for relay or allow-listing.
-- **Backups**: include mailbox, DB, and config backups in a later phase.
-
---- FILE: README.md ---
-## Voxeil Panel (MVP)
-
-Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal UI shipped in this repo.
-
-### Components
-- `apps/controller`: Fastify API that owns all Kubernetes access (namespaces, quotas, PVCs, network policies).
-- `apps/panel`: Next.js UI that talks only to the controller service inside the cluster.
-- `infra/k8s/platform`: k3s-compatible manifests with placeholders (`REPLACE_*`) for images and NodePorts.
-- `infra/k8s/templates/tenant`: Baseline ResourceQuota, LimitRange, and default-deny NetworkPolicy used for every tenant namespace.
-
-### Data model note
-- Control-plane DB: one shared PostgreSQL instance for controller state in `db-zone`.
-- Tenant site DBs: per-site database + role/user inside that same shared PostgreSQL cluster.
-- Shared services run in their own namespaces (`db-zone`, `mail-zone`, `backup-zone`); tenant namespaces only host site workloads.
-
-### Install
-1) Build/push your own images (no hardcoded registry):
-   - Controller: `apps/controller`
-   - Panel: `apps/panel`
-   - Maintenance page: `voxeil-maintenance` (served from GHCR)
-2) One-liner install (no git clone required):
-   ```bash
-   curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash
-   ```
-   - Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
-   - Provide GHCR credentials via env vars before running:
-     - `GHCR_USERNAME`
-     - `GHCR_TOKEN` (PAT with `read:packages`)
-     - `GHCR_EMAIL` (optional)
-   The installer will ask for:
-   - Panel NodePort
-   - Optional controller NodePort (admin-only)
-   - Site NodePort range
-   - IP allowlist (used with UFW if available)
-   - Controller + panel image references
-3) Outputs:
-   - Panel admin password (stored in `platform-secrets`)
-   - Controller API key (stored in `platform-secrets`)
-   - Panel URL: `http://<VPS_IP>:<PANEL_NODEPORT>`
-  - Note: `SITE_NODEPORT_START/END` are reserved for Phase 3 and currently unused by the controller.
-
-### Phase 2 publish
-- Creating a site provisions the namespace and immediately publishes a shared maintenance page.
-- Deployments happen only via `POST /sites/:slug/deploy` (manual).
-- Domains and subdomains are treated as separate sites (separate namespaces).
-
-### Phase 3 TLS (cert-manager)
-- cert-manager is cluster-wide and always installed by the installer.
-- TLS is site-based and opt-in via `PATCH /sites/:slug/tls`.
-- `LETSENCRYPT_EMAIL` is required only when enabling TLS for a site.
-- TLS secret naming: `tls-<slug>` (per-site, deterministic).
-
-### Security baseline
-- Controller enforces `X-API-Key` on all routes except `/health`.
-- Panel never talks directly to the Kubernetes API; it proxies via the controller service.
-- Tenants get a dedicated namespace with ResourceQuota, LimitRange, and default-deny NetworkPolicy (DNS egress only).
-- Controller creates tenant Deployments, Services, and Ingress on site creation.
-- GHCR images are pulled via the `ghcr-pull-secret` copied into each tenant namespace.
-- TLS is optional and site-based; HTTP ingress remains the default.
-
-### Controller API
-- `POST /sites` with `{ domain, cpu, ramGi, diskGi }`
-- `GET /sites`
-- `POST /sites/:slug/deploy` with `{ image, containerPort }`
-- `PATCH /sites/:slug/limits` with `{ cpu?, ramGi?, diskGi? }`
-- `DELETE /sites/:slug`
-
-### Future TODOs
-- Add HTTPS/ingress once domain support is enabled.
-- Extend quota/limit presets per plan.
-- Add per-tenant API keys and audit logging.
-
---- FILE: _export_repo.py ---
-﻿import os
+----- FILE: _export_repo.py -----
+import os
 from pathlib import Path
 from collections import defaultdict
 
@@ -669,7 +215,8 @@ with output.open('w', encoding='utf-8') as f:
 
 print(output)
 
---- FILE: apps/controller/.env.example ---
+
+----- FILE: apps/controller/.env.example -----
 ADMIN_API_KEY=replace-me
 DB_HOST=postgres.infra.svc.cluster.local
 DB_PORT=5432
@@ -678,7 +225,8 @@ DB_ADMIN_PASSWORD=replace-me
 DB_NAME_PREFIX=db_
 DB_USER_PREFIX=u_
 
---- FILE: apps/controller/Dockerfile ---
+
+----- FILE: apps/controller/Dockerfile -----
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package.json tsconfig.json ./
@@ -696,7 +244,33 @@ COPY templates /app/templates
 EXPOSE 8080
 CMD ["node", "dist/index.js"]
 
---- FILE: apps/controller/package-lock.json ---
+
+----- FILE: apps/controller/package.json -----
+{
+    "name": "vhp-controller",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "tsx watch src/index.ts",
+        "build": "tsc -p tsconfig.json",
+        "start": "node dist/index.js"
+    },
+    "dependencies": {
+        "@kubernetes/client-node": "^0.22.3",
+        "fastify": "^4.28.1",
+        "pg": "^8.13.3",
+        "zod": "^3.23.8"
+    },
+    "devDependencies": {
+        "@types/node": "^20.11.19",
+        "@types/pg": "^8.11.10",
+        "tsx": "^4.16.2",
+        "typescript": "^5.6.3"
+    }
+}
+
+
+----- FILE: apps/controller/package-lock.json -----
 {
     "name": "vhp-controller",
     "lockfileVersion": 3,
@@ -2763,31 +2337,8 @@ CMD ["node", "dist/index.js"]
     }
 }
 
---- FILE: apps/controller/package.json ---
-{
-    "name": "vhp-controller",
-    "private": true,
-    "type": "module",
-    "scripts": {
-        "dev": "tsx watch src/index.ts",
-        "build": "tsc -p tsconfig.json",
-        "start": "node dist/index.js"
-    },
-    "dependencies": {
-        "@kubernetes/client-node": "^0.22.3",
-        "fastify": "^4.28.1",
-        "pg": "^8.13.3",
-        "zod": "^3.23.8"
-    },
-    "devDependencies": {
-        "@types/node": "^20.11.19",
-        "@types/pg": "^8.11.10",
-        "tsx": "^4.16.2",
-        "typescript": "^5.6.3"
-    }
-}
 
---- FILE: apps/controller/src/backup/backup.dto.ts ---
+----- FILE: apps/controller/src/backup/backup.dto.ts -----
 import { z } from "zod";
 
 export const RestoreFilesSchema = z.object({
@@ -2803,7 +2354,8 @@ export const RestoreDbSchema = z.object({
 export type RestoreFilesInput = z.infer<typeof RestoreFilesSchema>;
 export type RestoreDbInput = z.infer<typeof RestoreDbSchema>;
 
---- FILE: apps/controller/src/backup/helpers.ts ---
+
+----- FILE: apps/controller/src/backup/helpers.ts -----
 import type { V1Pod } from "@kubernetes/client-node";
 import { promises as fs } from "node:fs";
 import path from "node:path";
@@ -2893,7 +2445,8 @@ export function buildRestorePod(spec: RestorePodSpec): V1Pod {
   };
 }
 
---- FILE: apps/controller/src/backup/restore.service.ts ---
+
+----- FILE: apps/controller/src/backup/restore.service.ts -----
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -3084,7 +2637,8 @@ export async function restoreSiteDb(
   return { ok: true, slug: normalized, restored: "db", archive };
 }
 
---- FILE: apps/controller/src/db/admin.ts ---
+
+----- FILE: apps/controller/src/db/admin.ts -----
 import { randomBytes } from "node:crypto";
 import { Client } from "pg";
 import { HttpError } from "../http/errors.js";
@@ -3225,7 +2779,33 @@ export async function ensureDatabaseAndRole(options: EnsureDbOptions): Promise<{
   }
 }
 
---- FILE: apps/controller/src/http/errors.ts ---
+export async function dropDatabaseAndRole(options: {
+  dbName: string;
+  dbUser: string;
+}): Promise<void> {
+  const config = requireAdminConfig();
+  const client = new Client({
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    password: config.password,
+    database: "postgres"
+  });
+
+  await client.connect();
+  try {
+    await client.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1", [
+      options.dbName
+    ]);
+    await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(options.dbName)}`);
+    await client.query(`DROP ROLE IF EXISTS ${quoteIdent(options.dbUser)}`);
+  } finally {
+    await client.end();
+  }
+}
+
+
+----- FILE: apps/controller/src/http/errors.ts -----
 export class HttpError extends Error {
   statusCode: number;
 
@@ -3235,12 +2815,16 @@ export class HttpError extends Error {
   }
 }
 
---- FILE: apps/controller/src/http/routes.ts ---
+
+----- FILE: apps/controller/src/http/routes.ts -----
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { HttpError } from "./errors.js";
 import {
   CreateSiteSchema,
   DeploySiteSchema,
+  MailEnableSchema,
+  MailboxCreateSchema,
   PatchLimitsSchema,
   PatchTlsSchema
 } from "../sites/site.dto.js";
@@ -3249,15 +2833,33 @@ import {
   createSite,
   deleteSite,
   deploySite,
-  enableSiteMail,
   enableSiteDb,
+  enableSiteMail,
+  disableSiteDb,
+  disableSiteMail,
+  purgeSiteDb,
+  purgeSiteMail,
+  createSiteMailbox,
+  deleteSiteMailbox,
+  listSiteMailboxes,
   listSites,
+  purgeSite,
+  purgeSiteBackup,
   updateSiteTls,
-  updateSiteLimits
+  updateSiteLimits,
+  enableSiteBackup,
+  disableSiteBackup
 } from "../sites/site.service.js";
 import { restoreSiteDb, restoreSiteFiles } from "../backup/restore.service.js";
 
 const SlugParamSchema = z.string().min(1, "Slug is required.");
+
+function requireConfirmDelete(body: unknown) {
+  const payload = body as { confirm?: string } | null;
+  if (!payload || payload.confirm !== "DELETE") {
+    throw new HttpError(400, "confirm required");
+  }
+}
 
 export function registerRoutes(app: FastifyInstance) {
   app.post("/sites", async (req, reply) => {
@@ -3291,13 +2893,82 @@ export function registerRoutes(app: FastifyInstance) {
 
   app.post("/sites/:slug/mail/enable", async (req, reply) => {
     const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
-    const result = await enableSiteMail(slug);
+    const body = MailEnableSchema.parse(req.body);
+    const result = await enableSiteMail(slug, body);
     return reply.send(result);
   });
 
   app.post("/sites/:slug/db/enable", async (req, reply) => {
     const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
     const result = await enableSiteDb(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/db/disable", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await disableSiteDb(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/db/purge", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    requireConfirmDelete(req.body);
+    const result = await purgeSiteDb(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/mail/disable", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await disableSiteMail(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/mail/purge", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    requireConfirmDelete(req.body);
+    const result = await purgeSiteMail(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/mail/mailboxes", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const body = MailboxCreateSchema.parse(req.body);
+    const result = await createSiteMailbox(slug, body);
+    return reply.send(result);
+  });
+
+  app.delete("/sites/:slug/mail/mailboxes/:address", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const address = String((req.params as { address?: string }).address ?? "").trim();
+    if (!address) {
+      throw new HttpError(400, "Mailbox address is required.");
+    }
+    const result = await deleteSiteMailbox(slug, address);
+    return reply.send(result);
+  });
+
+  app.get("/sites/:slug/mail/mailboxes", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await listSiteMailboxes(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/backup/enable", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await enableSiteBackup(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/backup/disable", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await disableSiteBackup(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/backup/purge", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    requireConfirmDelete(req.body);
+    const result = await purgeSiteBackup(slug);
     return reply.send(result);
   });
 
@@ -3320,9 +2991,17 @@ export function registerRoutes(app: FastifyInstance) {
     const result = await deleteSite(slug);
     return reply.code(200).send({ ok: true, slug: result.slug });
   });
+
+  app.post("/sites/:slug/purge", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    requireConfirmDelete(req.body);
+    const result = await purgeSite(slug);
+    return reply.send(result);
+  });
 }
 
---- FILE: apps/controller/src/index.ts ---
+
+----- FILE: apps/controller/src/index.ts -----
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { registerRoutes } from "./http/routes.js";
@@ -3362,7 +3041,8 @@ registerRoutes(app);
 const port = Number(process.env.PORT ?? 8080);
 app.listen({ host: "0.0.0.0", port });
 
---- FILE: apps/controller/src/k8s/annotations.ts ---
+
+----- FILE: apps/controller/src/k8s/annotations.ts -----
 export const SITE_ANNOTATIONS = {
   domain: "voxeil.com/domain",
   tlsEnabled: "voxeil.com/tls-enabled",
@@ -3372,16 +3052,20 @@ export const SITE_ANNOTATIONS = {
   cpu: "voxeil.com/cpu",
   ramGi: "voxeil.com/ramGi",
   diskGi: "voxeil.com/diskGi",
+  backupEnabled: "voxeil.com/backup-enabled",
   mailEnabled: "voxeil.com/mail-enabled",
   mailProvider: "voxeil.com/mail-provider",
+  mailDomain: "voxeil.com/mail-domain",
   mailStatus: "voxeil.com/mail-status",
   mailLastError: "voxeil.com/mail-last-error",
   dbEnabled: "voxeil.com/db-enabled",
   dbName: "voxeil.com/db-name",
-  dbUser: "voxeil.com/db-user"
+  dbUser: "voxeil.com/db-user",
+  dbSecret: "voxeil.com/db-secret"
 } as const;
 
---- FILE: apps/controller/src/k8s/apply.ts ---
+
+----- FILE: apps/controller/src/k8s/apply.ts -----
 import type {
   V1Deployment,
   V1Ingress,
@@ -3521,7 +3205,8 @@ export async function upsertSecret(secret: V1Secret): Promise<void> {
   }
 }
 
---- FILE: apps/controller/src/k8s/client.ts ---
+
+----- FILE: apps/controller/src/k8s/client.ts -----
 import k8s from "@kubernetes/client-node";
 
 export const LABELS = {
@@ -3557,7 +3242,8 @@ export function getClients(): Clients {
   return cached;
 }
 
---- FILE: apps/controller/src/k8s/ingress.ts ---
+
+----- FILE: apps/controller/src/k8s/ingress.ts -----
 import type { V1Ingress } from "@kubernetes/client-node";
 import { getClients } from "./client.js";
 import { HttpError } from "../http/errors.js";
@@ -3617,7 +3303,8 @@ export async function patchIngress(
   );
 }
 
---- FILE: apps/controller/src/k8s/namespace.ts ---
+
+----- FILE: apps/controller/src/k8s/namespace.ts -----
 import { getClients, LABELS } from "./client.js";
 import { HttpError } from "../http/errors.js";
 
@@ -3766,7 +3453,8 @@ export async function patchNamespaceAnnotations(
   }
 }
 
---- FILE: apps/controller/src/k8s/publish.ts ---
+
+----- FILE: apps/controller/src/k8s/publish.ts -----
 import type { V1Deployment, V1Ingress, V1Service } from "@kubernetes/client-node";
 import { LABELS } from "./client.js";
 import { GHCR_PULL_SECRET_NAME } from "./secrets.js";
@@ -3940,7 +3628,8 @@ export function buildIngress(spec: PublishSpec): V1Ingress {
   };
 }
 
---- FILE: apps/controller/src/k8s/pvc.ts ---
+
+----- FILE: apps/controller/src/k8s/pvc.ts -----
 import { getClients } from "./client.js";
 import { parseGiToNumber } from "./quantity.js";
 import { HttpError } from "../http/errors.js";
@@ -4020,7 +3709,8 @@ export async function expandPvcIfNeeded(namespace: string, nextSizeGi: number): 
   await core.replaceNamespacedPersistentVolumeClaim(TENANT_PVC_NAME, namespace, next);
 }
 
---- FILE: apps/controller/src/k8s/quantity.ts ---
+
+----- FILE: apps/controller/src/k8s/quantity.ts -----
 export function parseCpuToNumber(value: string | undefined): number | null {
   if (!value) return null;
   const trimmed = value.trim();
@@ -4049,7 +3739,8 @@ export function parseGiToNumber(value: string | undefined): number | null {
   return Number.isFinite(number) ? number : null;
 }
 
---- FILE: apps/controller/src/k8s/quota.ts ---
+
+----- FILE: apps/controller/src/k8s/quota.ts -----
 import { getClients } from "./client.js";
 import { parseCpuToNumber, parseGiToNumber } from "./quantity.js";
 import { HttpError } from "../http/errors.js";
@@ -4144,7 +3835,8 @@ export async function updateQuotaLimits(
   };
 }
 
---- FILE: apps/controller/src/k8s/secrets.ts ---
+
+----- FILE: apps/controller/src/k8s/secrets.ts -----
 import type { V1Secret } from "@kubernetes/client-node";
 import { getClients, LABELS } from "./client.js";
 import { HttpError } from "../http/errors.js";
@@ -4238,7 +3930,18 @@ export async function upsertSecret(secret: V1Secret): Promise<void> {
   }
 }
 
---- FILE: apps/controller/src/mailcow/client.ts ---
+export async function deleteSecret(namespace: string, name: string): Promise<void> {
+  const { core } = getClients();
+  try {
+    await core.deleteNamespacedSecret(name, namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) return;
+    throw error;
+  }
+}
+
+
+----- FILE: apps/controller/src/mailcow/client.ts -----
 import { HttpError } from "../http/errors.js";
 
 type MailcowConfig = {
@@ -4252,6 +3955,18 @@ type MailcowResult = {
   type?: string;
   msg?: string;
   message?: string;
+};
+
+type MailcowMailbox = {
+  username?: string;
+  address?: string;
+  domain?: string;
+  local_part?: string;
+};
+
+type MailcowAlias = {
+  address?: string;
+  alias?: string;
 };
 
 const DEFAULT_TIMEOUT_MS = 15000;
@@ -4291,6 +4006,16 @@ function toErrorMessage(result: unknown): string | undefined {
 function isExistsMessage(message?: string): boolean {
   if (!message) return false;
   return message.toLowerCase().includes("exist");
+}
+
+function isMissingMessage(message?: string): boolean {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("not exist") ||
+    normalized.includes("does not exist") ||
+    normalized.includes("not found")
+  );
 }
 
 async function mailcowRequest<T>(
@@ -4371,8 +4096,27 @@ function buildDomainPayload(domain: string) {
   };
 }
 
+function normalizeDomain(domain: string): string {
+  return domain.trim().toLowerCase().replace(/\.$/, "");
+}
+
+function extractMailboxAddress(entry: MailcowMailbox): string {
+  if (entry.username) return String(entry.username).trim().toLowerCase();
+  if (entry.address) return String(entry.address).trim().toLowerCase();
+  const local = entry.local_part ? String(entry.local_part).trim() : "";
+  const domain = entry.domain ? String(entry.domain).trim() : "";
+  if (local && domain) return `${local}@${domain}`.toLowerCase();
+  return "";
+}
+
+function extractAliasAddress(entry: MailcowAlias): string {
+  if (entry.address) return String(entry.address).trim().toLowerCase();
+  if (entry.alias) return String(entry.alias).trim().toLowerCase();
+  return "";
+}
+
 export async function ensureMailcowDomain(domain: string): Promise<void> {
-  const normalized = domain.trim().toLowerCase();
+  const normalized = normalizeDomain(domain);
   if (!normalized) {
     throw new Error("Domain is required.");
   }
@@ -4390,15 +4134,151 @@ export async function ensureMailcowDomain(domain: string): Promise<void> {
   }
 }
 
---- FILE: apps/controller/src/sites/site.dto.ts ---
+export async function setMailcowDomainActive(domain: string, active: boolean): Promise<void> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) {
+    throw new Error("Domain is required.");
+  }
+  const result = await mailcowRequest<unknown>("/api/v1/edit/domain", {
+    method: "POST",
+    body: JSON.stringify({
+      items: [normalized],
+      attr: { active: active ? 1 : 0 }
+    })
+  });
+  const message = toErrorMessage(result);
+  if (message && !isExistsMessage(message) && !isMissingMessage(message)) {
+    throw new Error(message);
+  }
+}
+
+export async function listMailcowMailboxes(domain: string): Promise<string[]> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return [];
+  const result = await mailcowRequest<unknown>("/api/v1/get/mailbox/all", { method: "GET" });
+  if (!Array.isArray(result)) return [];
+  return result
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return "";
+      return extractMailboxAddress(entry as MailcowMailbox);
+    })
+    .filter((address) => address.endsWith(`@${normalized}`));
+}
+
+export async function listMailcowAliases(domain: string): Promise<string[]> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return [];
+  const result = await mailcowRequest<unknown>("/api/v1/get/alias/all", { method: "GET" });
+  if (!Array.isArray(result)) return [];
+  return result
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return "";
+      return extractAliasAddress(entry as MailcowAlias);
+    })
+    .filter((address) => address.endsWith(`@${normalized}`));
+}
+
+export async function createMailcowMailbox(options: {
+  domain: string;
+  localPart: string;
+  password: string;
+  quotaMb?: number;
+}): Promise<string> {
+  const domain = normalizeDomain(options.domain);
+  const localPart = options.localPart.trim();
+  if (!domain) throw new Error("Domain is required.");
+  if (!localPart) throw new Error("localPart is required.");
+  if (!options.password) throw new Error("password is required.");
+  const address = `${localPart}@${domain}`.toLowerCase();
+  const result = await mailcowRequest<unknown>("/api/v1/add/mailbox", {
+    method: "POST",
+    body: JSON.stringify({
+      local_part: localPart,
+      domain,
+      name: localPart,
+      password: options.password,
+      password2: options.password,
+      quota: options.quotaMb ?? 0,
+      active: 1
+    })
+  });
+  const message = toErrorMessage(result);
+  if (message && !isExistsMessage(message)) {
+    throw new Error(message);
+  }
+  return address;
+}
+
+export async function deleteMailcowMailbox(address: string): Promise<void> {
+  const normalized = address.trim().toLowerCase();
+  if (!normalized) return;
+  try {
+    const result = await mailcowRequest<unknown>("/api/v1/delete/mailbox", {
+      method: "POST",
+      body: JSON.stringify([normalized])
+    });
+    const message = toErrorMessage(result);
+    if (message && !isMissingMessage(message)) {
+      throw new Error(message);
+    }
+  } catch (error: any) {
+    const message = String(error?.message ?? "");
+    if (isMissingMessage(message)) return;
+    throw error;
+  }
+}
+
+export async function deleteMailcowAliases(addresses: string[]): Promise<void> {
+  const items = addresses.map((address) => address.trim().toLowerCase()).filter(Boolean);
+  if (items.length === 0) return;
+  try {
+    const result = await mailcowRequest<unknown>("/api/v1/delete/alias", {
+      method: "POST",
+      body: JSON.stringify(items)
+    });
+    const message = toErrorMessage(result);
+    if (message && !isMissingMessage(message)) {
+      throw new Error(message);
+    }
+  } catch (error: any) {
+    const message = String(error?.message ?? "");
+    if (isMissingMessage(message)) return;
+    throw error;
+  }
+}
+
+export async function deleteMailcowDomain(domain: string): Promise<void> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return;
+  try {
+    const result = await mailcowRequest<unknown>("/api/v1/delete/domain", {
+      method: "POST",
+      body: JSON.stringify([normalized])
+    });
+    const message = toErrorMessage(result);
+    if (message && !isMissingMessage(message)) {
+      throw new Error(message);
+    }
+  } catch (error: any) {
+    const message = String(error?.message ?? "");
+    if (isMissingMessage(message)) return;
+    throw error;
+  }
+}
+
+
+----- FILE: apps/controller/src/sites/site.dto.ts -----
 import { z } from "zod";
+
+export const TlsIssuerSchema = z.enum(["letsencrypt-staging", "letsencrypt-prod"]);
 
 export const CreateSiteSchema = z.object({
   domain: z.string().min(1),
   cpu: z.number().int().positive(),
   ramGi: z.number().int().positive(),
   diskGi: z.number().int().positive(),
-  tlsEnabled: z.boolean().optional()
+  tlsEnabled: z.boolean().optional(),
+  tlsIssuer: TlsIssuerSchema.optional()
 });
 
 export const PatchLimitsSchema = z
@@ -4416,17 +4296,33 @@ export const DeploySiteSchema = z.object({
   containerPort: z.number().int().positive()
 });
 
-export const TlsIssuerSchema = z.enum(["letsencrypt-staging", "letsencrypt-prod"]);
-
 export const PatchTlsSchema = z.object({
   enabled: z.boolean(),
-  issuer: TlsIssuerSchema.optional()
+  issuer: TlsIssuerSchema.optional(),
+  cleanupSecret: z.boolean().optional()
+});
+
+export const ConfirmDeleteSchema = z.object({
+  confirm: z.literal("DELETE")
+});
+
+export const MailEnableSchema = z.object({
+  domain: z.string().min(1)
+});
+
+export const MailboxCreateSchema = z.object({
+  localPart: z.string().min(1),
+  password: z.string().min(1),
+  quotaMb: z.number().int().positive().optional()
 });
 
 export type CreateSiteInput = z.infer<typeof CreateSiteSchema>;
 export type PatchLimitsInput = z.infer<typeof PatchLimitsSchema>;
 export type DeploySiteInput = z.infer<typeof DeploySiteSchema>;
 export type PatchTlsInput = z.infer<typeof PatchTlsSchema>;
+export type ConfirmDeleteInput = z.infer<typeof ConfirmDeleteSchema>;
+export type MailEnableInput = z.infer<typeof MailEnableSchema>;
+export type MailboxCreateInput = z.infer<typeof MailboxCreateSchema>;
 
 export type SiteLimits = {
   cpu: number;
@@ -4471,12 +4367,21 @@ export type SiteListItem = {
   containerPort?: number;
   tlsEnabled?: boolean;
   tlsIssuer?: string;
+  dbEnabled?: boolean;
+  dbName?: string;
+  dbUser?: string;
+  dbSecret?: string;
+  mailEnabled?: boolean;
+  backupEnabled?: boolean;
   cpu?: number;
   ramGi?: number;
   diskGi?: number;
 };
 
---- FILE: apps/controller/src/sites/site.service.ts ---
+
+----- FILE: apps/controller/src/sites/site.service.ts -----
+import { promises as fs } from "node:fs";
+import path from "node:path";
 import { HttpError } from "../http/errors.js";
 import { loadTenantTemplates } from "../templates/load.js";
 import {
@@ -4505,17 +4410,27 @@ import { patchIngress } from "../k8s/ingress.js";
 import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
 import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
 import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
-import { ensureGhcrPullSecret, readSecret, upsertSecret } from "../k8s/secrets.js";
+import { deleteSecret, ensureGhcrPullSecret, readSecret, upsertSecret } from "../k8s/secrets.js";
 import { LABELS } from "../k8s/client.js";
 import { SITE_ANNOTATIONS } from "../k8s/annotations.js";
 import {
   ensureDatabaseAndRole,
+  dropDatabaseAndRole,
   generateDbPassword,
   resolveDbName,
   resolveDbUser
 } from "../db/admin.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
-import { ensureMailcowDomain } from "../mailcow/client.js";
+import {
+  createMailcowMailbox,
+  deleteMailcowAliases,
+  deleteMailcowDomain,
+  deleteMailcowMailbox,
+  ensureMailcowDomain,
+  listMailcowAliases,
+  listMailcowMailboxes,
+  setMailcowDomainActive
+} from "../mailcow/client.js";
 import type {
   CreateSiteInput,
   PatchLimitsInput,
@@ -4532,6 +4447,7 @@ const DEFAULT_MAINTENANCE_IMAGE = "ghcr.io/OWNER/voxeil-maintenance:latest";
 const DEFAULT_MAINTENANCE_PORT = 3000;
 const DEFAULT_TLS_ISSUER = "letsencrypt-staging";
 const SITE_DB_SECRET_NAME = "site-db";
+const BACKUP_ROOT = "/backups/sites";
 
 function resolveMaintenanceImage(): string {
   const value = process.env.GHCR_MAINTENANCE_IMAGE ?? DEFAULT_MAINTENANCE_IMAGE;
@@ -4564,6 +4480,14 @@ function parseNumberAnnotation(value?: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function normalizeMailDomain(value: string): string {
+  const normalized = value.trim().toLowerCase().replace(/\.$/, "");
+  if (!normalized) {
+    throw new HttpError(400, "Domain is required.");
+  }
+  return normalized;
+}
+
 function requireDbHostConfig(): { host: string; port: string } {
   const host = process.env.DB_HOST?.trim();
   const port = process.env.DB_PORT?.trim() || "5432";
@@ -4587,16 +4511,20 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
   }
   const maintenanceImage = resolveMaintenanceImage();
   const maintenancePort = resolveMaintenancePort();
-  const tlsEnabled = false;
+  const tlsEnabled = input.tlsEnabled ?? false;
+  const tlsIssuer = input.tlsIssuer ?? DEFAULT_TLS_ISSUER;
   const { slug, namespace } = await allocateTenantNamespace(baseSlug, {
     [SITE_ANNOTATIONS.domain]: input.domain,
     [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
-    [SITE_ANNOTATIONS.tlsIssuer]: DEFAULT_TLS_ISSUER,
+    [SITE_ANNOTATIONS.tlsIssuer]: tlsIssuer,
     [SITE_ANNOTATIONS.image]: maintenanceImage,
     [SITE_ANNOTATIONS.containerPort]: String(maintenancePort),
     [SITE_ANNOTATIONS.cpu]: String(input.cpu),
     [SITE_ANNOTATIONS.ramGi]: String(input.ramGi),
-    [SITE_ANNOTATIONS.diskGi]: String(input.diskGi)
+    [SITE_ANNOTATIONS.diskGi]: String(input.diskGi),
+    [SITE_ANNOTATIONS.dbEnabled]: "false",
+    [SITE_ANNOTATIONS.mailEnabled]: "false",
+    [SITE_ANNOTATIONS.backupEnabled]: "true"
   });
 
   const templates = await loadTenantTemplates();
@@ -4632,7 +4560,9 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
     image: maintenanceImage,
     containerPort: maintenancePort,
     cpu: input.cpu,
-    ramGi: input.ramGi
+    ramGi: input.ramGi,
+    tlsEnabled,
+    tlsIssuer
   };
   await Promise.all([
     upsertDeployment(buildDeployment(maintenanceSpec)),
@@ -4677,8 +4607,14 @@ export async function listSites(): Promise<SiteListItem[]> {
         domain: annotations[SITE_ANNOTATIONS.domain],
         image: annotations[SITE_ANNOTATIONS.image],
         containerPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.containerPort]),
-        tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]),
+        tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]) ?? false,
         tlsIssuer: annotations[SITE_ANNOTATIONS.tlsIssuer],
+        dbEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false,
+        dbName: annotations[SITE_ANNOTATIONS.dbName],
+        dbUser: annotations[SITE_ANNOTATIONS.dbUser],
+        dbSecret: annotations[SITE_ANNOTATIONS.dbSecret],
+        mailEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false,
+        backupEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? true,
         cpu: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.cpu]),
         ramGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.ramGi]),
         diskGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.diskGi])
@@ -4691,8 +4627,14 @@ export async function listSites(): Promise<SiteListItem[]> {
         domain: annotations[SITE_ANNOTATIONS.domain],
         image: annotations[SITE_ANNOTATIONS.image],
         containerPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.containerPort]),
-        tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]),
+        tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]) ?? false,
         tlsIssuer: annotations[SITE_ANNOTATIONS.tlsIssuer],
+        dbEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false,
+        dbName: annotations[SITE_ANNOTATIONS.dbName],
+        dbUser: annotations[SITE_ANNOTATIONS.dbUser],
+        dbSecret: annotations[SITE_ANNOTATIONS.dbSecret],
+        mailEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false,
+        backupEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? true,
         cpu: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.cpu]),
         ramGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.ramGi]),
         diskGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.diskGi])
@@ -4824,13 +4766,18 @@ export async function updateSiteTls(
   if (!host) {
     throw new HttpError(500, "Site domain is missing.");
   }
-  const issuer = input.issuer ?? DEFAULT_TLS_ISSUER;
+  const previousIssuer = namespaceEntry.annotations[SITE_ANNOTATIONS.tlsIssuer] ?? DEFAULT_TLS_ISSUER;
+  const issuer = input.issuer ?? previousIssuer;
   const tlsEnabled = input.enabled;
 
   await patchNamespaceAnnotations(namespace, {
     [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
     [SITE_ANNOTATIONS.tlsIssuer]: issuer
   });
+
+  if (!tlsEnabled && input.cleanupSecret) {
+    await deleteSecret(namespace, `tls-${normalized}`);
+  }
 
   await patchIngress("web", namespace, {
     metadata: {
@@ -4860,7 +4807,10 @@ export async function updateSiteTls(
   };
 }
 
-export async function enableSiteMail(slug: string): Promise<{
+export async function enableSiteMail(
+  slug: string,
+  input: { domain: string }
+): Promise<{
   ok: true;
   slug: string;
   domain: string;
@@ -4875,16 +4825,14 @@ export async function enableSiteMail(slug: string): Promise<{
   }
   const namespaceEntry = await readTenantNamespace(normalized);
   const namespace = namespaceEntry.name;
-  const domain = namespaceEntry.annotations[SITE_ANNOTATIONS.domain]?.trim();
-  if (!domain) {
-    throw new HttpError(409, "Site domain not found in namespace annotations.");
-  }
+  const domain = normalizeMailDomain(input.domain);
 
   try {
     await ensureMailcowDomain(domain);
     await patchNamespaceAnnotations(namespace, {
       [SITE_ANNOTATIONS.mailEnabled]: "true",
       [SITE_ANNOTATIONS.mailProvider]: "mailcow",
+      [SITE_ANNOTATIONS.mailDomain]: domain,
       [SITE_ANNOTATIONS.mailStatus]: "ready",
       [SITE_ANNOTATIONS.mailLastError]: ""
     });
@@ -4971,7 +4919,8 @@ export async function enableSiteDb(slug: string): Promise<{
   await patchNamespaceAnnotations(namespace, {
     [SITE_ANNOTATIONS.dbEnabled]: "true",
     [SITE_ANNOTATIONS.dbName]: dbName,
-    [SITE_ANNOTATIONS.dbUser]: dbUser
+    [SITE_ANNOTATIONS.dbUser]: dbUser,
+    [SITE_ANNOTATIONS.dbSecret]: SITE_DB_SECRET_NAME
   });
 
   return {
@@ -4983,7 +4932,325 @@ export async function enableSiteDb(slug: string): Promise<{
   };
 }
 
---- FILE: apps/controller/src/sites/site.slug.ts ---
+async function purgeMailcowDomainResources(domain: string): Promise<void> {
+  const [mailboxes, aliases] = await Promise.all([
+    listMailcowMailboxes(domain),
+    listMailcowAliases(domain)
+  ]);
+  await deleteMailcowAliases(aliases);
+  await Promise.all(mailboxes.map((address) => deleteMailcowMailbox(address)));
+  await deleteMailcowDomain(domain);
+}
+
+export async function disableSiteDb(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  dbEnabled: false;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+
+  await deleteSecret(namespace, SITE_DB_SECRET_NAME);
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.dbEnabled]: "false",
+    [SITE_ANNOTATIONS.dbSecret]: ""
+  });
+
+  return { ok: true, slug: normalized, dbEnabled: false };
+}
+
+export async function purgeSiteDb(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  dbEnabled: false;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const annotations = namespaceEntry.annotations;
+  const dbName = annotations[SITE_ANNOTATIONS.dbName] ?? resolveDbName(normalized);
+  const dbUser = annotations[SITE_ANNOTATIONS.dbUser] ?? resolveDbUser(normalized);
+
+  await dropDatabaseAndRole({ dbName, dbUser });
+  await deleteSecret(namespace, SITE_DB_SECRET_NAME);
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.dbEnabled]: "false",
+    [SITE_ANNOTATIONS.dbSecret]: ""
+  });
+
+  return { ok: true, slug: normalized, dbEnabled: false };
+}
+
+export async function disableSiteMail(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  mailEnabled: false;
+  domain?: string;
+  provider: "mailcow";
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const annotations = namespaceEntry.annotations;
+  const domain =
+    annotations[SITE_ANNOTATIONS.mailDomain]?.trim() ??
+    annotations[SITE_ANNOTATIONS.domain]?.trim();
+
+  if (domain) {
+    try {
+      await setMailcowDomainActive(domain, false);
+    } catch {
+      // Optional best-effort deactivation only.
+    }
+  }
+
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.mailEnabled]: "false",
+    [SITE_ANNOTATIONS.mailStatus]: "disabled",
+    [SITE_ANNOTATIONS.mailLastError]: ""
+  });
+
+  return { ok: true, slug: normalized, mailEnabled: false, domain, provider: "mailcow" };
+}
+
+export async function purgeSiteMail(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  mailEnabled: false;
+  domain: string;
+  purged: true;
+  provider: "mailcow";
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const annotations = namespaceEntry.annotations;
+  const domain =
+    annotations[SITE_ANNOTATIONS.mailDomain]?.trim() ??
+    annotations[SITE_ANNOTATIONS.domain]?.trim();
+  if (!domain) {
+    throw new HttpError(409, "Mail domain not configured.");
+  }
+
+  try {
+    await purgeMailcowDomainResources(domain);
+    await patchNamespaceAnnotations(namespace, {
+      [SITE_ANNOTATIONS.mailEnabled]: "false",
+      [SITE_ANNOTATIONS.mailStatus]: "purged",
+      [SITE_ANNOTATIONS.mailLastError]: "",
+      [SITE_ANNOTATIONS.mailDomain]: domain
+    });
+  } catch (error: any) {
+    const message = String(error?.message ?? "Mailcow error.");
+    await patchNamespaceAnnotations(namespace, {
+      [SITE_ANNOTATIONS.mailStatus]: "error",
+      [SITE_ANNOTATIONS.mailLastError]: message
+    });
+    throw new HttpError(502, "Mail provider error.");
+  }
+
+  return {
+    ok: true,
+    slug: normalized,
+    mailEnabled: false,
+    domain,
+    purged: true,
+    provider: "mailcow"
+  };
+}
+
+export async function createSiteMailbox(
+  slug: string,
+  input: { localPart: string; password: string; quotaMb?: number }
+): Promise<{ ok: true; slug: string; address: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const domain = namespaceEntry.annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  if (!domain) {
+    throw new HttpError(409, "Mail domain not configured.");
+  }
+
+  const address = await createMailcowMailbox({
+    domain,
+    localPart: input.localPart,
+    password: input.password,
+    quotaMb: input.quotaMb
+  });
+
+  return { ok: true, slug: normalized, address };
+}
+
+export async function deleteSiteMailbox(
+  slug: string,
+  address: string
+): Promise<{ ok: true; slug: string; address: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const domain = namespaceEntry.annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  if (!domain) {
+    throw new HttpError(409, "Mail domain not configured.");
+  }
+  const normalizedAddress = address.trim().toLowerCase();
+  if (!normalizedAddress.endsWith(`@${domain.toLowerCase()}`)) {
+    throw new HttpError(400, "Address must match the site mail domain.");
+  }
+
+  await deleteMailcowMailbox(normalizedAddress);
+  return { ok: true, slug: normalized, address: normalizedAddress };
+}
+
+export async function listSiteMailboxes(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  domain: string;
+  mailboxes: string[];
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const domain = namespaceEntry.annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  if (!domain) {
+    throw new HttpError(409, "Mail domain not configured.");
+  }
+
+  const mailboxes = await listMailcowMailboxes(domain);
+  return { ok: true, slug: normalized, domain, mailboxes };
+}
+
+async function purgeSiteBackups(slug: string): Promise<void> {
+  await fs.rm(path.join(BACKUP_ROOT, slug), { recursive: true, force: true });
+}
+
+export async function enableSiteBackup(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  backupEnabled: true;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.backupEnabled]: "true"
+  });
+  return { ok: true, slug: normalized, backupEnabled: true };
+}
+
+export async function disableSiteBackup(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  backupEnabled: false;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.backupEnabled]: "false"
+  });
+  return { ok: true, slug: normalized, backupEnabled: false };
+}
+
+export async function purgeSiteBackup(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  backupEnabled: false;
+  purged: true;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  await purgeSiteBackups(normalized);
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.backupEnabled]: "false"
+  });
+  return { ok: true, slug: normalized, backupEnabled: false, purged: true };
+}
+
+export async function purgeSite(slug: string): Promise<{ ok: true; slug: string; purged: true }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const annotations = namespaceEntry.annotations;
+
+  await deleteTenantNamespace(normalized);
+
+  const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
+  const dbNameAnnotation = annotations[SITE_ANNOTATIONS.dbName];
+  const dbUserAnnotation = annotations[SITE_ANNOTATIONS.dbUser];
+  if (dbEnabled || dbNameAnnotation || dbUserAnnotation) {
+    const dbName = dbNameAnnotation ?? resolveDbName(normalized);
+    const dbUser = dbUserAnnotation ?? resolveDbUser(normalized);
+    await dropDatabaseAndRole({ dbName, dbUser });
+  }
+
+  const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+  const mailDomain =
+    annotations[SITE_ANNOTATIONS.mailDomain]?.trim() ??
+    annotations[SITE_ANNOTATIONS.domain]?.trim();
+  if (mailDomain && (mailEnabled || annotations[SITE_ANNOTATIONS.mailDomain])) {
+    await purgeMailcowDomainResources(mailDomain);
+  }
+
+  await purgeSiteBackups(normalized);
+
+  return { ok: true, slug: normalized, purged: true };
+}
+
+
+----- FILE: apps/controller/src/sites/site.slug.ts -----
 export function slugFromDomain(input: string): string {
   let value = input.trim().toLowerCase();
   if (!value) {
@@ -5026,7 +5293,8 @@ export function validateSlug(input: string): string {
   return value;
 }
 
---- FILE: apps/controller/src/templates/load.ts ---
+
+----- FILE: apps/controller/src/templates/load.ts -----
 import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
 import k8s from "@kubernetes/client-node";
@@ -5091,7 +5359,8 @@ export async function loadTenantTemplates(): Promise<TenantTemplates> {
   return cached;
 }
 
---- FILE: apps/controller/src/templates/render.ts ---
+
+----- FILE: apps/controller/src/templates/render.ts -----
 import type {
   V1LimitRange,
   V1NetworkPolicy,
@@ -5184,7 +5453,8 @@ export function renderNetworkPolicy(
   return policy;
 }
 
---- FILE: apps/controller/templates/tenant/limitrange.yaml ---
+
+----- FILE: apps/controller/templates/tenant/limitrange.yaml -----
 apiVersion: v1
 kind: LimitRange
 metadata:
@@ -5206,7 +5476,8 @@ spec:
         cpu: "0"
         memory: 0Mi
 
---- FILE: apps/controller/templates/tenant/networkpolicy-allow-ingress.yaml ---
+
+----- FILE: apps/controller/templates/tenant/networkpolicy-allow-ingress.yaml -----
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -5219,7 +5490,8 @@ spec:
   ingress:
     - {} # allow all ingress (NodePort traffic hits pods)
 
---- FILE: apps/controller/templates/tenant/networkpolicy-deny-all.yaml ---
+
+----- FILE: apps/controller/templates/tenant/networkpolicy-deny-all.yaml -----
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -5245,7 +5517,8 @@ spec:
         - protocol: TCP
           port: 53
 
---- FILE: apps/controller/templates/tenant/resourcequota.yaml ---
+
+----- FILE: apps/controller/templates/tenant/resourcequota.yaml -----
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -5263,7 +5536,8 @@ spec:
     configmaps: "10"
     persistentvolumeclaims: "1"
 
---- FILE: apps/controller/tsconfig.json ---
+
+----- FILE: apps/controller/tsconfig.json -----
 {
     "compilerOptions": {
       "target": "ES2022",
@@ -5278,26 +5552,8 @@ spec:
   }
   
 
---- FILE: apps/panel/Dockerfile ---
-FROM node:20-alpine AS build
-WORKDIR /app
-COPY package.json tsconfig.json next.config.mjs ./
-COPY next-env.d.ts ./next-env.d.ts
-COPY app ./app
-RUN npm install
-RUN npm run build
 
-FROM node:20-alpine
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=build /app/package.json /app/package.json
-COPY --from=build /app/node_modules /app/node_modules
-COPY --from=build /app/.next /app/.next
-COPY --from=build /app/app /app/app
-EXPOSE 3000
-CMD ["npm", "run", "start"]
-
---- FILE: apps/panel/app/actions.ts ---
+----- FILE: apps/panel/app/actions.ts -----
 "use server";
 
 import { revalidatePath } from "next/cache";
@@ -5334,7 +5590,8 @@ export async function logoutAction() {
   redirect("/login");
 }
 
---- FILE: apps/panel/app/globals.css ---
+
+----- FILE: apps/panel/app/globals.css -----
 :root {
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -5359,7 +5616,8 @@ button {
   cursor: pointer;
 }
 
---- FILE: apps/panel/app/layout.tsx ---
+
+----- FILE: apps/panel/app/layout.tsx -----
 import "./globals.css";
 import type { ReactNode } from "react";
 
@@ -5378,7 +5636,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   );
 }
 
---- FILE: apps/panel/app/lib/controller.ts ---
+
+----- FILE: apps/panel/app/lib/controller.ts -----
 const CONTROLLER_BASE =
   process.env.CONTROLLER_BASE_URL ?? "http://controller.platform.svc.cluster.local:8080";
 const CONTROLLER_API_KEY = process.env.CONTROLLER_API_KEY;
@@ -5434,7 +5693,8 @@ export async function deleteSite(siteId: string) {
   await controllerFetch(`/sites/${siteId}`, { method: "DELETE" });
 }
 
---- FILE: apps/panel/app/lib/session.ts ---
+
+----- FILE: apps/panel/app/lib/session.ts -----
 import crypto from "crypto";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -5475,7 +5735,8 @@ export function clearSession() {
   cookies().delete(SESSION_COOKIE);
 }
 
---- FILE: apps/panel/app/login/login-actions.ts ---
+
+----- FILE: apps/panel/app/login/login-actions.ts -----
 "use server";
 
 import { establishSession, hasSession } from "../lib/session.js";
@@ -5502,7 +5763,8 @@ export async function loginAction(
   return { success: true };
 }
 
---- FILE: apps/panel/app/login/login-form.tsx ---
+
+----- FILE: apps/panel/app/login/login-form.tsx -----
 "use client";
 
 import { useEffect } from "react";
@@ -5532,7 +5794,8 @@ export function LoginForm() {
   );
 }
 
---- FILE: apps/panel/app/login/page.tsx ---
+
+----- FILE: apps/panel/app/login/page.tsx -----
 import { redirect } from "next/navigation";
 import { hasSession } from "../lib/session.js";
 import { LoginForm } from "./login-form";
@@ -5549,7 +5812,8 @@ export default function LoginPage() {
   );
 }
 
---- FILE: apps/panel/app/page.tsx ---
+
+----- FILE: apps/panel/app/page.tsx -----
 import { createSiteAction, deleteSiteAction, logoutAction } from "./actions";
 import { listSites } from "./lib/controller.js";
 import { requireSession } from "./lib/session.js";
@@ -5618,13 +5882,28 @@ export default async function HomePage() {
   );
 }
 
---- FILE: apps/panel/next-env.d.ts ---
-/// <reference types="next" />
-/// <reference types="next/types/global" />
-/// <reference types="next/navigation-types/compat/navigation" />
+
+----- FILE: apps/panel/Dockerfile -----
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package.json tsconfig.json next.config.mjs ./
+COPY next-env.d.ts ./next-env.d.ts
+COPY app ./app
+RUN npm install
+RUN npm run build
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=build /app/package.json /app/package.json
+COPY --from=build /app/node_modules /app/node_modules
+COPY --from=build /app/.next /app/.next
+COPY --from=build /app/app /app/app
+EXPOSE 3000
+CMD ["npm", "run", "start"]
 
 
---- FILE: apps/panel/next.config.mjs ---
+----- FILE: apps/panel/next.config.mjs -----
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   experimental: {
@@ -5634,7 +5913,38 @@ const nextConfig = {
 
 export default nextConfig;
 
---- FILE: apps/panel/package-lock.json ---
+
+----- FILE: apps/panel/next-env.d.ts -----
+/// <reference types="next" />
+/// <reference types="next/types/global" />
+/// <reference types="next/navigation-types/compat/navigation" />
+
+
+
+----- FILE: apps/panel/package.json -----
+{
+  "name": "vhp-panel",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start"
+  },
+  "dependencies": {
+    "next": "14.2.3",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.19",
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.19",
+    "typescript": "^5.6.3"
+  }
+}
+
+
+----- FILE: apps/panel/package-lock.json -----
 {
   "name": "vhp-panel",
   "lockfileVersion": 3,
@@ -6136,29 +6446,8 @@ export default nextConfig;
   }
 }
 
---- FILE: apps/panel/package.json ---
-{
-  "name": "vhp-panel",
-  "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start"
-  },
-  "dependencies": {
-    "next": "14.2.3",
-    "react": "18.3.1",
-    "react-dom": "18.3.1"
-  },
-  "devDependencies": {
-    "@types/node": "^20.11.19",
-    "@types/react": "^18.2.66",
-    "@types/react-dom": "^18.2.19",
-    "typescript": "^5.6.3"
-  }
-}
 
---- FILE: apps/panel/tsconfig.json ---
+----- FILE: apps/panel/tsconfig.json -----
 {
   "compilerOptions": {
     "target": "ES2021",
@@ -6178,7 +6467,291 @@ export default nextConfig;
   "exclude": ["node_modules"]
 }
 
---- FILE: docs/runbooks/backup-restore.md ---
+
+----- FILE: CONTROL_PLANE_DB_PLAN.md -----
+# Control-Plane DB Plan (PostgreSQL)
+
+## Scope and Principles
+- This database is only for the controller/panel control-plane state.
+- Tenant app databases (customer DBs) are not stored here; only metadata references.
+- Mail zone, DB zone, and backup zone exist as shared infrastructure; their internal data stays in their own systems.
+- Shared services always run in their own namespaces (zones), never in tenant namespaces.
+- This is a planning document only; no runtime integration is introduced yet.
+
+## DB Model Decisions
+- Control-plane DB is one shared PostgreSQL instance in the `db-zone` namespace.
+- Tenant site DBs live inside that shared PostgreSQL cluster (`db-zone`), with a per-site database and role/user.
+- Mail zone is shared in the `mail-zone` namespace, with per-site mail resources tracked in control-plane metadata.
+- Backup runner is shared in the `backup-zone` namespace and stores only backup metadata in the control-plane DB.
+- No per-site PostgreSQL pods in MVP.
+
+## PostgreSQL Schema (DDL-Style Proposal)
+
+### Enum Strategy
+Use `CHECK` constraints for all status/kind enums for consistency.
+
+### Tables
+
+```sql
+-- Sites: primary control-plane record for each tenant app
+CREATE TABLE sites (
+  id UUID PRIMARY KEY,
+  slug TEXT NOT NULL,
+  primary_domain TEXT NOT NULL,
+  namespace TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN (
+    'provisioning', 'active', 'suspended', 'deleting', 'deleted', 'error'
+  )),
+  dns_zone_id UUID NULL REFERENCES zones(id),
+  mail_zone_id UUID NULL REFERENCES zones(id),
+  db_zone_id UUID NULL REFERENCES zones(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  deleted_at TIMESTAMPTZ NULL,
+  CONSTRAINT sites_slug_uniq UNIQUE (slug),
+  CONSTRAINT sites_domain_uniq UNIQUE (primary_domain),
+  CONSTRAINT sites_namespace_uniq UNIQUE (namespace)
+);
+
+CREATE INDEX sites_status_idx ON sites (status);
+CREATE INDEX sites_created_at_idx ON sites (created_at);
+CREATE INDEX sites_slug_idx ON sites (slug);
+CREATE INDEX sites_domain_idx ON sites (primary_domain);
+CREATE INDEX sites_namespace_idx ON sites (namespace);
+
+-- Site limits: resource caps for a site
+CREATE TABLE site_limits (
+  site_id UUID PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+  cpu_millicores INT NOT NULL CHECK (cpu_millicores >= 0),
+  memory_mb INT NOT NULL CHECK (memory_mb >= 0),
+  disk_gb INT NOT NULL CHECK (disk_gb >= 0),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Site deploy: desired image + runtime deployment parameters
+CREATE TABLE site_deploy (
+  site_id UUID PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+  image_repository TEXT NOT NULL,
+  image_tag TEXT NULL,
+  image_digest TEXT NULL,
+  port INT NOT NULL CHECK (port > 0 AND port <= 65535),
+  replicas INT NOT NULL DEFAULT 1 CHECK (replicas >= 0),
+  deploy_status TEXT NOT NULL CHECK (deploy_status IN (
+    'pending', 'deploying', 'ready', 'failed'
+  )),
+  last_error TEXT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX site_deploy_status_idx ON site_deploy (deploy_status);
+
+-- Site TLS: desired TLS config for ingress
+CREATE TABLE site_tls (
+  site_id UUID PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+  enabled BOOLEAN NOT NULL DEFAULT false,
+  issuer TEXT NULL,
+  secret_name TEXT NULL,
+  tls_status TEXT NOT NULL CHECK (tls_status IN (
+    'disabled', 'pending', 'ready', 'failed'
+  )),
+  last_error TEXT NULL,
+  renewed_at TIMESTAMPTZ NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX site_tls_status_idx ON site_tls (tls_status);
+
+-- Zones: shared infrastructure zones (mail/db/dns)
+CREATE TABLE zones (
+  id UUID PRIMARY KEY,
+  kind TEXT NOT NULL CHECK (kind IN ('dns', 'mail', 'db', 'backup')),
+  name TEXT NOT NULL,
+  provider TEXT NULL,
+  external_id TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT zones_kind_name_uniq UNIQUE (kind, name),
+  CONSTRAINT zones_external_id_uniq UNIQUE (external_id)
+);
+
+CREATE INDEX zones_kind_idx ON zones (kind);
+
+-- Site resources: provisioning records for K8s/infra assets
+CREATE TABLE site_resources (
+  id UUID PRIMARY KEY,
+  site_id UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN (
+    'namespace', 'deployment', 'service', 'ingress', 'pvc', 'secret', 'job', 'cronjob'
+  )),
+  status TEXT NOT NULL CHECK (status IN (
+    'pending', 'ready', 'failed', 'deleting'
+  )),
+  external_id TEXT NULL,
+  last_error TEXT NULL,
+  observed_at TIMESTAMPTZ NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX site_resources_site_id_idx ON site_resources (site_id);
+CREATE INDEX site_resources_status_idx ON site_resources (status);
+CREATE INDEX site_resources_kind_idx ON site_resources (kind);
+CREATE INDEX site_resources_external_id_idx ON site_resources (external_id);
+
+-- Site databases: per-site DB provisioning metadata (shared db zone)
+CREATE TABLE site_databases (
+  site_id UUID PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+  engine TEXT NOT NULL CHECK (engine IN ('postgres')),
+  db_name TEXT NOT NULL,
+  db_user TEXT NOT NULL,
+  credential_ref TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN (
+    'pending', 'ready', 'failed', 'deleting'
+  )),
+  last_error TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Mail domains: per-site mail domain mappings (shared mail zone)
+CREATE TABLE mail_domains (
+  id UUID PRIMARY KEY,
+  site_id UUID NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+  domain TEXT NOT NULL,
+  provider TEXT NOT NULL CHECK (provider IN ('mailcow')),
+  external_id TEXT NULL,
+  status TEXT NOT NULL CHECK (status IN (
+    'pending', 'ready', 'failed', 'deleting'
+  )),
+  last_error TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT mail_domains_site_domain_uniq UNIQUE (site_id, domain),
+  CONSTRAINT mail_domains_domain_uniq UNIQUE (domain)
+);
+
+CREATE INDEX mail_domains_site_id_idx ON mail_domains (site_id);
+CREATE INDEX mail_domains_status_idx ON mail_domains (status);
+
+-- Mailboxes: mailbox metadata tracked in the control-plane only
+CREATE TABLE mailboxes (
+  id UUID PRIMARY KEY,
+  mail_domain_id UUID NOT NULL REFERENCES mail_domains(id) ON DELETE CASCADE,
+  local_part TEXT NOT NULL,
+  quota_mb INT NULL CHECK (quota_mb >= 0),
+  external_id TEXT NULL,
+  status TEXT NOT NULL CHECK (status IN (
+    'pending', 'ready', 'failed', 'deleting'
+  )),
+  last_error TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT mailboxes_domain_local_uniq UNIQUE (mail_domain_id, local_part)
+);
+
+CREATE INDEX mailboxes_domain_id_idx ON mailboxes (mail_domain_id);
+CREATE INDEX mailboxes_status_idx ON mailboxes (status);
+
+-- Jobs: async controller tasks
+CREATE TABLE jobs (
+  id UUID PRIMARY KEY,
+  site_id UUID NULL REFERENCES sites(id) ON DELETE SET NULL,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN (
+    'queued', 'running', 'succeeded', 'failed', 'canceled'
+  )),
+  payload JSONB NULL,
+  attempts INT NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+  max_attempts INT NOT NULL DEFAULT 3 CHECK (max_attempts > 0),
+  run_at TIMESTAMPTZ NULL,
+  last_error TEXT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX jobs_status_idx ON jobs (status);
+CREATE INDEX jobs_run_at_idx ON jobs (run_at);
+CREATE INDEX jobs_site_id_idx ON jobs (site_id);
+CREATE INDEX jobs_created_at_idx ON jobs (created_at);
+
+-- Audit logs: immutable control-plane events
+CREATE TABLE audit_logs (
+  id UUID PRIMARY KEY,
+  site_id UUID NULL REFERENCES sites(id) ON DELETE SET NULL,
+  actor_type TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  metadata JSONB NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX audit_logs_site_id_idx ON audit_logs (site_id);
+CREATE INDEX audit_logs_action_idx ON audit_logs (action);
+CREATE INDEX audit_logs_created_at_idx ON audit_logs (created_at);
+```
+
+### Future Additions (Placeholders Only)
+- GitHub deploy fields: `github_owner`, `github_repo`, `github_ref`, `github_app_installation_id`, `github_commit_sha`.
+- Cronjob fields: `schedule`, `command`, `timezone`, `suspend`, `last_run_at`.
+
+## Migration / Reconcile Plan
+
+### Schema migrations (v1 → v2)
+
+**v1 (baseline control-plane schema)**:
+- `sites`, `site_limits`, `site_deploy`, `site_tls`, `zones`, `site_resources`, `site_databases`, `jobs`, `audit_logs`.
+
+**v2 (mail mapping metadata)**:
+1) Add `mail_domains` and `mailboxes` tables.
+2) Backfill:
+   - For each tenant namespace with mail annotations, insert `mail_domains` with `provider='mailcow'`.
+   - Insert `mailboxes` only if mailbox metadata exists (optional future endpoints).
+3) Add indexes/constraints as defined above.
+
+### Phase 0 (Today): Annotations are Source of Truth
+- Controller reads and writes desired state from K8s namespace annotations.
+- No DB integration; only current behavior.
+
+### Phase 1: Dual-Read + Write-Through
+- Introduce DB, but controller keeps annotations as source of truth.
+- On any change, write to annotations and mirror into DB.
+- Reads may consult DB to validate and report drift, but annotations still drive behavior.
+
+### Phase 2: Backfill Job
+- Enumerate tenant namespaces by label (e.g., `managed-by=voxeil` and `slug=<value>`).
+- For each namespace:
+  - Read annotations (domain, tls, image, port, cpu/ram/disk).
+  - Upsert into `sites`, `site_limits`, `site_deploy`, and `site_tls`.
+  - Create `site_resources` records for observed K8s objects.
+  - Record drift or invalid values (e.g., missing domain, non-numeric limits) into `jobs` or `audit_logs`.
+
+### Phase 3: DB Becomes Source of Truth
+- Controller reads DB for desired state.
+- Reconciler ensures K8s resources match DB (create/update/delete).
+- Annotations become derived output and are updated only when DB changes.
+
+### Phase 4: Minimal Annotation Usage (Optional)
+- Reduce annotations to only minimal identifiers (slug/domain) for discovery.
+- Everything else remains DB-driven.
+
+### Conflict Handling
+- If DB says `tls=true` but ingress lacks TLS, reconciler creates/repairs TLS and records a drift entry.
+- If annotations conflict with DB during Phase 1/2, prefer annotation values for live behavior but log a drift item and surface a warning.
+- If a resource exists in K8s but not in DB during Phase 3, treat it as orphaned and either adopt or delete based on policy.
+
+### Rollback Plan
+- If DB is unavailable or inconsistent, controller falls back to annotation reads.
+- Disable DB write-through and continue annotation-only operation.
+- Resume backfill once DB health is restored.
+
+### Minimal Operational Checks
+- DB connectivity and migration version are healthy.
+- Backfill job backlog is empty or within tolerance.
+- Reconciler error rate is low and no sustained drift.
+- Recent audit logs show expected update cadence.
+
+
+----- FILE: docs/runbooks/backup-restore.md -----
 # Backup and Restore
 
 ## Overview
@@ -6236,7 +6809,8 @@ curl -X POST "https://<controller-host>/sites/<slug>/restore/db" \
 - `DB restore not configured.`: ensure `DB_HOST` plus `DB_ADMIN_USER/DB_ADMIN_PASSWORD` (or legacy `DB_USER/DB_PASSWORD`) are set on the controller.
 - `Restore pod failed` or `timed out`: inspect the temp pod in `tenant-<slug>` for logs/events.
 
---- FILE: docs/runbooks/db-zone.md ---
+
+----- FILE: docs/runbooks/db-zone.md -----
 # DB Zone Runbook
 
 ## Connectivity
@@ -6254,7 +6828,8 @@ curl -X POST "https://<controller-host>/sites/<slug>/restore/db" \
 - Database restores use controller `POST /sites/:slug/restore/db` and read backups from
   `/backups/sites/<slug>/db/<timestamp>.sql.gz`.
 
---- FILE: infra/docker/compose/.env.example ---
+
+----- FILE: infra/docker/compose/.env.example -----
 POSTGRES_DB=voxeil
 POSTGRES_USER=voxeil
 POSTGRES_PASSWORD=replace_me
@@ -6276,7 +6851,8 @@ SITE_NODEPORT_END=31999
 KUBECONFIG_HOST_PATH=C:/Users/you/.kube/config
 KUBECONFIG_CONTAINER_PATH=/kube/config
 
---- FILE: infra/docker/compose/docker-compose.yml ---
+
+----- FILE: infra/docker/compose/docker-compose.yml -----
 version: "3.9"
 
 services:
@@ -6353,13 +6929,15 @@ volumes:
 networks:
   voxeil:
 
---- FILE: infra/k8s/backup/backup-namespace.yaml ---
+
+----- FILE: infra/k8s/backup/backup-namespace.yaml -----
 apiVersion: v1
 kind: Namespace
 metadata:
   name: backup-zone
 
---- FILE: infra/k8s/backup/cronjob.yaml ---
+
+----- FILE: infra/k8s/backup/cronjob.yaml -----
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6574,7 +7152,8 @@ spec:
                   mountPath: /app/run.sh
                   subPath: run.sh
 
---- FILE: infra/k8s/backup/rbac.yaml ---
+
+----- FILE: infra/k8s/backup/rbac.yaml -----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -6612,7 +7191,8 @@ roleRef:
   name: backup-runner-role
   apiGroup: rbac.authorization.k8s.io
 
---- FILE: infra/k8s/cert-manager/cert-manager.yaml ---
+
+----- FILE: infra/k8s/cert-manager/cert-manager.yaml -----
 # Copyright 2022 The cert-manager Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12451,7 +13031,8 @@ webhooks:
         namespace: cert-manager
         path: /validate
 
---- FILE: infra/k8s/cert-manager/cluster-issuers.yaml ---
+
+----- FILE: infra/k8s/cert-manager/cluster-issuers.yaml -----
 apiVersion: cert-manager.io/v1
 kind: ClusterIssuer
 metadata:
@@ -12482,7 +13063,8 @@ spec:
           ingress:
             class: traefik
 
---- FILE: infra/k8s/docs/README.md ---
+
+----- FILE: infra/k8s/docs/README.md -----
 # Kubernetes Manifests
 
 ## Apply Platform Manifests
@@ -12521,13 +13103,15 @@ kubectl create namespace tenant-acme
 kubectl -n tenant-acme apply -f infra/k8s/templates/tenant
 ```
 
---- FILE: infra/k8s/infra-db/namespace.yaml ---
+
+----- FILE: infra/k8s/infra-db/namespace.yaml -----
 apiVersion: v1
 kind: Namespace
 metadata:
   name: infra
 
---- FILE: infra/k8s/infra-db/networkpolicy.yaml ---
+
+----- FILE: infra/k8s/infra-db/networkpolicy.yaml -----
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -12557,7 +13141,8 @@ spec:
         - protocol: TCP
           port: 5432
 
---- FILE: infra/k8s/infra-db/postgres-secret.yaml ---
+
+----- FILE: infra/k8s/infra-db/postgres-secret.yaml -----
 apiVersion: v1
 kind: Secret
 metadata:
@@ -12567,7 +13152,8 @@ type: Opaque
 stringData:
   POSTGRES_PASSWORD: "REPLACE_POSTGRES_PASSWORD"
 
---- FILE: infra/k8s/infra-db/postgres-service.yaml ---
+
+----- FILE: infra/k8s/infra-db/postgres-service.yaml -----
 apiVersion: v1
 kind: Service
 metadata:
@@ -12582,7 +13168,8 @@ spec:
       port: 5432
       targetPort: 5432
 
---- FILE: infra/k8s/infra-db/postgres-statefulset.yaml ---
+
+----- FILE: infra/k8s/infra-db/postgres-statefulset.yaml -----
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -12630,7 +13217,8 @@ spec:
           requests:
             storage: 10Gi
 
---- FILE: infra/k8s/platform/controller-deploy.yaml ---
+
+----- FILE: infra/k8s/platform/controller-deploy.yaml -----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12699,7 +13287,8 @@ spec:
             - name: DB_USER_PREFIX
               value: "u_"
 
---- FILE: infra/k8s/platform/controller-nodeport.yaml ---
+
+----- FILE: infra/k8s/platform/controller-nodeport.yaml -----
 apiVersion: v1
 kind: Service
 metadata:
@@ -12715,7 +13304,8 @@ spec:
       targetPort: 8080
       nodePort: REPLACE_CONTROLLER_NODEPORT
 
---- FILE: infra/k8s/platform/controller-svc.yaml ---
+
+----- FILE: infra/k8s/platform/controller-svc.yaml -----
 apiVersion: v1
 kind: Service
 metadata:
@@ -12730,13 +13320,15 @@ spec:
       port: 8080
       targetPort: 8080
 
---- FILE: infra/k8s/platform/namespace.yaml ---
+
+----- FILE: infra/k8s/platform/namespace.yaml -----
 apiVersion: v1
 kind: Namespace
 metadata:
   name: platform
 
---- FILE: infra/k8s/platform/panel-deploy.yaml ---
+
+----- FILE: infra/k8s/platform/panel-deploy.yaml -----
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -12771,7 +13363,8 @@ spec:
             - name: CONTROLLER_BASE_URL
               value: "http://controller.platform.svc.cluster.local:8080"
 
---- FILE: infra/k8s/platform/panel-svc.yaml ---
+
+----- FILE: infra/k8s/platform/panel-svc.yaml -----
 apiVersion: v1
 kind: Service
 metadata:
@@ -12787,7 +13380,8 @@ spec:
       targetPort: 3000
       nodePort: REPLACE_PANEL_NODEPORT
 
---- FILE: infra/k8s/platform/rbac.yaml ---
+
+----- FILE: infra/k8s/platform/rbac.yaml -----
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -12871,7 +13465,8 @@ roleRef:
   apiGroup: rbac.authorization.k8s.io
 
 
---- FILE: infra/k8s/templates/tenant/limitrange.yaml ---
+
+----- FILE: infra/k8s/templates/tenant/limitrange.yaml -----
 apiVersion: v1
 kind: LimitRange
 metadata:
@@ -12893,7 +13488,8 @@ spec:
         cpu: "0"
         memory: 0Mi
 
---- FILE: infra/k8s/templates/tenant/networkpolicy-allow-ingress.yaml ---
+
+----- FILE: infra/k8s/templates/tenant/networkpolicy-allow-ingress.yaml -----
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -12906,7 +13502,8 @@ spec:
   ingress:
     - {} # allow all ingress (NodePort traffic hits pods)
 
---- FILE: infra/k8s/templates/tenant/networkpolicy-deny-all.yaml ---
+
+----- FILE: infra/k8s/templates/tenant/networkpolicy-deny-all.yaml -----
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -12932,7 +13529,8 @@ spec:
         - protocol: TCP
           port: 53
 
---- FILE: infra/k8s/templates/tenant/resourcequota.yaml ---
+
+----- FILE: infra/k8s/templates/tenant/resourcequota.yaml -----
 apiVersion: v1
 kind: ResourceQuota
 metadata:
@@ -12950,7 +13548,8 @@ spec:
     configmaps: "10"
     persistentvolumeclaims: "1"
 
---- FILE: install.sh ---
+
+----- FILE: install.sh -----
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -12996,7 +13595,8 @@ chmod +x installer/installer.sh
 echo "Starting installer..."
 exec sudo bash installer/installer.sh "$@"
 
---- FILE: installer/installer.sh ---
+
+----- FILE: installer/installer.sh -----
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -13188,7 +13788,210 @@ echo "Postgres: postgres.infra.svc.cluster.local:5432 (admin user: postgres)"
 echo "Controller DB creds stored in platform-secrets (DB_ADMIN_PASSWORD)."
 echo ""
 
---- FILE: scripts/backup/run.sh ---
+
+----- FILE: MAILCOW_ZONE_PLAN.md -----
+# Mailcow Zone Plan (Read-Only Design)
+
+This document defines a shared Mailcow zone architecture and the controller-side contracts needed to enable/disable mail per site. No implementation changes are made here.
+
+## A) Architecture
+
+- **Shared mail zone in its own namespace**: Mailcow runs once in the `mail-zone` namespace as a shared service.
+- **Tenant namespaces stay isolated**: Tenant namespaces do not run mail pods. Mail domains/accounts are managed through the Mailcow API only.
+- **DNS requirements (per mail domain)**:
+  - `MX` record pointing to the Mailcow host (priority 10 or preferred).
+  - `A/AAAA` record for `mail.<domain>` (or chosen hostname) pointing to Mailcow ingress IP.
+  - `TXT` SPF: `v=spf1 mx -all` (or `include:` if using upstream relay).
+  - `TXT` DKIM: selector record published from Mailcow (e.g., `default._domainkey.<domain>`).
+  - `TXT` DMARC: `_dmarc.<domain>` with policy (start with `p=quarantine` or `p=none`).
+  - `CNAME` autoconfig: `autoconfig.<domain>` -> `mail.<domain>`.
+  - `CNAME` autodiscover: `autodiscover.<domain>` -> `mail.<domain>`.
+- **Network/Ingress**:
+  - SMTP: `25`, SMTPS `465`, Submission `587`.
+  - IMAP: `143` and IMAPS `993`.
+  - POP3: `110` and POP3S `995` (optional if enabled).
+  - HTTP/HTTPS: `80/443` for Mailcow UI/API and `autoconfig`/`autodiscover` endpoints.
+  - **k3s/Traefik**: some of these are TCP entrypoints, not HTTP; plan explicit TCP entrypoints for 25/465/587/143/993/110/995.
+
+## B) Integration contracts (controller side)
+
+No implementation yet; define controller endpoints only.
+
+**Endpoints**:
+- `POST /sites/:slug/mail/enable` `{}`
+- `POST /sites/:slug/mail/disable` `{}`
+
+**Optional future**:
+- `POST /sites/:slug/mail/mailboxes` `{ localPart, password, quotaMb }`
+- `GET /sites/:slug/mail/status`
+
+**Required controller env vars**:
+- `MAILCOW_API_URL` (e.g., `https://mail.example.com/api/v1`)
+- `MAILCOW_API_KEY` (admin or restricted API key)
+- `MAILCOW_HOSTNAME` (optional; explicit hostname for UI links/records)
+
+**Secrets handling**:
+- Store secrets in a Kubernetes `Secret` under the platform namespace.
+- Controller reads via env vars; do not place secrets in config maps or code.
+
+## C) Namespace-annotation "state" keys (temporary DB)
+
+Use existing annotation prefix convention (e.g., `voxeil.io` or similar):
+- `<prefix>/mail-enabled`
+- `<prefix>/mail-provider`
+- `<prefix>/mail-domain`
+- `<prefix>/mail-status`
+- `<prefix>/mail-last-error`
+
+## D) Infra plan (later implementation steps)
+
+- **Manifests location**: `infra/k8s/mailcow/` (deployments, services, ingress/traefik TCP, secrets references).
+- **Installer**: add an optional "install mail zone" step to provision Mailcow and required ingress/TCP entrypoints.
+- **RBAC**: none required for mail operations; controller uses external Mailcow API only.
+- **UI exposure**: Mailcow admin UI should be admin-only; restrict via ingress auth or IP allowlist.
+
+## E) Safety / operational notes
+
+- **Rate limits & reputation**: enforce sensible sending limits; protect shared IP reputation.
+- **rDNS & deliverability**: ensure rDNS aligns with `mail.<domain>`; misalignment hurts deliverability.
+- **Port 25 blocks**: many VPS providers block outbound 25; plan for relay or allow-listing.
+- **Backups**: include mailbox, DB, and config backups in a later phase.
+
+
+----- FILE: README.md -----
+## Voxeil Panel (MVP)
+
+Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal UI shipped in this repo.
+
+### Components
+- `apps/controller`: Fastify API that owns all Kubernetes access (namespaces, quotas, PVCs, network policies).
+- `apps/panel`: Next.js UI that talks only to the controller service inside the cluster.
+- `infra/k8s/platform`: k3s-compatible manifests with placeholders (`REPLACE_*`) for images and NodePorts.
+- `infra/k8s/templates/tenant`: Baseline ResourceQuota, LimitRange, and default-deny NetworkPolicy used for every tenant namespace.
+
+### Data model note
+- Control-plane DB: one shared PostgreSQL instance for controller state in `db-zone`.
+- Tenant site DBs: per-site database + role/user inside that same shared PostgreSQL cluster.
+- Shared services run in their own namespaces (`db-zone`, `mail-zone`, `backup-zone`); tenant namespaces only host site workloads.
+
+### Install
+1) Build/push your own images (no hardcoded registry):
+   - Controller: `apps/controller`
+   - Panel: `apps/panel`
+   - Maintenance page: `voxeil-maintenance` (served from GHCR)
+2) One-liner install (no git clone required):
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash
+   ```
+   - Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
+   - Provide GHCR credentials via env vars before running:
+     - `GHCR_USERNAME`
+     - `GHCR_TOKEN` (PAT with `read:packages`)
+     - `GHCR_EMAIL` (optional)
+   The installer will ask for:
+   - Panel NodePort
+   - Optional controller NodePort (admin-only)
+   - Site NodePort range
+   - IP allowlist (used with UFW if available)
+   - Controller + panel image references
+3) Outputs:
+   - Panel admin password (stored in `platform-secrets`)
+   - Controller API key (stored in `platform-secrets`)
+   - Panel URL: `http://<VPS_IP>:<PANEL_NODEPORT>`
+  - Note: `SITE_NODEPORT_START/END` are reserved for Phase 3 and currently unused by the controller.
+
+### Phase 2 publish
+- Creating a site provisions the namespace and immediately publishes a shared maintenance page.
+- Deployments happen only via `POST /sites/:slug/deploy` (manual).
+- Domains and subdomains are treated as separate sites (separate namespaces).
+
+### Phase 3 TLS (cert-manager)
+- cert-manager is cluster-wide and always installed by the installer.
+- TLS is site-based and opt-in via `PATCH /sites/:slug/tls`.
+- `LETSENCRYPT_EMAIL` is required only when enabling TLS for a site.
+- TLS secret naming: `tls-<slug>` (per-site, deterministic).
+
+### Security baseline
+- Controller enforces `X-API-Key` on all routes except `/health`.
+- Panel never talks directly to the Kubernetes API; it proxies via the controller service.
+- Tenants get a dedicated namespace with ResourceQuota, LimitRange, and default-deny NetworkPolicy (DNS egress only).
+- Controller creates tenant Deployments, Services, and Ingress on site creation.
+- GHCR images are pulled via the `ghcr-pull-secret` copied into each tenant namespace.
+- TLS is optional and site-based; HTTP ingress remains the default.
+
+### Controller API
+All routes require `X-API-Key` (except `/health`). The UI uses purge-only deletion via `POST /sites/:slug/purge`.
+Disable endpoints are reversible and do not delete data. Purge endpoints delete data/resources and require `{ "confirm": "DELETE" }`.
+
+Confirm payload example:
+- `{ "confirm": "DELETE" }`
+
+Sites:
+- `POST /sites`
+  - Body: `{ "domain": "app.example.com", "cpu": 1, "ramGi": 2, "diskGi": 10, "tlsEnabled": false, "tlsIssuer": "letsencrypt-prod" }`
+  - Response: `{ "domain": "app.example.com", "slug": "app-example-com", "namespace": "tenant-app-example-com", "limits": { "cpu": 1, "ramGi": 2, "diskGi": 10, "pods": 1 } }`
+- `GET /sites`
+  - Response: `[ { "slug": "app-example-com", "namespace": "tenant-app-example-com", "ready": true, "domain": "app.example.com", "image": "...", "containerPort": 3000, "cpu": 1, "ramGi": 2, "diskGi": 10, "tlsEnabled": false, "tlsIssuer": "letsencrypt-prod", "dbEnabled": false, "mailEnabled": false, "backupEnabled": true, "dbName": "db_app-example-com", "dbUser": "u_app-example-com", "dbSecret": "site-db" } ]`
+- `POST /sites/:slug/purge` (irreversible)
+  - Body: `{ "confirm": "DELETE" }`
+  - Deletes tenant namespace, drops db/user, deletes mail domain + mailboxes, and removes `/backups/sites/<slug>`.
+  - Response: `{ "ok": true, "slug": "app-example-com", "purged": true }`
+
+TLS (site-based, default OFF):
+- `PATCH /sites/:slug/tls`
+  - Body: `{ "enabled": true, "issuer": "letsencrypt-prod" }`
+  - Body (disable + cleanup): `{ "enabled": false, "cleanupSecret": true }`
+  - Response: `{ "ok": true, "slug": "app-example-com", "tlsEnabled": false, "issuer": "letsencrypt-prod" }`
+
+DB feature (shared Postgres zone, per-site db/user):
+- `POST /sites/:slug/db/enable` (idempotent)
+  - Response: `{ "ok": true, "slug": "app-example-com", "dbEnabled": true, "dbName": "db_app-example-com", "secretName": "site-db" }`
+- `POST /sites/:slug/db/disable` (reversible)
+  - Deletes the tenant `site-db` Secret only.
+  - Response: `{ "ok": true, "slug": "app-example-com", "dbEnabled": false }`
+- `POST /sites/:slug/db/purge` (irreversible)
+  - Body: `{ "confirm": "DELETE" }`
+  - Drops `db_<slug>` and role `u_<slug>`, deletes `site-db` Secret.
+  - Response: `{ "ok": true, "slug": "app-example-com", "dbEnabled": false }`
+
+Mail feature (shared Mailcow zone):
+- `POST /sites/:slug/mail/enable` (idempotent)
+  - Body: `{ "domain": "example.com" }`
+  - Response: `{ "ok": true, "slug": "app-example-com", "domain": "example.com", "mailEnabled": true, "provider": "mailcow" }`
+- `POST /sites/:slug/mail/disable` (reversible)
+  - Disables mail for the site without deleting domains or mailboxes.
+  - Response: `{ "ok": true, "slug": "app-example-com", "domain": "example.com", "mailEnabled": false, "provider": "mailcow" }`
+- `POST /sites/:slug/mail/purge` (irreversible)
+  - Body: `{ "confirm": "DELETE" }`
+  - Deletes all mailboxes/aliases and removes the domain.
+  - Response: `{ "ok": true, "slug": "app-example-com", "domain": "example.com", "mailEnabled": false, "purged": true, "provider": "mailcow" }`
+- `POST /sites/:slug/mail/mailboxes`
+  - Body: `{ "localPart": "hello", "password": "secret", "quotaMb": 512 }`
+  - Response: `{ "ok": true, "slug": "app-example-com", "address": "hello@example.com" }`
+- `DELETE /sites/:slug/mail/mailboxes/:address`
+  - Response: `{ "ok": true, "slug": "app-example-com", "address": "hello@example.com" }`
+Backup feature (shared backup zone):
+- `POST /sites/:slug/backup/enable` (idempotent)
+  - Response: `{ "ok": true, "slug": "app-example-com", "backupEnabled": true }`
+- `POST /sites/:slug/backup/disable` (reversible)
+  - Response: `{ "ok": true, "slug": "app-example-com", "backupEnabled": false }`
+- `POST /sites/:slug/backup/purge` (irreversible)
+  - Body: `{ "confirm": "DELETE" }`
+  - Deletes `/backups/sites/<slug>` if present.
+  - Response: `{ "ok": true, "slug": "app-example-com", "backupEnabled": false, "purged": true }`
+
+Internal/admin endpoints (UI does not use):
+- `DELETE /sites/:slug` (soft delete)
+  - Deletes tenant namespace only. DB, mail, and backups are preserved.
+  - Response: `{ "ok": true, "slug": "app-example-com" }`
+
+### Future TODOs
+- Add HTTPS/ingress once domain support is enabled.
+- Extend quota/limit presets per plan.
+- Add per-tenant API keys and audit logging.
+
+
+----- FILE: scripts/backup/run.sh -----
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -13338,3 +14141,8 @@ EOF
   find "${files_dir}" -type f -name "*.tar.zst" -mtime +"${RETENTION_FILES}" -delete || true
   find "${db_dir}" -type f -name "*.sql.gz" -mtime +"${RETENTION_DB}" -delete || true
 done
+
+
+Included files: 82
+Skipped files: 5690
+Top skipped folders: apps (5690)

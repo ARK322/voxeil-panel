@@ -137,3 +137,28 @@ export async function ensureDatabaseAndRole(options: EnsureDbOptions): Promise<{
     await client.end();
   }
 }
+
+export async function dropDatabaseAndRole(options: {
+  dbName: string;
+  dbUser: string;
+}): Promise<void> {
+  const config = requireAdminConfig();
+  const client = new Client({
+    host: config.host,
+    port: config.port,
+    user: config.user,
+    password: config.password,
+    database: "postgres"
+  });
+
+  await client.connect();
+  try {
+    await client.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1", [
+      options.dbName
+    ]);
+    await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(options.dbName)}`);
+    await client.query(`DROP ROLE IF EXISTS ${quoteIdent(options.dbUser)}`);
+  } finally {
+    await client.end();
+  }
+}

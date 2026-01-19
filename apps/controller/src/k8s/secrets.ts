@@ -90,3 +90,13 @@ export async function upsertSecret(secret: V1Secret): Promise<void> {
     );
   }
 }
+
+export async function deleteSecret(namespace: string, name: string): Promise<void> {
+  const { core } = getClients();
+  try {
+    await core.deleteNamespacedSecret(name, namespace);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) return;
+    throw error;
+  }
+}

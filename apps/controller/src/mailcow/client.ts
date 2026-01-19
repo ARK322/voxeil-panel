@@ -13,6 +13,18 @@ type MailcowResult = {
   message?: string;
 };
 
+type MailcowMailbox = {
+  username?: string;
+  address?: string;
+  domain?: string;
+  local_part?: string;
+};
+
+type MailcowAlias = {
+  address?: string;
+  alias?: string;
+};
+
 const DEFAULT_TIMEOUT_MS = 15000;
 
 function resolveMailcowConfig(): MailcowConfig {
@@ -50,6 +62,16 @@ function toErrorMessage(result: unknown): string | undefined {
 function isExistsMessage(message?: string): boolean {
   if (!message) return false;
   return message.toLowerCase().includes("exist");
+}
+
+function isMissingMessage(message?: string): boolean {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("not exist") ||
+    normalized.includes("does not exist") ||
+    normalized.includes("not found")
+  );
 }
 
 async function mailcowRequest<T>(
@@ -130,8 +152,27 @@ function buildDomainPayload(domain: string) {
   };
 }
 
+function normalizeDomain(domain: string): string {
+  return domain.trim().toLowerCase().replace(/\.$/, "");
+}
+
+function extractMailboxAddress(entry: MailcowMailbox): string {
+  if (entry.username) return String(entry.username).trim().toLowerCase();
+  if (entry.address) return String(entry.address).trim().toLowerCase();
+  const local = entry.local_part ? String(entry.local_part).trim() : "";
+  const domain = entry.domain ? String(entry.domain).trim() : "";
+  if (local && domain) return `${local}@${domain}`.toLowerCase();
+  return "";
+}
+
+function extractAliasAddress(entry: MailcowAlias): string {
+  if (entry.address) return String(entry.address).trim().toLowerCase();
+  if (entry.alias) return String(entry.alias).trim().toLowerCase();
+  return "";
+}
+
 export async function ensureMailcowDomain(domain: string): Promise<void> {
-  const normalized = domain.trim().toLowerCase();
+  const normalized = normalizeDomain(domain);
   if (!normalized) {
     throw new Error("Domain is required.");
   }
@@ -146,5 +187,137 @@ export async function ensureMailcowDomain(domain: string): Promise<void> {
   const message = toErrorMessage(result);
   if (message && !isExistsMessage(message)) {
     throw new Error(message);
+  }
+}
+
+export async function setMailcowDomainActive(domain: string, active: boolean): Promise<void> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) {
+    throw new Error("Domain is required.");
+  }
+  const result = await mailcowRequest<unknown>("/api/v1/edit/domain", {
+    method: "POST",
+    body: JSON.stringify({
+      items: [normalized],
+      attr: { active: active ? 1 : 0 }
+    })
+  });
+  const message = toErrorMessage(result);
+  if (message && !isExistsMessage(message) && !isMissingMessage(message)) {
+    throw new Error(message);
+  }
+}
+
+export async function listMailcowMailboxes(domain: string): Promise<string[]> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return [];
+  const result = await mailcowRequest<unknown>("/api/v1/get/mailbox/all", { method: "GET" });
+  if (!Array.isArray(result)) return [];
+  return result
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return "";
+      return extractMailboxAddress(entry as MailcowMailbox);
+    })
+    .filter((address) => address.endsWith(`@${normalized}`));
+}
+
+export async function listMailcowAliases(domain: string): Promise<string[]> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return [];
+  const result = await mailcowRequest<unknown>("/api/v1/get/alias/all", { method: "GET" });
+  if (!Array.isArray(result)) return [];
+  return result
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return "";
+      return extractAliasAddress(entry as MailcowAlias);
+    })
+    .filter((address) => address.endsWith(`@${normalized}`));
+}
+
+export async function createMailcowMailbox(options: {
+  domain: string;
+  localPart: string;
+  password: string;
+  quotaMb?: number;
+}): Promise<string> {
+  const domain = normalizeDomain(options.domain);
+  const localPart = options.localPart.trim();
+  if (!domain) throw new Error("Domain is required.");
+  if (!localPart) throw new Error("localPart is required.");
+  if (!options.password) throw new Error("password is required.");
+  const address = `${localPart}@${domain}`.toLowerCase();
+  const result = await mailcowRequest<unknown>("/api/v1/add/mailbox", {
+    method: "POST",
+    body: JSON.stringify({
+      local_part: localPart,
+      domain,
+      name: localPart,
+      password: options.password,
+      password2: options.password,
+      quota: options.quotaMb ?? 0,
+      active: 1
+    })
+  });
+  const message = toErrorMessage(result);
+  if (message && !isExistsMessage(message)) {
+    throw new Error(message);
+  }
+  return address;
+}
+
+export async function deleteMailcowMailbox(address: string): Promise<void> {
+  const normalized = address.trim().toLowerCase();
+  if (!normalized) return;
+  try {
+    const result = await mailcowRequest<unknown>("/api/v1/delete/mailbox", {
+      method: "POST",
+      body: JSON.stringify([normalized])
+    });
+    const message = toErrorMessage(result);
+    if (message && !isMissingMessage(message)) {
+      throw new Error(message);
+    }
+  } catch (error: any) {
+    const message = String(error?.message ?? "");
+    if (isMissingMessage(message)) return;
+    throw error;
+  }
+}
+
+export async function deleteMailcowAliases(addresses: string[]): Promise<void> {
+  const items = addresses.map((address) => address.trim().toLowerCase()).filter(Boolean);
+  if (items.length === 0) return;
+  try {
+    const result = await mailcowRequest<unknown>("/api/v1/delete/alias", {
+      method: "POST",
+      body: JSON.stringify(items)
+    });
+    const message = toErrorMessage(result);
+    if (message && !isMissingMessage(message)) {
+      throw new Error(message);
+    }
+  } catch (error: any) {
+    const message = String(error?.message ?? "");
+    if (isMissingMessage(message)) return;
+    throw error;
+  }
+}
+
+export async function deleteMailcowDomain(domain: string): Promise<void> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) return;
+  try {
+    const result = await mailcowRequest<unknown>("/api/v1/delete/domain", {
+      method: "POST",
+      body: JSON.stringify([normalized])
+    });
+    const message = toErrorMessage(result);
+    if (message && !isMissingMessage(message)) {
+      throw new Error(message);
+    }
+  } catch (error: any) {
+    const message = String(error?.message ?? "");
+    if (isMissingMessage(message)) return;
+    throw error;
   }
 }
