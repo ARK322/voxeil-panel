@@ -11,6 +11,7 @@ type MailcowResult = {
   type?: string;
   msg?: string;
   message?: string;
+  active?: number | string;
 };
 
 type MailcowMailbox = {
@@ -52,6 +53,10 @@ function toErrorMessage(result: unknown): string | undefined {
     .map((entry) => {
       if (!entry || typeof entry !== "object") return undefined;
       const candidate = entry as MailcowResult;
+      const resultType = String(candidate.type ?? "").trim().toLowerCase();
+      if (resultType && resultType !== "error" && resultType !== "danger" && resultType !== "warning") {
+        return undefined;
+      }
       return String(candidate.msg ?? candidate.message ?? "").trim();
     })
     .filter((value): value is string => Boolean(value));
@@ -72,6 +77,16 @@ function isMissingMessage(message?: string): boolean {
     normalized.includes("does not exist") ||
     normalized.includes("not found")
   );
+}
+
+function toHttpErrorMessage(error: unknown, fallback: string): string {
+  if (!error) return fallback;
+  if (typeof error === "string") return error;
+  if (typeof error === "object" && "message" in (error as { message?: string })) {
+    const message = String((error as { message?: string }).message ?? "").trim();
+    if (message) return message;
+  }
+  return fallback;
 }
 
 async function mailcowRequest<T>(
@@ -99,14 +114,17 @@ async function mailcowRequest<T>(
     const data = text ? (JSON.parse(text) as T) : (undefined as T);
     if (!response.ok) {
       const message = toErrorMessage(data) ?? `Mailcow request failed (${response.status}).`;
-      throw new Error(message);
+      throw new HttpError(502, message);
     }
     return data;
   } catch (error: any) {
     if (error?.name === "AbortError") {
-      throw new Error("Mailcow request timed out.");
+      throw new HttpError(504, "Mailcow request timed out.");
     }
-    throw error;
+    if (error instanceof HttpError) {
+      throw error;
+    }
+    throw new HttpError(502, toHttpErrorMessage(error, "Mailcow request failed."));
   } finally {
     clearTimeout(timeout);
     if (!config.verifyTls) {
@@ -121,7 +139,9 @@ async function mailcowRequest<T>(
 
 async function listMailcowDomains(): Promise<string[]> {
   const result = await mailcowRequest<unknown>("/api/v1/get/domain/all", { method: "GET" });
-  if (!Array.isArray(result)) return [];
+  if (!Array.isArray(result)) {
+    throw new HttpError(502, "Mailcow returned an unexpected domain list.");
+  }
   return result
     .map((entry) => {
       if (typeof entry === "string") return entry.trim().toLowerCase();
@@ -174,7 +194,7 @@ function extractAliasAddress(entry: MailcowAlias): string {
 export async function ensureMailcowDomain(domain: string): Promise<void> {
   const normalized = normalizeDomain(domain);
   if (!normalized) {
-    throw new Error("Domain is required.");
+    throw new HttpError(400, "Domain is required.");
   }
   const existing = await listMailcowDomains();
   if (existing.includes(normalized)) {
@@ -186,14 +206,14 @@ export async function ensureMailcowDomain(domain: string): Promise<void> {
   });
   const message = toErrorMessage(result);
   if (message && !isExistsMessage(message)) {
-    throw new Error(message);
+    throw new HttpError(502, message);
   }
 }
 
 export async function setMailcowDomainActive(domain: string, active: boolean): Promise<void> {
   const normalized = normalizeDomain(domain);
   if (!normalized) {
-    throw new Error("Domain is required.");
+    throw new HttpError(400, "Domain is required.");
   }
   const result = await mailcowRequest<unknown>("/api/v1/edit/domain", {
     method: "POST",
@@ -203,16 +223,20 @@ export async function setMailcowDomainActive(domain: string, active: boolean): P
     })
   });
   const message = toErrorMessage(result);
-  if (message && !isExistsMessage(message) && !isMissingMessage(message)) {
-    throw new Error(message);
+  if (message && !isExistsMessage(message)) {
+    throw new HttpError(502, message);
   }
 }
 
 export async function listMailcowMailboxes(domain: string): Promise<string[]> {
   const normalized = normalizeDomain(domain);
-  if (!normalized) return [];
+  if (!normalized) {
+    throw new HttpError(400, "Domain is required.");
+  }
   const result = await mailcowRequest<unknown>("/api/v1/get/mailbox/all", { method: "GET" });
-  if (!Array.isArray(result)) return [];
+  if (!Array.isArray(result)) {
+    throw new HttpError(502, "Mailcow returned an unexpected mailbox list.");
+  }
   return result
     .map((entry) => {
       if (!entry || typeof entry !== "object") return "";
@@ -223,15 +247,54 @@ export async function listMailcowMailboxes(domain: string): Promise<string[]> {
 
 export async function listMailcowAliases(domain: string): Promise<string[]> {
   const normalized = normalizeDomain(domain);
-  if (!normalized) return [];
+  if (!normalized) {
+    throw new HttpError(400, "Domain is required.");
+  }
   const result = await mailcowRequest<unknown>("/api/v1/get/alias/all", { method: "GET" });
-  if (!Array.isArray(result)) return [];
+  if (!Array.isArray(result)) {
+    throw new HttpError(502, "Mailcow returned an unexpected alias list.");
+  }
   return result
     .map((entry) => {
       if (!entry || typeof entry !== "object") return "";
       return extractAliasAddress(entry as MailcowAlias);
     })
     .filter((address) => address.endsWith(`@${normalized}`));
+}
+
+export async function createMailcowAlias(options: {
+  sourceAddress: string;
+  destinationAddress: string;
+  active?: boolean;
+}): Promise<string> {
+  const sourceAddress = options.sourceAddress.trim().toLowerCase();
+  const destinationAddress = options.destinationAddress.trim();
+  if (!sourceAddress) {
+    throw new HttpError(400, "sourceAddress is required.");
+  }
+  if (!destinationAddress) {
+    throw new HttpError(400, "destinationAddress is required.");
+  }
+  if (!sourceAddress.includes("@")) {
+    throw new HttpError(400, "sourceAddress must be a valid email address.");
+  }
+  const result = await mailcowRequest<unknown>("/api/v1/add/alias", {
+    method: "POST",
+    body: JSON.stringify({
+      address: sourceAddress,
+      goto: destinationAddress,
+      active: options.active === false ? 0 : 1
+    })
+  });
+  const message = toErrorMessage(result);
+  if (message && !isExistsMessage(message)) {
+    throw new HttpError(502, message);
+  }
+  return sourceAddress;
+}
+
+export async function deleteMailcowAlias(address: string): Promise<void> {
+  await deleteMailcowAliases([address]);
 }
 
 export async function createMailcowMailbox(options: {
@@ -242,9 +305,9 @@ export async function createMailcowMailbox(options: {
 }): Promise<string> {
   const domain = normalizeDomain(options.domain);
   const localPart = options.localPart.trim();
-  if (!domain) throw new Error("Domain is required.");
-  if (!localPart) throw new Error("localPart is required.");
-  if (!options.password) throw new Error("password is required.");
+  if (!domain) throw new HttpError(400, "Domain is required.");
+  if (!localPart) throw new HttpError(400, "localPart is required.");
+  if (!options.password) throw new HttpError(400, "password is required.");
   const address = `${localPart}@${domain}`.toLowerCase();
   const result = await mailcowRequest<unknown>("/api/v1/add/mailbox", {
     method: "POST",
@@ -260,7 +323,7 @@ export async function createMailcowMailbox(options: {
   });
   const message = toErrorMessage(result);
   if (message && !isExistsMessage(message)) {
-    throw new Error(message);
+    throw new HttpError(502, message);
   }
   return address;
 }
@@ -275,12 +338,15 @@ export async function deleteMailcowMailbox(address: string): Promise<void> {
     });
     const message = toErrorMessage(result);
     if (message && !isMissingMessage(message)) {
-      throw new Error(message);
+      throw new HttpError(502, message);
     }
   } catch (error: any) {
     const message = String(error?.message ?? "");
     if (isMissingMessage(message)) return;
-    throw error;
+    if (error instanceof HttpError) {
+      throw error;
+    }
+    throw new HttpError(502, toHttpErrorMessage(error, "Mailcow delete mailbox failed."));
   }
 }
 
@@ -294,12 +360,15 @@ export async function deleteMailcowAliases(addresses: string[]): Promise<void> {
     });
     const message = toErrorMessage(result);
     if (message && !isMissingMessage(message)) {
-      throw new Error(message);
+      throw new HttpError(502, message);
     }
   } catch (error: any) {
     const message = String(error?.message ?? "");
     if (isMissingMessage(message)) return;
-    throw error;
+    if (error instanceof HttpError) {
+      throw error;
+    }
+    throw new HttpError(502, toHttpErrorMessage(error, "Mailcow delete alias failed."));
   }
 }
 
@@ -313,11 +382,81 @@ export async function deleteMailcowDomain(domain: string): Promise<void> {
     });
     const message = toErrorMessage(result);
     if (message && !isMissingMessage(message)) {
-      throw new Error(message);
+      throw new HttpError(502, message);
     }
   } catch (error: any) {
     const message = String(error?.message ?? "");
     if (isMissingMessage(message)) return;
-    throw error;
+    if (error instanceof HttpError) {
+      throw error;
+    }
+    throw new HttpError(502, toHttpErrorMessage(error, "Mailcow delete domain failed."));
   }
 }
+
+export async function getMailcowDomainActive(domain: string): Promise<boolean> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) {
+    throw new HttpError(400, "Domain is required.");
+  }
+  const result = await mailcowRequest<unknown>(`/api/v1/get/domain/${normalized}`, {
+    method: "GET"
+  });
+  const entry = Array.isArray(result) ? result[0] : result;
+  if (!entry || typeof entry !== "object") {
+    throw new HttpError(502, "Mailcow returned an unexpected domain response.");
+  }
+  const activeValue = (entry as MailcowResult).active;
+  if (activeValue === undefined || activeValue === null) {
+    throw new HttpError(502, "Mailcow domain status is unavailable.");
+  }
+  if (typeof activeValue === "number") return activeValue === 1;
+  return String(activeValue).trim() === "1";
+}
+
+export async function purgeMailcowDomain(domain: string): Promise<void> {
+  const normalized = normalizeDomain(domain);
+  if (!normalized) {
+    throw new HttpError(400, "Domain is required.");
+  }
+  const errors: string[] = [];
+  try {
+    const [mailboxes, aliases] = await Promise.all([
+      listMailcowMailboxes(normalized),
+      listMailcowAliases(normalized)
+    ]);
+    try {
+      await deleteMailcowAliases(aliases);
+    } catch (error) {
+      errors.push(toHttpErrorMessage(error, "Mailcow alias cleanup failed."));
+    }
+    const mailboxResults = await Promise.allSettled(
+      mailboxes.map(async (address) => deleteMailcowMailbox(address))
+    );
+    for (const result of mailboxResults) {
+      if (result.status === "rejected") {
+        errors.push(toHttpErrorMessage(result.reason, "Mailcow mailbox cleanup failed."));
+      }
+    }
+    try {
+      await deleteMailcowDomain(normalized);
+    } catch (error) {
+      errors.push(toHttpErrorMessage(error, "Mailcow domain cleanup failed."));
+    }
+  } catch (error) {
+    errors.push(toHttpErrorMessage(error, "Mailcow purge failed."));
+  }
+  if (errors.length > 0) {
+    throw new HttpError(502, errors.join(" "));
+  }
+}
+
+export const ensureDomain = ensureMailcowDomain;
+export const setDomainActive = setMailcowDomainActive;
+export const listMailboxes = listMailcowMailboxes;
+export const createMailbox = createMailcowMailbox;
+export const deleteMailbox = deleteMailcowMailbox;
+export const listAliases = listMailcowAliases;
+export const createAlias = createMailcowAlias;
+export const deleteAlias = deleteMailcowAlias;
+export const purgeDomain = purgeMailcowDomain;

@@ -11,7 +11,7 @@
 - Control-plane DB is one shared PostgreSQL instance in the `db-zone` namespace.
 - Tenant site DBs live inside that shared PostgreSQL cluster (`db-zone`), with a per-site database and role/user.
 - Mail zone is shared in the `mail-zone` namespace, with per-site mail resources tracked in control-plane metadata.
-- Backup runner is shared in the `backup-zone` namespace and stores only backup metadata in the control-plane DB.
+- Backup runner is shared in the `backup` namespace and stores only backup metadata in the control-plane DB.
 - No per-site PostgreSQL pods in MVP.
 
 ## PostgreSQL Schema (DDL-Style Proposal)

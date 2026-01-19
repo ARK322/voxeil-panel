@@ -35,6 +35,7 @@ CONTROLLER_NODEPORT="${CONTROLLER_NODEPORT:-30081}"
 SITE_PORT_START="${SITE_PORT_START:-31000}"
 SITE_PORT_END="${SITE_PORT_END:-31999}"
 ALLOW_IP="${ALLOW_IP:-}"
+INSTALL_MAILCOW="${INSTALL_MAILCOW:-N}"
 CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-}"
 PANEL_IMAGE="${PANEL_IMAGE:-}"
 if [[ -z "${CONTROLLER_IMAGE}" ]]; then echo "CONTROLLER_IMAGE env var is required."; exit 1; fi
@@ -42,7 +43,18 @@ if [[ -z "${PANEL_IMAGE}" ]]; then echo "PANEL_IMAGE env var is required."; exit
 
 CONTROLLER_API_KEY="$(rand)"
 PANEL_ADMIN_PASSWORD="$(rand)"
-POSTGRES_PASSWORD="$(rand)"
+POSTGRES_ADMIN_PASSWORD="${POSTGRES_ADMIN_PASSWORD:-${POSTGRES_PASSWORD:-$(rand)}}"
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-${POSTGRES_ADMIN_PASSWORD}}"
+POSTGRES_HOST="${POSTGRES_HOST:-postgres.infra.svc.cluster.local}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+POSTGRES_ADMIN_USER="${POSTGRES_ADMIN_USER:-postgres}"
+POSTGRES_DB="${POSTGRES_DB:-postgres}"
+MAILCOW_API_URL="${MAILCOW_API_URL:-http://mailcow-api.mail-zone.svc.cluster.local}"
+MAILCOW_API_KEY="${MAILCOW_API_KEY:-$(rand)}"
+MAILCOW_DB_NAME="${MAILCOW_DB_NAME:-mailcow}"
+MAILCOW_DB_USER="${MAILCOW_DB_USER:-mailcow}"
+MAILCOW_DB_PASSWORD="${MAILCOW_DB_PASSWORD:-$(rand)}"
+MAILCOW_DB_ROOT_PASSWORD="${MAILCOW_DB_ROOT_PASSWORD:-$(rand)}"
 
 echo ""
 echo "Config:"
@@ -50,8 +62,10 @@ echo "  Panel NodePort: ${PANEL_NODEPORT}"
 echo "  Controller NodePort (optional): ${CONTROLLER_NODEPORT} (enabled? ${EXPOSE_CONTROLLER})"
 echo "  Site NodePort range: ${SITE_PORT_START}-${SITE_PORT_END}"
 echo "  Allowlist: ${ALLOW_IP:-<none>}"
+echo "  Install mailcow zone: ${INSTALL_MAILCOW}"
 echo "  GHCR Username: ${GHCR_USERNAME}"
 echo "  GHCR Email: ${GHCR_EMAIL:-<none>}"
+echo "  Mailcow API URL: ${MAILCOW_API_URL}"
 if [[ -n "${LETSENCRYPT_EMAIL}" ]]; then
   echo "  Let's Encrypt Email: ${LETSENCRYPT_EMAIL}"
 else
@@ -84,6 +98,9 @@ if [[ ! -d infra/k8s/platform ]]; then
   exit 1
 fi
 cp -r infra/k8s/platform "${RENDER_DIR}/platform"
+if [[ -d infra/k8s/mailcow ]]; then
+  cp -r infra/k8s/mailcow "${RENDER_DIR}/mailcow"
+fi
 if [[ -d infra/k8s/infra-db ]]; then
   cp -r infra/k8s/infra-db "${RENDER_DIR}/infra-db"
 fi
@@ -104,8 +121,30 @@ stringData:
   PANEL_ADMIN_PASSWORD: "${PANEL_ADMIN_PASSWORD}"
   SITE_NODEPORT_START: "${SITE_PORT_START}"
   SITE_NODEPORT_END: "${SITE_PORT_END}"
-  DB_ADMIN_PASSWORD: "${POSTGRES_PASSWORD}"
+  MAILCOW_API_URL: "${MAILCOW_API_URL}"
+  MAILCOW_API_KEY: "${MAILCOW_API_KEY}"
+  POSTGRES_HOST: "${POSTGRES_HOST}"
+  POSTGRES_PORT: "${POSTGRES_PORT}"
+  POSTGRES_ADMIN_USER: "${POSTGRES_ADMIN_USER}"
+  POSTGRES_ADMIN_PASSWORD: "${POSTGRES_ADMIN_PASSWORD}"
+  POSTGRES_DB: "${POSTGRES_DB}"
 EOF
+
+if [[ -d "${RENDER_DIR}/mailcow" ]]; then
+  cat > "${RENDER_DIR}/mailcow/mailcow-secrets.yaml" <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mailcow-secrets
+  namespace: mail-zone
+type: Opaque
+stringData:
+  MYSQL_DATABASE: "${MAILCOW_DB_NAME}"
+  MYSQL_USER: "${MAILCOW_DB_USER}"
+  MYSQL_PASSWORD: "${MAILCOW_DB_PASSWORD}"
+  MYSQL_ROOT_PASSWORD: "${MAILCOW_DB_ROOT_PASSWORD}"
+EOF
+fi
 
 echo "Templating manifests..."
 sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE}|g" "${RENDER_DIR}/platform/controller-deploy.yaml"
@@ -143,9 +182,18 @@ fi
 
 if [[ -d "${RENDER_DIR}/backup" ]]; then
   echo "Applying backup manifests..."
+  mkdir -p /backups/sites
   if ! kubectl apply -f "${RENDER_DIR}/backup"; then
     echo "Warning: failed to apply backup manifests; continuing install."
   fi
+fi
+
+if [[ "${INSTALL_MAILCOW}" =~ ^[Yy]$ && -d "${RENDER_DIR}/mailcow" ]]; then
+  echo "Applying mailcow manifests..."
+  kubectl apply -f "${RENDER_DIR}/mailcow/namespace.yaml"
+  kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-secrets.yaml"
+  kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-core.yaml"
+  kubectl apply -f "${RENDER_DIR}/mailcow/networkpolicy.yaml"
 fi
 
 echo "Installing cert-manager (cluster-wide)..."
@@ -185,6 +233,6 @@ echo "Done."
 echo "Panel: http://<VPS_IP>:${PANEL_NODEPORT}"
 echo "Panel admin password: ${PANEL_ADMIN_PASSWORD}"
 echo "Controller API key: ${CONTROLLER_API_KEY}"
-echo "Postgres: postgres.infra.svc.cluster.local:5432 (admin user: postgres)"
-echo "Controller DB creds stored in platform-secrets (DB_ADMIN_PASSWORD)."
+echo "Postgres: ${POSTGRES_HOST}:${POSTGRES_PORT} (admin user: ${POSTGRES_ADMIN_USER})"
+echo "Controller DB creds stored in platform-secrets (POSTGRES_ADMIN_PASSWORD)."
 echo ""

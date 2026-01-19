@@ -4,12 +4,20 @@ import { HttpError } from "./errors.js";
 import {
   CreateSiteSchema,
   DeploySiteSchema,
+  AliasCreateSchema,
   MailEnableSchema,
   MailboxCreateSchema,
   PatchLimitsSchema,
-  PatchTlsSchema
+  PatchTlsSchema,
+  DbEnableSchema
 } from "../sites/site.dto.js";
-import { RestoreDbSchema, RestoreFilesSchema } from "../backup/backup.dto.js";
+import {
+  BackupConfigSchema,
+  BackupEnableSchema,
+  BackupRestoreSchema,
+  RestoreDbSchema,
+  RestoreFilesSchema
+} from "../backup/backup.dto.js";
 import {
   createSite,
   deleteSite,
@@ -20,12 +28,21 @@ import {
   disableSiteMail,
   purgeSiteDb,
   purgeSiteMail,
+  getSiteDbStatus,
+  createSiteAlias,
   createSiteMailbox,
+  deleteSiteAlias,
   deleteSiteMailbox,
+  getSiteMailStatus,
+  listSiteAliases,
   listSiteMailboxes,
   listSites,
   purgeSite,
   purgeSiteBackup,
+  listSiteBackupSnapshots,
+  restoreSiteBackup,
+  runSiteBackup,
+  updateSiteBackupConfig,
   updateSiteTls,
   updateSiteLimits,
   enableSiteBackup,
@@ -81,7 +98,8 @@ export function registerRoutes(app: FastifyInstance) {
 
   app.post("/sites/:slug/db/enable", async (req, reply) => {
     const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
-    const result = await enableSiteDb(slug);
+    const body = DbEnableSchema.parse(req.body ?? {});
+    const result = await enableSiteDb(slug, body);
     return reply.send(result);
   });
 
@@ -95,6 +113,12 @@ export function registerRoutes(app: FastifyInstance) {
     const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
     requireConfirmDelete(req.body);
     const result = await purgeSiteDb(slug);
+    return reply.send(result);
+  });
+
+  app.get("/sites/:slug/db/status", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await getSiteDbStatus(slug);
     return reply.send(result);
   });
 
@@ -118,6 +142,13 @@ export function registerRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
+  app.post("/sites/:slug/mail/aliases", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const body = AliasCreateSchema.parse(req.body);
+    const result = await createSiteAlias(slug, body);
+    return reply.send(result);
+  });
+
   app.delete("/sites/:slug/mail/mailboxes/:address", async (req, reply) => {
     const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
     const address = String((req.params as { address?: string }).address ?? "").trim();
@@ -128,21 +159,70 @@ export function registerRoutes(app: FastifyInstance) {
     return reply.send(result);
   });
 
+  app.delete("/sites/:slug/mail/aliases/:source", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const source = String((req.params as { source?: string }).source ?? "").trim();
+    if (!source) {
+      throw new HttpError(400, "Alias source is required.");
+    }
+    const result = await deleteSiteAlias(slug, source);
+    return reply.send(result);
+  });
+
   app.get("/sites/:slug/mail/mailboxes", async (req, reply) => {
     const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
     const result = await listSiteMailboxes(slug);
     return reply.send(result);
   });
 
+  app.get("/sites/:slug/mail/aliases", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await listSiteAliases(slug);
+    return reply.send(result);
+  });
+
+  app.get("/sites/:slug/mail/status", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await getSiteMailStatus(slug);
+    return reply.send(result);
+  });
+
   app.post("/sites/:slug/backup/enable", async (req, reply) => {
     const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
-    const result = await enableSiteBackup(slug);
+    const body = BackupEnableSchema.parse(req.body ?? {});
+    const result = await enableSiteBackup(slug, body);
     return reply.send(result);
   });
 
   app.post("/sites/:slug/backup/disable", async (req, reply) => {
     const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
     const result = await disableSiteBackup(slug);
+    return reply.send(result);
+  });
+
+  app.patch("/sites/:slug/backup/config", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const body = BackupConfigSchema.parse(req.body ?? {});
+    const result = await updateSiteBackupConfig(slug, body);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/backup/run", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await runSiteBackup(slug);
+    return reply.send(result);
+  });
+
+  app.get("/sites/:slug/backup/snapshots", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const result = await listSiteBackupSnapshots(slug);
+    return reply.send(result);
+  });
+
+  app.post("/sites/:slug/backup/restore", async (req, reply) => {
+    const slug = SlugParamSchema.parse((req.params as { slug?: string }).slug ?? "");
+    const body = BackupRestoreSchema.parse(req.body ?? {});
+    const result = await restoreSiteBackup(slug, body);
     return reply.send(result);
   });
 

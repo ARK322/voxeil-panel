@@ -16,9 +16,74 @@ kubectl apply -f infra/k8s/platform
 ## Shared Service Zones (Optional)
 
 Shared services live in their own namespaces (zones) and can be installed independently:
-- Backup runner: `infra/k8s/backup` -> `backup-zone`
-- Mailcow: planned `mail-zone` (manifests TBD)
+- Backup runner: `infra/k8s/backup` -> `backup`
+- Mailcow: `infra/k8s/mailcow` -> `mail-zone`
 - PostgreSQL: planned `db-zone` (manifests TBD)
+
+## Backup Zone (backup)
+
+Apply the backup runner manifests after ensuring the host has `/backups`:
+
+```
+sudo mkdir -p /backups/sites
+```
+
+Apply order:
+
+```
+kubectl apply -f infra/k8s/backup/namespace.yaml
+kubectl apply -f infra/k8s/backup/rbac.yaml
+kubectl apply -f infra/k8s/backup/backup-runner.yaml
+```
+
+### Verify backup runner
+
+```
+kubectl -n backup get configmap backup-runner-script
+kubectl -n backup get sa backup-runner
+```
+
+## Mailcow Zone (mail-zone)
+
+Apply the Mailcow zone manifests after creating required secrets (the installer generates `mailcow-secrets`).
+Apply order:
+
+```
+kubectl apply -f infra/k8s/mailcow/namespace.yaml
+kubectl apply -f infra/k8s/mailcow/mailcow-core.yaml
+kubectl apply -f infra/k8s/mailcow/networkpolicy.yaml
+```
+
+Mailcow API is internal-only by default. The controller should use:
+`http://mailcow-api.mail-zone.svc.cluster.local`.
+Mailcow web UI is not exposed by default.
+
+### Optional: Traefik TCP exposure (mail protocols)
+
+Enable SMTP/IMAP/POP3 exposure only after configuring Traefik TCP entrypoints:
+
+```
+kubectl apply -f infra/k8s/mailcow/traefik-tcp
+```
+
+The manifests create `IngressRouteTCP` resources in `mail-zone` that route TCP
+entrypoints to the Mailcow mail services.
+
+TCP entrypoints and ports (Traefik):
+- `smtp`: 25
+- `smtps`: 465
+- `submission`: 587
+- `imap`: 143
+- `imaps`: 993
+- `pop3`: 110 (optional)
+- `pop3s`: 995 (optional)
+
+### Verify Mailcow health
+
+```
+kubectl -n mail-zone get pods
+kubectl -n mail-zone get svc
+```
 
 ## Apply Tenant Templates
 

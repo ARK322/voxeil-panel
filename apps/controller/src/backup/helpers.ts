@@ -32,6 +32,9 @@ type RestorePodSpec = {
 };
 
 export function buildRestorePod(spec: RestorePodSpec): V1Pod {
+  const command = spec.archivePath.endsWith(".tar.zst")
+    ? `apk add --no-cache zstd >/dev/null && rm -rf /data/* /data/.[!.]* /data/..?* && tar --use-compress-program=zstd -xf ${spec.archivePath} -C /data`
+    : `apk add --no-cache gzip >/dev/null && rm -rf /data/* /data/.[!.]* /data/..?* && tar -xzf ${spec.archivePath} -C /data`;
   return {
     apiVersion: "v1",
     kind: "Pod",
@@ -53,7 +56,7 @@ export function buildRestorePod(spec: RestorePodSpec): V1Pod {
           command: [
             "/bin/sh",
             "-c",
-            `apk add --no-cache zstd >/dev/null && rm -rf /data/* /data/.[!.]* /data/..?* && tar --use-compress-program=zstd -xf ${spec.archivePath} -C /data`
+            command
           ],
           volumeMounts: [
             {
@@ -78,8 +81,8 @@ export function buildRestorePod(spec: RestorePodSpec): V1Pod {
         {
           name: "backups",
           hostPath: {
-            path: "/backups/voxeil",
-            type: "Directory"
+            path: "/backups",
+            type: "DirectoryOrCreate"
           }
         }
       ]

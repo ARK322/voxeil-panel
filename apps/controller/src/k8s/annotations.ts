@@ -8,6 +8,9 @@ export const SITE_ANNOTATIONS = {
   ramGi: "voxeil.com/ramGi",
   diskGi: "voxeil.com/diskGi",
   backupEnabled: "voxeil.com/backup-enabled",
+  backupRetentionDays: "voxeil.com/backup-retention-days",
+  backupSchedule: "voxeil.com/backup-schedule",
+  backupLastRunAt: "voxeil.com/backup-last-run-at",
   mailEnabled: "voxeil.com/mail-enabled",
   mailProvider: "voxeil.com/mail-provider",
   mailDomain: "voxeil.com/mail-domain",
@@ -16,5 +19,7 @@ export const SITE_ANNOTATIONS = {
   dbEnabled: "voxeil.com/db-enabled",
   dbName: "voxeil.com/db-name",
   dbUser: "voxeil.com/db-user",
+  dbHost: "voxeil.com/db-host",
+  dbPort: "voxeil.com/db-port",
   dbSecret: "voxeil.com/db-secret"
 } as const;

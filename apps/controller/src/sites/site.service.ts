@@ -29,24 +29,32 @@ import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
 import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
 import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
 import { deleteSecret, ensureGhcrPullSecret, readSecret, upsertSecret } from "../k8s/secrets.js";
-import { LABELS } from "../k8s/client.js";
+import { getClients, LABELS } from "../k8s/client.js";
 import { SITE_ANNOTATIONS } from "../k8s/annotations.js";
 import {
-  ensureDatabaseAndRole,
-  dropDatabaseAndRole,
+  ensureDatabase,
+  ensureRole,
+  revokeAndTerminate,
+  dropDatabase,
+  dropRole,
   generateDbPassword,
+  normalizeDbName,
+  normalizeDbUser,
   resolveDbName,
   resolveDbUser
-} from "../db/admin.js";
+} from "../postgres/admin.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
+import { restoreSiteDb, restoreSiteFiles } from "../backup/restore.service.js";
 import {
   createMailcowMailbox,
-  deleteMailcowAliases,
-  deleteMailcowDomain,
+  createMailcowAlias,
   deleteMailcowMailbox,
+  deleteMailcowAlias,
   ensureMailcowDomain,
+  getMailcowDomainActive,
   listMailcowAliases,
   listMailcowMailboxes,
+  purgeMailcowDomain,
   setMailcowDomainActive
 } from "../mailcow/client.js";
 import type {
@@ -64,8 +72,13 @@ import type {
 const DEFAULT_MAINTENANCE_IMAGE = "ghcr.io/OWNER/voxeil-maintenance:latest";
 const DEFAULT_MAINTENANCE_PORT = 3000;
 const DEFAULT_TLS_ISSUER = "letsencrypt-staging";
-const SITE_DB_SECRET_NAME = "site-db";
+const SITE_DB_SECRET_NAME = "db-conn";
+const LEGACY_DB_SECRET_NAME = "site-db";
 const BACKUP_ROOT = "/backups/sites";
+const BACKUP_NAMESPACE = "backup";
+const DEFAULT_BACKUP_RETENTION_DAYS = 14;
+const DEFAULT_BACKUP_SCHEDULE = "0 3 * * *";
+const DEFAULT_BACKUP_RUNNER_IMAGE = "ghcr.io/voxeil/backup-runner:latest";
 
 function resolveMaintenanceImage(): string {
   const value = process.env.GHCR_MAINTENANCE_IMAGE ?? DEFAULT_MAINTENANCE_IMAGE;
@@ -84,6 +97,10 @@ function resolveMaintenancePort(): number {
   return port;
 }
 
+function resolveBackupRunnerImage(): string {
+  return process.env.BACKUP_RUNNER_IMAGE?.trim() || DEFAULT_BACKUP_RUNNER_IMAGE;
+}
+
 function parseBooleanAnnotation(value?: string): boolean | undefined {
   if (!value) return undefined;
   const normalized = value.toLowerCase();
@@ -98,6 +115,198 @@ function parseNumberAnnotation(value?: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function normalizeBackupSchedule(value: string): string {
+  const schedule = value.trim();
+  if (!schedule) {
+    throw new HttpError(400, "schedule is required.");
+  }
+  return schedule;
+}
+
+function normalizeRetentionDays(value: number): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new HttpError(400, "retentionDays must be a positive integer.");
+  }
+  return value;
+}
+
+function resolveBackupSettings(
+  input: { retentionDays?: number; schedule?: string } | undefined,
+  existing: { retentionDays?: number; schedule?: string }
+): { retentionDays: number; schedule: string } {
+  const retentionDays = normalizeRetentionDays(
+    input?.retentionDays ?? existing.retentionDays ?? DEFAULT_BACKUP_RETENTION_DAYS
+  );
+  const schedule = normalizeBackupSchedule(
+    input?.schedule ?? existing.schedule ?? DEFAULT_BACKUP_SCHEDULE
+  );
+  return { retentionDays, schedule };
+}
+
+function buildBackupRunnerPodSpec(options: {
+  slug: string;
+  namespace: string;
+  retentionDays: number;
+  dbEnabled: boolean;
+}): { spec: { serviceAccountName: string; restartPolicy: string; volumes: any[]; containers: any[] } } {
+  const runnerImage = resolveBackupRunnerImage();
+  const dbHost = process.env.POSTGRES_HOST ?? process.env.DB_HOST ?? "";
+  const dbPort = process.env.POSTGRES_PORT ?? process.env.DB_PORT ?? "5432";
+  const dbAdminUser =
+    process.env.POSTGRES_ADMIN_USER ?? process.env.DB_ADMIN_USER ?? process.env.DB_USER ?? "";
+  const dbAdminPassword =
+    process.env.POSTGRES_ADMIN_PASSWORD ?? process.env.DB_ADMIN_PASSWORD ?? process.env.DB_PASSWORD ?? "";
+  const dbNamePrefix = process.env.DB_NAME_PREFIX ?? "db_";
+
+  return {
+    spec: {
+      serviceAccountName: "backup-runner",
+      restartPolicy: "OnFailure",
+      volumes: [
+        {
+          name: "backups",
+          hostPath: {
+            path: "/backups",
+            type: "DirectoryOrCreate"
+          }
+        },
+        {
+          name: "script",
+          configMap: {
+            name: "backup-runner-script",
+            defaultMode: 0o755
+          }
+        }
+      ],
+      containers: [
+        {
+          name: "backup-runner",
+          image: runnerImage,
+          imagePullPolicy: "IfNotPresent",
+          command: ["/app/run.sh"],
+          env: [
+            { name: "SITE_SLUG", value: options.slug },
+            { name: "TENANT_NAMESPACE", value: options.namespace },
+            { name: "BACKUP_RETENTION_DAYS", value: String(options.retentionDays) },
+            { name: "DB_ENABLED", value: options.dbEnabled ? "true" : "false" },
+            { name: "DB_HOST", value: dbHost },
+            { name: "DB_PORT", value: dbPort },
+            { name: "DB_ADMIN_USER", value: dbAdminUser },
+            { name: "DB_ADMIN_PASSWORD", value: dbAdminPassword },
+            { name: "DB_NAME_PREFIX", value: dbNamePrefix }
+          ],
+          volumeMounts: [
+            { name: "backups", mountPath: "/backups" },
+            { name: "script", mountPath: "/app/run.sh", subPath: "run.sh" }
+          ]
+        }
+      ]
+    }
+  };
+}
+
+async function upsertBackupCronJob(options: {
+  slug: string;
+  namespace: string;
+  retentionDays: number;
+  schedule: string;
+  dbEnabled: boolean;
+}): Promise<void> {
+  const { batch } = getClients();
+  const name = `backup-${options.slug}`;
+  const body = {
+    apiVersion: "batch/v1",
+    kind: "CronJob",
+    metadata: {
+      name,
+      namespace: BACKUP_NAMESPACE,
+      labels: {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: options.slug
+      }
+    },
+    spec: {
+      schedule: options.schedule,
+      concurrencyPolicy: "Forbid",
+      successfulJobsHistoryLimit: 3,
+      failedJobsHistoryLimit: 3,
+      jobTemplate: {
+        spec: {
+          backoffLimit: 1,
+          template: {
+            metadata: {
+              labels: {
+                [LABELS.managedBy]: LABELS.managedBy,
+                [LABELS.siteSlug]: options.slug
+              }
+            },
+            ...buildBackupRunnerPodSpec(options)
+          }
+        }
+      }
+    }
+  };
+
+  try {
+    await batch.readNamespacedCronJob(name, BACKUP_NAMESPACE);
+    await batch.replaceNamespacedCronJob(name, BACKUP_NAMESPACE, body);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) {
+      await batch.createNamespacedCronJob(BACKUP_NAMESPACE, body);
+      return;
+    }
+    throw error;
+  }
+}
+
+async function deleteBackupCronJob(slug: string): Promise<void> {
+  const { batch } = getClients();
+  const name = `backup-${slug}`;
+  try {
+    await batch.deleteNamespacedCronJob(name, BACKUP_NAMESPACE);
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) return;
+    throw error;
+  }
+}
+
+async function createBackupJob(options: {
+  slug: string;
+  namespace: string;
+  retentionDays: number;
+  dbEnabled: boolean;
+}): Promise<void> {
+  const { batch } = getClients();
+  const timestamp = Date.now();
+  const name = `backup-run-${options.slug}-${timestamp}`;
+  const body = {
+    apiVersion: "batch/v1",
+    kind: "Job",
+    metadata: {
+      name,
+      namespace: BACKUP_NAMESPACE,
+      labels: {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: options.slug
+      }
+    },
+    spec: {
+      backoffLimit: 1,
+      template: {
+        metadata: {
+          labels: {
+            [LABELS.managedBy]: LABELS.managedBy,
+            [LABELS.siteSlug]: options.slug
+          }
+        },
+        ...buildBackupRunnerPodSpec(options)
+      }
+    }
+  };
+
+  await batch.createNamespacedJob(BACKUP_NAMESPACE, body);
+}
+
 function normalizeMailDomain(value: string): string {
   const normalized = value.trim().toLowerCase().replace(/\.$/, "");
   if (!normalized) {
@@ -107,10 +316,10 @@ function normalizeMailDomain(value: string): string {
 }
 
 function requireDbHostConfig(): { host: string; port: string } {
-  const host = process.env.DB_HOST?.trim();
-  const port = process.env.DB_PORT?.trim() || "5432";
+  const host = process.env.POSTGRES_HOST?.trim() ?? process.env.DB_HOST?.trim();
+  const port = process.env.POSTGRES_PORT?.trim() ?? process.env.DB_PORT?.trim() ?? "5432";
   if (!host) {
-    throw new HttpError(500, "DB_HOST must be configured.");
+    throw new HttpError(500, "POSTGRES_HOST must be configured.");
   }
   return { host, port };
 }
@@ -142,7 +351,7 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
     [SITE_ANNOTATIONS.diskGi]: String(input.diskGi),
     [SITE_ANNOTATIONS.dbEnabled]: "false",
     [SITE_ANNOTATIONS.mailEnabled]: "false",
-    [SITE_ANNOTATIONS.backupEnabled]: "true"
+    [SITE_ANNOTATIONS.backupEnabled]: "false"
   });
 
   const templates = await loadTenantTemplates();
@@ -230,9 +439,15 @@ export async function listSites(): Promise<SiteListItem[]> {
         dbEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false,
         dbName: annotations[SITE_ANNOTATIONS.dbName],
         dbUser: annotations[SITE_ANNOTATIONS.dbUser],
+        dbHost: annotations[SITE_ANNOTATIONS.dbHost],
+        dbPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.dbPort]),
         dbSecret: annotations[SITE_ANNOTATIONS.dbSecret],
         mailEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false,
-        backupEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? true,
+        mailDomain: annotations[SITE_ANNOTATIONS.mailDomain],
+        backupEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? false,
+        backupRetentionDays: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.backupRetentionDays]),
+        backupSchedule: annotations[SITE_ANNOTATIONS.backupSchedule],
+        backupLastRunAt: annotations[SITE_ANNOTATIONS.backupLastRunAt],
         cpu: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.cpu]),
         ramGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.ramGi]),
         diskGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.diskGi])
@@ -250,9 +465,15 @@ export async function listSites(): Promise<SiteListItem[]> {
         dbEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false,
         dbName: annotations[SITE_ANNOTATIONS.dbName],
         dbUser: annotations[SITE_ANNOTATIONS.dbUser],
+        dbHost: annotations[SITE_ANNOTATIONS.dbHost],
+        dbPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.dbPort]),
         dbSecret: annotations[SITE_ANNOTATIONS.dbSecret],
         mailEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false,
-        backupEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? true,
+        mailDomain: annotations[SITE_ANNOTATIONS.mailDomain],
+        backupEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? false,
+        backupRetentionDays: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.backupRetentionDays]),
+        backupSchedule: annotations[SITE_ANNOTATIONS.backupSchedule],
+        backupLastRunAt: annotations[SITE_ANNOTATIONS.backupLastRunAt],
         cpu: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.cpu]),
         ramGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.ramGi]),
         diskGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.diskGi])
@@ -447,6 +668,7 @@ export async function enableSiteMail(
 
   try {
     await ensureMailcowDomain(domain);
+    await setMailcowDomainActive(domain, true);
     await patchNamespaceAnnotations(namespace, {
       [SITE_ANNOTATIONS.mailEnabled]: "true",
       [SITE_ANNOTATIONS.mailProvider]: "mailcow",
@@ -472,12 +694,15 @@ export async function enableSiteMail(
   };
 }
 
-export async function enableSiteDb(slug: string): Promise<{
+export async function enableSiteDb(
+  slug: string,
+  input?: { dbName?: string }
+): Promise<{
   ok: true;
   slug: string;
   dbEnabled: true;
   dbName: string;
-  secretName: string;
+  username: string;
 }> {
   let normalized: string;
   try {
@@ -487,27 +712,31 @@ export async function enableSiteDb(slug: string): Promise<{
   }
   const namespaceEntry = await readTenantNamespace(normalized);
   const namespace = namespaceEntry.name;
+  const annotations = namespaceEntry.annotations;
   const { host, port } = requireDbHostConfig();
 
-  const dbName = resolveDbName(normalized);
-  const dbUser = resolveDbUser(normalized);
+  const existingDbName = annotations[SITE_ANNOTATIONS.dbName];
+  const existingDbUser = annotations[SITE_ANNOTATIONS.dbUser];
+  const dbName = input?.dbName
+    ? normalizeDbName(input.dbName)
+    : existingDbName
+      ? normalizeDbName(existingDbName)
+      : resolveDbName(normalized);
+  const dbUser = existingDbUser ? normalizeDbUser(existingDbUser) : resolveDbUser(normalized);
 
-  const existingSecret = await readSecret(namespace, SITE_DB_SECRET_NAME);
-  const existingPassword = decodeSecretValue(existingSecret?.data?.DB_PASSWORD);
+  const existingSecret =
+    (await readSecret(namespace, SITE_DB_SECRET_NAME)) ??
+    (await readSecret(namespace, LEGACY_DB_SECRET_NAME));
+  const existingPassword = decodeSecretValue(
+    existingSecret?.data?.password ?? existingSecret?.data?.DB_PASSWORD
+  );
   let dbPassword = existingPassword;
-  let setPasswordForExisting = false;
-
   if (!dbPassword) {
     dbPassword = generateDbPassword();
-    setPasswordForExisting = true;
   }
 
-  await ensureDatabaseAndRole({
-    dbName,
-    dbUser,
-    passwordToSet: dbPassword,
-    setPasswordForExisting
-  });
+  await ensureRole(dbUser, dbPassword);
+  await ensureDatabase(dbName, dbUser);
 
   const encodedUser = encodeURIComponent(dbUser);
   const encodedPassword = encodeURIComponent(dbPassword);
@@ -525,12 +754,12 @@ export async function enableSiteDb(slug: string): Promise<{
     },
     type: "Opaque",
     stringData: {
-      DATABASE_URL: databaseUrl,
-      DB_HOST: host,
-      DB_PORT: port,
-      DB_NAME: dbName,
-      DB_USER: dbUser,
-      DB_PASSWORD: dbPassword
+      host,
+      port,
+      database: dbName,
+      username: dbUser,
+      password: dbPassword,
+      url: databaseUrl
     }
   });
 
@@ -538,6 +767,8 @@ export async function enableSiteDb(slug: string): Promise<{
     [SITE_ANNOTATIONS.dbEnabled]: "true",
     [SITE_ANNOTATIONS.dbName]: dbName,
     [SITE_ANNOTATIONS.dbUser]: dbUser,
+    [SITE_ANNOTATIONS.dbHost]: host,
+    [SITE_ANNOTATIONS.dbPort]: port,
     [SITE_ANNOTATIONS.dbSecret]: SITE_DB_SECRET_NAME
   });
 
@@ -546,18 +777,8 @@ export async function enableSiteDb(slug: string): Promise<{
     slug: normalized,
     dbEnabled: true,
     dbName,
-    secretName: SITE_DB_SECRET_NAME
+    username: dbUser
   };
-}
-
-async function purgeMailcowDomainResources(domain: string): Promise<void> {
-  const [mailboxes, aliases] = await Promise.all([
-    listMailcowMailboxes(domain),
-    listMailcowAliases(domain)
-  ]);
-  await deleteMailcowAliases(aliases);
-  await Promise.all(mailboxes.map((address) => deleteMailcowMailbox(address)));
-  await deleteMailcowDomain(domain);
 }
 
 export async function disableSiteDb(slug: string): Promise<{
@@ -573,8 +794,14 @@ export async function disableSiteDb(slug: string): Promise<{
   }
   const namespaceEntry = await readTenantNamespace(normalized);
   const namespace = namespaceEntry.name;
-
-  await deleteSecret(namespace, SITE_DB_SECRET_NAME);
+  const annotations = namespaceEntry.annotations;
+  const secretName = annotations[SITE_ANNOTATIONS.dbSecret];
+  const secretNames = new Set(
+    [SITE_DB_SECRET_NAME, LEGACY_DB_SECRET_NAME, secretName].filter(Boolean)
+  );
+  await Promise.all(
+    Array.from(secretNames).map((name) => deleteSecret(namespace, name))
+  );
   await patchNamespaceAnnotations(namespace, {
     [SITE_ANNOTATIONS.dbEnabled]: "false",
     [SITE_ANNOTATIONS.dbSecret]: ""
@@ -586,7 +813,7 @@ export async function disableSiteDb(slug: string): Promise<{
 export async function purgeSiteDb(slug: string): Promise<{
   ok: true;
   slug: string;
-  dbEnabled: false;
+  purged: true;
 }> {
   let normalized: string;
   try {
@@ -597,17 +824,67 @@ export async function purgeSiteDb(slug: string): Promise<{
   const namespaceEntry = await readTenantNamespace(normalized);
   const namespace = namespaceEntry.name;
   const annotations = namespaceEntry.annotations;
-  const dbName = annotations[SITE_ANNOTATIONS.dbName] ?? resolveDbName(normalized);
-  const dbUser = annotations[SITE_ANNOTATIONS.dbUser] ?? resolveDbUser(normalized);
+  const dbName = annotations[SITE_ANNOTATIONS.dbName]
+    ? normalizeDbName(annotations[SITE_ANNOTATIONS.dbName] ?? "")
+    : resolveDbName(normalized);
+  const dbUser = annotations[SITE_ANNOTATIONS.dbUser]
+    ? normalizeDbUser(annotations[SITE_ANNOTATIONS.dbUser] ?? "")
+    : resolveDbUser(normalized);
 
-  await dropDatabaseAndRole({ dbName, dbUser });
-  await deleteSecret(namespace, SITE_DB_SECRET_NAME);
+  await revokeAndTerminate(dbName);
+  await dropDatabase(dbName);
+  await dropRole(dbUser);
+  const secretName = annotations[SITE_ANNOTATIONS.dbSecret];
+  const secretNames = new Set(
+    [SITE_DB_SECRET_NAME, LEGACY_DB_SECRET_NAME, secretName].filter(Boolean)
+  );
+  await Promise.all(
+    Array.from(secretNames).map((name) => deleteSecret(namespace, name))
+  );
   await patchNamespaceAnnotations(namespace, {
     [SITE_ANNOTATIONS.dbEnabled]: "false",
+    [SITE_ANNOTATIONS.dbName]: "",
+    [SITE_ANNOTATIONS.dbUser]: "",
+    [SITE_ANNOTATIONS.dbHost]: "",
+    [SITE_ANNOTATIONS.dbPort]: "",
     [SITE_ANNOTATIONS.dbSecret]: ""
   });
 
-  return { ok: true, slug: normalized, dbEnabled: false };
+  return { ok: true, slug: normalized, purged: true };
+}
+
+export async function getSiteDbStatus(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  dbEnabled: boolean;
+  dbName?: string;
+  username?: string;
+  secretPresent: boolean;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const annotations = namespaceEntry.annotations;
+  const secretName =
+    annotations[SITE_ANNOTATIONS.dbSecret]?.trim() || SITE_DB_SECRET_NAME;
+  const secret =
+    (await readSecret(namespaceEntry.name, secretName)) ??
+    (await readSecret(namespaceEntry.name, LEGACY_DB_SECRET_NAME));
+  const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
+  const dbName = annotations[SITE_ANNOTATIONS.dbName];
+  const dbUser = annotations[SITE_ANNOTATIONS.dbUser];
+  return {
+    ok: true,
+    slug: normalized,
+    dbEnabled,
+    dbName,
+    username: dbUser,
+    secretPresent: Boolean(secret)
+  };
 }
 
 export async function disableSiteMail(slug: string): Promise<{
@@ -626,23 +903,26 @@ export async function disableSiteMail(slug: string): Promise<{
   const namespaceEntry = await readTenantNamespace(normalized);
   const namespace = namespaceEntry.name;
   const annotations = namespaceEntry.annotations;
-  const domain =
-    annotations[SITE_ANNOTATIONS.mailDomain]?.trim() ??
-    annotations[SITE_ANNOTATIONS.domain]?.trim();
-
-  if (domain) {
-    try {
-      await setMailcowDomainActive(domain, false);
-    } catch {
-      // Optional best-effort deactivation only.
-    }
+  const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  if (!domain) {
+    throw new HttpError(409, "Mail domain not configured.");
   }
 
-  await patchNamespaceAnnotations(namespace, {
-    [SITE_ANNOTATIONS.mailEnabled]: "false",
-    [SITE_ANNOTATIONS.mailStatus]: "disabled",
-    [SITE_ANNOTATIONS.mailLastError]: ""
-  });
+  try {
+    await setMailcowDomainActive(domain, false);
+    await patchNamespaceAnnotations(namespace, {
+      [SITE_ANNOTATIONS.mailEnabled]: "false",
+      [SITE_ANNOTATIONS.mailStatus]: "disabled",
+      [SITE_ANNOTATIONS.mailLastError]: ""
+    });
+  } catch (error: any) {
+    const message = String(error?.message ?? "Mailcow error.");
+    await patchNamespaceAnnotations(namespace, {
+      [SITE_ANNOTATIONS.mailStatus]: "error",
+      [SITE_ANNOTATIONS.mailLastError]: message
+    });
+    throw new HttpError(502, "Mail provider error.");
+  }
 
   return { ok: true, slug: normalized, mailEnabled: false, domain, provider: "mailcow" };
 }
@@ -672,7 +952,7 @@ export async function purgeSiteMail(slug: string): Promise<{
   }
 
   try {
-    await purgeMailcowDomainResources(domain);
+    await purgeMailcowDomain(domain);
     await patchNamespaceAnnotations(namespace, {
       [SITE_ANNOTATIONS.mailEnabled]: "false",
       [SITE_ANNOTATIONS.mailStatus]: "purged",
@@ -709,9 +989,14 @@ export async function createSiteMailbox(
     throw new HttpError(400, error?.message ?? "Invalid slug.");
   }
   const namespaceEntry = await readTenantNamespace(normalized);
-  const domain = namespaceEntry.annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const annotations = namespaceEntry.annotations;
+  const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
   if (!domain) {
     throw new HttpError(409, "Mail domain not configured.");
+  }
+  if (!mailEnabled) {
+    throw new HttpError(409, "Mail is disabled for this site.");
   }
 
   const address = await createMailcowMailbox({
@@ -735,9 +1020,14 @@ export async function deleteSiteMailbox(
     throw new HttpError(400, error?.message ?? "Invalid slug.");
   }
   const namespaceEntry = await readTenantNamespace(normalized);
-  const domain = namespaceEntry.annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const annotations = namespaceEntry.annotations;
+  const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
   if (!domain) {
     throw new HttpError(409, "Mail domain not configured.");
+  }
+  if (!mailEnabled) {
+    throw new HttpError(409, "Mail is disabled for this site.");
   }
   const normalizedAddress = address.trim().toLowerCase();
   if (!normalizedAddress.endsWith(`@${domain.toLowerCase()}`)) {
@@ -761,23 +1051,164 @@ export async function listSiteMailboxes(slug: string): Promise<{
     throw new HttpError(400, error?.message ?? "Invalid slug.");
   }
   const namespaceEntry = await readTenantNamespace(normalized);
-  const domain = namespaceEntry.annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const annotations = namespaceEntry.annotations;
+  const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
   if (!domain) {
     throw new HttpError(409, "Mail domain not configured.");
+  }
+  if (!mailEnabled) {
+    throw new HttpError(409, "Mail is disabled for this site.");
   }
 
   const mailboxes = await listMailcowMailboxes(domain);
   return { ok: true, slug: normalized, domain, mailboxes };
 }
 
-async function purgeSiteBackups(slug: string): Promise<void> {
-  await fs.rm(path.join(BACKUP_ROOT, slug), { recursive: true, force: true });
+export async function listSiteAliases(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  domain: string;
+  aliases: string[];
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const annotations = namespaceEntry.annotations;
+  const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+  if (!domain) {
+    throw new HttpError(409, "Mail domain not configured.");
+  }
+  if (!mailEnabled) {
+    throw new HttpError(409, "Mail is disabled for this site.");
+  }
+
+  const aliases = await listMailcowAliases(domain);
+  return { ok: true, slug: normalized, domain, aliases };
 }
 
-export async function enableSiteBackup(slug: string): Promise<{
+export async function createSiteAlias(
+  slug: string,
+  input: { sourceLocalPart: string; destination: string; active?: boolean }
+): Promise<{ ok: true; slug: string; source: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const annotations = namespaceEntry.annotations;
+  const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+  if (!domain) {
+    throw new HttpError(409, "Mail domain not configured.");
+  }
+  if (!mailEnabled) {
+    throw new HttpError(409, "Mail is disabled for this site.");
+  }
+  const sourceLocalPart = input.sourceLocalPart.trim();
+  if (!sourceLocalPart) {
+    throw new HttpError(400, "sourceLocalPart is required.");
+  }
+  const source = `${sourceLocalPart}@${domain}`.toLowerCase();
+  await createMailcowAlias({
+    sourceAddress: source,
+    destinationAddress: input.destination,
+    active: input.active
+  });
+  return { ok: true, slug: normalized, source };
+}
+
+export async function deleteSiteAlias(
+  slug: string,
+  source: string
+): Promise<{ ok: true; slug: string; source: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const annotations = namespaceEntry.annotations;
+  const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+  if (!domain) {
+    throw new HttpError(409, "Mail domain not configured.");
+  }
+  if (!mailEnabled) {
+    throw new HttpError(409, "Mail is disabled for this site.");
+  }
+  const normalizedSource = source.trim().toLowerCase();
+  if (!normalizedSource.endsWith(`@${domain.toLowerCase()}`)) {
+    throw new HttpError(400, "Alias source must match the site mail domain.");
+  }
+  await deleteMailcowAlias(normalizedSource);
+  return { ok: true, slug: normalized, source: normalizedSource };
+}
+
+export async function getSiteMailStatus(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  domain: string;
+  mailEnabled: boolean;
+  activeInMailcow: boolean;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const annotations = namespaceEntry.annotations;
+  const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+  const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+  if (!domain) {
+    throw new HttpError(409, "Mail domain not configured.");
+  }
+  const activeInMailcow = await getMailcowDomainActive(domain);
+  return { ok: true, slug: normalized, domain, mailEnabled, activeInMailcow };
+}
+
+async function purgeSiteBackups(slug: string): Promise<void> {
+  const filesDir = path.join(BACKUP_ROOT, slug, "files");
+  const dbDir = path.join(BACKUP_ROOT, slug, "db");
+  const removeMatching = async (dir: string, matcher: (name: string) => boolean) => {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      await Promise.all(
+        entries.map(async (entry) => {
+          if (!entry.isFile()) return;
+          if (!matcher(entry.name)) return;
+          await fs.unlink(path.join(dir, entry.name));
+        })
+      );
+    } catch (error: any) {
+      if (error?.code === "ENOENT") return;
+      throw error;
+    }
+  };
+
+  await removeMatching(filesDir, (name) => name.endsWith(".tar.gz") || name.endsWith(".tar.zst"));
+  await removeMatching(dbDir, (name) => name.endsWith(".sql.gz"));
+}
+
+export async function enableSiteBackup(
+  slug: string,
+  input?: { retentionDays?: number; schedule?: string }
+): Promise<{
   ok: true;
   slug: string;
   backupEnabled: true;
+  retentionDays: number;
+  schedule: string;
 }> {
   let normalized: string;
   try {
@@ -787,10 +1218,29 @@ export async function enableSiteBackup(slug: string): Promise<{
   }
   const namespaceEntry = await readTenantNamespace(normalized);
   const namespace = namespaceEntry.name;
-  await patchNamespaceAnnotations(namespace, {
-    [SITE_ANNOTATIONS.backupEnabled]: "true"
+  const annotations = namespaceEntry.annotations;
+  const existingRetentionDays = parseNumberAnnotation(annotations[SITE_ANNOTATIONS.backupRetentionDays]);
+  const existingSchedule = annotations[SITE_ANNOTATIONS.backupSchedule];
+  const { retentionDays, schedule } = resolveBackupSettings(input, {
+    retentionDays: existingRetentionDays,
+    schedule: existingSchedule
   });
-  return { ok: true, slug: normalized, backupEnabled: true };
+  const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
+
+  await upsertBackupCronJob({
+    slug: normalized,
+    namespace,
+    retentionDays,
+    schedule,
+    dbEnabled
+  });
+
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.backupEnabled]: "true",
+    [SITE_ANNOTATIONS.backupRetentionDays]: String(retentionDays),
+    [SITE_ANNOTATIONS.backupSchedule]: schedule
+  });
+  return { ok: true, slug: normalized, backupEnabled: true, retentionDays, schedule };
 }
 
 export async function disableSiteBackup(slug: string): Promise<{
@@ -806,18 +1256,17 @@ export async function disableSiteBackup(slug: string): Promise<{
   }
   const namespaceEntry = await readTenantNamespace(normalized);
   const namespace = namespaceEntry.name;
+  await deleteBackupCronJob(normalized);
   await patchNamespaceAnnotations(namespace, {
     [SITE_ANNOTATIONS.backupEnabled]: "false"
   });
   return { ok: true, slug: normalized, backupEnabled: false };
 }
 
-export async function purgeSiteBackup(slug: string): Promise<{
-  ok: true;
-  slug: string;
-  backupEnabled: false;
-  purged: true;
-}> {
+export async function updateSiteBackupConfig(
+  slug: string,
+  input: { retentionDays?: number; schedule?: string }
+): Promise<{ ok: true; slug: string; retentionDays: number; schedule: string }> {
   let normalized: string;
   try {
     normalized = validateSlug(slug);
@@ -826,11 +1275,198 @@ export async function purgeSiteBackup(slug: string): Promise<{
   }
   const namespaceEntry = await readTenantNamespace(normalized);
   const namespace = namespaceEntry.name;
-  await purgeSiteBackups(normalized);
-  await patchNamespaceAnnotations(namespace, {
-    [SITE_ANNOTATIONS.backupEnabled]: "false"
+  const annotations = namespaceEntry.annotations;
+  const existingRetentionDays = parseNumberAnnotation(annotations[SITE_ANNOTATIONS.backupRetentionDays]);
+  const existingSchedule = annotations[SITE_ANNOTATIONS.backupSchedule];
+  const { retentionDays, schedule } = resolveBackupSettings(input, {
+    retentionDays: existingRetentionDays,
+    schedule: existingSchedule
   });
-  return { ok: true, slug: normalized, backupEnabled: false, purged: true };
+
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.backupRetentionDays]: String(retentionDays),
+    [SITE_ANNOTATIONS.backupSchedule]: schedule
+  });
+
+  const backupEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? false;
+  const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
+  if (backupEnabled) {
+    await upsertBackupCronJob({
+      slug: normalized,
+      namespace,
+      retentionDays,
+      schedule,
+      dbEnabled
+    });
+  }
+
+  return { ok: true, slug: normalized, retentionDays, schedule };
+}
+
+export async function runSiteBackup(slug: string): Promise<{ ok: true; slug: string; started: true }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const annotations = namespaceEntry.annotations;
+  const backupEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? false;
+  if (!backupEnabled) {
+    throw new HttpError(409, "Backups are disabled for this site.");
+  }
+  const retentionDays = normalizeRetentionDays(
+    parseNumberAnnotation(annotations[SITE_ANNOTATIONS.backupRetentionDays]) ??
+      DEFAULT_BACKUP_RETENTION_DAYS
+  );
+  const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
+  await createBackupJob({
+    slug: normalized,
+    namespace,
+    retentionDays,
+    dbEnabled
+  });
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.backupLastRunAt]: new Date().toISOString()
+  });
+  return { ok: true, slug: normalized, started: true };
+}
+
+export async function listSiteBackupSnapshots(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  items: Array<{ id: string; hasFiles: boolean; hasDb: boolean; sizeBytes: number }>;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const filesDir = path.join(BACKUP_ROOT, normalized, "files");
+  const dbDir = path.join(BACKUP_ROOT, normalized, "db");
+  const items = new Map<string, { id: string; hasFiles: boolean; hasDb: boolean; sizeBytes: number }>();
+
+  const addItem = (id: string, partial: { hasFiles?: boolean; hasDb?: boolean; sizeBytes?: number }) => {
+    const existing = items.get(id) ?? { id, hasFiles: false, hasDb: false, sizeBytes: 0 };
+    items.set(id, {
+      id,
+      hasFiles: existing.hasFiles || Boolean(partial.hasFiles),
+      hasDb: existing.hasDb || Boolean(partial.hasDb),
+      sizeBytes: existing.sizeBytes + (partial.sizeBytes ?? 0)
+    });
+  };
+
+  const readDirSafe = async (dir: string) => {
+    try {
+      return await fs.readdir(dir, { withFileTypes: true });
+    } catch (error: any) {
+      if (error?.code === "ENOENT") return [];
+      throw error;
+    }
+  };
+
+  const fileEntries = await readDirSafe(filesDir);
+  for (const entry of fileEntries) {
+    if (!entry.isFile()) continue;
+    const name = entry.name;
+    if (name.endsWith(".tar.gz")) {
+      const id = name.slice(0, -".tar.gz".length);
+      const stat = await fs.stat(path.join(filesDir, name));
+      addItem(id, { hasFiles: true, sizeBytes: stat.size });
+    } else if (name.endsWith(".tar.zst")) {
+      const id = name.slice(0, -".tar.zst".length);
+      const stat = await fs.stat(path.join(filesDir, name));
+      addItem(id, { hasFiles: true, sizeBytes: stat.size });
+    }
+  }
+
+  const dbEntries = await readDirSafe(dbDir);
+  for (const entry of dbEntries) {
+    if (!entry.isFile()) continue;
+    const name = entry.name;
+    if (!name.endsWith(".sql.gz")) continue;
+    const id = name.slice(0, -".sql.gz".length);
+    const stat = await fs.stat(path.join(dbDir, name));
+    addItem(id, { hasDb: true, sizeBytes: stat.size });
+  }
+
+  const list = Array.from(items.values()).sort((a, b) => b.id.localeCompare(a.id));
+  return { ok: true, slug: normalized, items: list };
+}
+
+export async function restoreSiteBackup(
+  slug: string,
+  input: { snapshotId: string; restoreFiles?: boolean; restoreDb?: boolean }
+): Promise<{ ok: true; slug: string; restored: true; snapshotId: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const snapshotId = input.snapshotId.trim();
+  if (!snapshotId || snapshotId !== path.basename(snapshotId)) {
+    throw new HttpError(400, "snapshotId must be a filename-safe value.");
+  }
+  const restoreFiles = input.restoreFiles ?? true;
+  const restoreDb = input.restoreDb ?? true;
+  if (!restoreFiles && !restoreDb) {
+    throw new HttpError(400, "restoreFiles or restoreDb must be true.");
+  }
+
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const annotations = namespaceEntry.annotations;
+  if (restoreDb) {
+    const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
+    if (!dbEnabled) {
+      throw new HttpError(409, "Database is not enabled for this site.");
+    }
+  }
+
+  if (restoreFiles) {
+    const filesDir = path.join(BACKUP_ROOT, normalized, "files");
+    const tarGz = path.join(filesDir, `${snapshotId}.tar.gz`);
+    const tarZst = path.join(filesDir, `${snapshotId}.tar.zst`);
+    let archive = `${snapshotId}.tar.gz`;
+    try {
+      await fs.access(tarGz);
+    } catch {
+      await fs.access(tarZst).catch(() => {
+        throw new HttpError(404, "Files backup archive not found.");
+      });
+      archive = `${snapshotId}.tar.zst`;
+    }
+    await restoreSiteFiles(normalized, { backupFile: archive });
+  }
+
+  if (restoreDb) {
+    const dbDir = path.join(BACKUP_ROOT, normalized, "db");
+    const archivePath = path.join(dbDir, `${snapshotId}.sql.gz`);
+    await fs.access(archivePath).catch(() => {
+      throw new HttpError(404, "Database backup archive not found.");
+    });
+    await restoreSiteDb(normalized, { backupFile: `${snapshotId}.sql.gz` });
+  }
+
+  return { ok: true, slug: normalized, restored: true, snapshotId };
+}
+
+export async function purgeSiteBackup(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  purged: true;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  await purgeSiteBackups(normalized);
+  return { ok: true, slug: normalized, purged: true };
 }
 
 export async function purgeSite(slug: string): Promise<{ ok: true; slug: string; purged: true }> {
@@ -849,9 +1485,11 @@ export async function purgeSite(slug: string): Promise<{ ok: true; slug: string;
   const dbNameAnnotation = annotations[SITE_ANNOTATIONS.dbName];
   const dbUserAnnotation = annotations[SITE_ANNOTATIONS.dbUser];
   if (dbEnabled || dbNameAnnotation || dbUserAnnotation) {
-    const dbName = dbNameAnnotation ?? resolveDbName(normalized);
-    const dbUser = dbUserAnnotation ?? resolveDbUser(normalized);
-    await dropDatabaseAndRole({ dbName, dbUser });
+    const dbName = dbNameAnnotation ? normalizeDbName(dbNameAnnotation) : resolveDbName(normalized);
+    const dbUser = dbUserAnnotation ? normalizeDbUser(dbUserAnnotation) : resolveDbUser(normalized);
+    await revokeAndTerminate(dbName);
+    await dropDatabase(dbName);
+    await dropRole(dbUser);
   }
 
   const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
@@ -859,7 +1497,7 @@ export async function purgeSite(slug: string): Promise<{ ok: true; slug: string;
     annotations[SITE_ANNOTATIONS.mailDomain]?.trim() ??
     annotations[SITE_ANNOTATIONS.domain]?.trim();
   if (mailDomain && (mailEnabled || annotations[SITE_ANNOTATIONS.mailDomain])) {
-    await purgeMailcowDomainResources(mailDomain);
+    await purgeMailcowDomain(mailDomain);
   }
 
   await purgeSiteBackups(normalized);

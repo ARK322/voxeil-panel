@@ -40,10 +40,20 @@ export const MailEnableSchema = z.object({
   domain: z.string().min(1)
 });
 
+export const DbEnableSchema = z.object({
+  dbName: z.string().min(1).optional()
+});
+
 export const MailboxCreateSchema = z.object({
   localPart: z.string().min(1),
   password: z.string().min(1),
   quotaMb: z.number().int().positive().optional()
+});
+
+export const AliasCreateSchema = z.object({
+  sourceLocalPart: z.string().min(1),
+  destination: z.string().min(1),
+  active: z.boolean().optional()
 });
 
 export type CreateSiteInput = z.infer<typeof CreateSiteSchema>;
@@ -52,7 +62,9 @@ export type DeploySiteInput = z.infer<typeof DeploySiteSchema>;
 export type PatchTlsInput = z.infer<typeof PatchTlsSchema>;
 export type ConfirmDeleteInput = z.infer<typeof ConfirmDeleteSchema>;
 export type MailEnableInput = z.infer<typeof MailEnableSchema>;
+export type DbEnableInput = z.infer<typeof DbEnableSchema>;
 export type MailboxCreateInput = z.infer<typeof MailboxCreateSchema>;
+export type AliasCreateInput = z.infer<typeof AliasCreateSchema>;
 
 export type SiteLimits = {
   cpu: number;
@@ -100,9 +112,15 @@ export type SiteListItem = {
   dbEnabled?: boolean;
   dbName?: string;
   dbUser?: string;
+  dbHost?: string;
+  dbPort?: number;
   dbSecret?: string;
   mailEnabled?: boolean;
+  mailDomain?: string;
   backupEnabled?: boolean;
+  backupRetentionDays?: number;
+  backupSchedule?: string;
+  backupLastRunAt?: string;
   cpu?: number;
   ramGi?: number;
   diskGi?: number;

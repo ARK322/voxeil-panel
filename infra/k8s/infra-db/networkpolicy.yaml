@@ -20,9 +20,9 @@ spec:
           podSelector:
             matchLabels:
               app: controller
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: backup-zone
+          - namespaceSelector:
+              matchLabels:
+                kubernetes.io/metadata.name: backup
       ports:
         - protocol: TCP
           port: 5432
