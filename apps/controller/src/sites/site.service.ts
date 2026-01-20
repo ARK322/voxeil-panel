@@ -1465,7 +1465,14 @@ export async function purgeSiteBackup(slug: string): Promise<{
   } catch (error: any) {
     throw new HttpError(400, error?.message ?? "Invalid slug.");
   }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  await deleteBackupCronJob(normalized);
   await purgeSiteBackups(normalized);
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.backupEnabled]: "false",
+    [SITE_ANNOTATIONS.backupLastRunAt]: ""
+  });
   return { ok: true, slug: normalized, purged: true };
 }
 

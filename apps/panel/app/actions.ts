@@ -8,24 +8,34 @@ import { clearSession, requireSession } from "./lib/session.js";
 export async function createSiteAction(formData: FormData) {
   requireSession();
 
-  const siteId = String(formData.get("siteId") ?? "").trim();
-  const image = String(formData.get("image") ?? "").trim();
-  const containerPort = Number(formData.get("containerPort") ?? "3000");
+  const domain = String(formData.get("domain") ?? "").trim();
+  const cpu = Number(formData.get("cpu") ?? "1");
+  const ramGi = Number(formData.get("ramGi") ?? "2");
+  const diskGi = Number(formData.get("diskGi") ?? "10");
+  const tlsEnabled = String(formData.get("tlsEnabled") ?? "") === "on";
+  const tlsIssuer = String(formData.get("tlsIssuer") ?? "").trim();
 
-  if (!siteId || !image || Number.isNaN(containerPort)) {
-    throw new Error("siteId, image, and containerPort are required.");
+  if (!domain || Number.isNaN(cpu) || Number.isNaN(ramGi) || Number.isNaN(diskGi)) {
+    throw new Error("domain, cpu, ramGi, and diskGi are required.");
   }
 
-  await createSite({ siteId, image, containerPort });
+  await createSite({
+    domain,
+    cpu,
+    ramGi,
+    diskGi,
+    tlsEnabled: tlsEnabled || undefined,
+    tlsIssuer: tlsIssuer || undefined
+  });
   revalidatePath("/");
 }
 
 export async function deleteSiteAction(formData: FormData) {
   requireSession();
-  const siteId = String(formData.get("siteId") ?? "").trim();
-  if (!siteId) throw new Error("siteId is required.");
+  const slug = String(formData.get("slug") ?? "").trim();
+  if (!slug) throw new Error("slug is required.");
 
-  await deleteSite(siteId);
+  await deleteSite(slug);
   revalidatePath("/");
 }
 

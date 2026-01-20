@@ -22,11 +22,6 @@ if [[ -z "${GHCR_TOKEN:-}" ]]; then
 fi
 GHCR_EMAIL="${GHCR_EMAIL:-}"
 LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-}"
-TLS_ENABLED_RAW="${TLS_ENABLED:-false}"
-case "${TLS_ENABLED_RAW,,}" in
-  true|1|yes) TLS_ENABLED=true ;;
-  *) TLS_ENABLED=false ;;
-esac
 
 # ========= inputs (defaults only) =========
 PANEL_NODEPORT="${PANEL_NODEPORT:-30080}"
@@ -35,11 +30,14 @@ CONTROLLER_NODEPORT="${CONTROLLER_NODEPORT:-30081}"
 SITE_PORT_START="${SITE_PORT_START:-31000}"
 SITE_PORT_END="${SITE_PORT_END:-31999}"
 ALLOW_IP="${ALLOW_IP:-}"
-INSTALL_MAILCOW="${INSTALL_MAILCOW:-N}"
 CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-}"
 PANEL_IMAGE="${PANEL_IMAGE:-}"
 if [[ -z "${CONTROLLER_IMAGE}" ]]; then echo "CONTROLLER_IMAGE env var is required."; exit 1; fi
 if [[ -z "${PANEL_IMAGE}" ]]; then echo "PANEL_IMAGE env var is required."; exit 1; fi
+if [[ -z "${LETSENCRYPT_EMAIL}" ]]; then
+  echo "LETSENCRYPT_EMAIL env var is required."
+  exit 1
+fi
 
 CONTROLLER_API_KEY="$(rand)"
 PANEL_ADMIN_PASSWORD="$(rand)"
@@ -62,21 +60,11 @@ echo "  Panel NodePort: ${PANEL_NODEPORT}"
 echo "  Controller NodePort (optional): ${CONTROLLER_NODEPORT} (enabled? ${EXPOSE_CONTROLLER})"
 echo "  Site NodePort range: ${SITE_PORT_START}-${SITE_PORT_END}"
 echo "  Allowlist: ${ALLOW_IP:-<none>}"
-echo "  Install mailcow zone: ${INSTALL_MAILCOW}"
 echo "  GHCR Username: ${GHCR_USERNAME}"
 echo "  GHCR Email: ${GHCR_EMAIL:-<none>}"
 echo "  Mailcow API URL: ${MAILCOW_API_URL}"
-if [[ -n "${LETSENCRYPT_EMAIL}" ]]; then
-  echo "  Let's Encrypt Email: ${LETSENCRYPT_EMAIL}"
-else
-  echo "  Let's Encrypt Email: <unset>"
-fi
-if [[ "${TLS_ENABLED}" == "true" && -z "${LETSENCRYPT_EMAIL}" ]]; then
-  echo "  Warning: TLS requested but LETSENCRYPT_EMAIL is missing."
-fi
-if [[ "${TLS_ENABLED}" != "true" ]]; then
-  echo "  TLS: disabled (site-based; opt-in)"
-fi
+echo "  Let's Encrypt Email: ${LETSENCRYPT_EMAIL}"
+echo "  TLS: enabled via cert-manager (site-based; opt-in)"
 echo ""
 
 # ========= install k3s if needed =========
@@ -188,23 +176,21 @@ if [[ -d "${RENDER_DIR}/backup" ]]; then
   fi
 fi
 
-if [[ "${INSTALL_MAILCOW}" =~ ^[Yy]$ && -d "${RENDER_DIR}/mailcow" ]]; then
+if [[ -d "${RENDER_DIR}/mailcow" ]]; then
   echo "Applying mailcow manifests..."
   kubectl apply -f "${RENDER_DIR}/mailcow/namespace.yaml"
   kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-secrets.yaml"
   kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-core.yaml"
   kubectl apply -f "${RENDER_DIR}/mailcow/networkpolicy.yaml"
+  if [[ -d "${RENDER_DIR}/mailcow/traefik-tcp" ]]; then
+    kubectl apply -f "${RENDER_DIR}/mailcow/traefik-tcp"
+  fi
 fi
 
 echo "Installing cert-manager (cluster-wide)..."
 kubectl apply -f "${RENDER_DIR}/cert-manager/cert-manager.yaml"
-if [[ -n "${LETSENCRYPT_EMAIL}" ]]; then
-  echo "Applying ClusterIssuers."
-  kubectl apply -f "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
-else
-  echo "Warning: LETSENCRYPT_EMAIL is not set; skipping ClusterIssuers."
-  echo "         TLS cannot be enabled for sites until an email is configured."
-fi
+echo "Applying ClusterIssuers."
+kubectl apply -f "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
 
 if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
   kubectl apply -f "${RENDER_DIR}/platform/controller-nodeport.yaml"
@@ -235,4 +221,11 @@ echo "Panel admin password: ${PANEL_ADMIN_PASSWORD}"
 echo "Controller API key: ${CONTROLLER_API_KEY}"
 echo "Postgres: ${POSTGRES_HOST}:${POSTGRES_PORT} (admin user: ${POSTGRES_ADMIN_USER})"
 echo "Controller DB creds stored in platform-secrets (POSTGRES_ADMIN_PASSWORD)."
+echo ""
+echo "Next steps:"
+echo "- Log in to the panel and create your first site."
+echo "- Deploy a site image via POST /sites/:slug/deploy."
+echo "- Point DNS to this server and enable TLS per site via PATCH /sites/:slug/tls."
+echo "- Configure Mailcow DNS (MX/SPF/DKIM) before enabling mail."
+echo "- Verify backups in /backups/sites if backups are enabled."
 echo ""

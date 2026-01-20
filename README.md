@@ -27,6 +27,8 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
      - `GHCR_USERNAME`
      - `GHCR_TOKEN` (PAT with `read:packages`)
      - `GHCR_EMAIL` (optional)
+   - Provide Let's Encrypt email:
+     - `LETSENCRYPT_EMAIL`
    The installer will ask for:
    - Panel NodePort
    - Optional controller NodePort (admin-only)
@@ -47,8 +49,24 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 ### Phase 3 TLS (cert-manager)
 - cert-manager is cluster-wide and always installed by the installer.
 - TLS is site-based and opt-in via `PATCH /sites/:slug/tls`.
-- `LETSENCRYPT_EMAIL` is required only when enabling TLS for a site.
+- `LETSENCRYPT_EMAIL` is required at install time to configure ClusterIssuers.
 - TLS secret naming: `tls-<slug>` (per-site, deterministic).
+
+Ingress snapshot (TLS enabled):
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+spec:
+  tls:
+  - hosts: [app.example.com]
+    secretName: tls-app-example-com
+```
 
 ### Security baseline
 - Controller enforces `X-API-Key` on all routes except `/health`.

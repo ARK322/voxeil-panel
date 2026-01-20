@@ -1,5 +1,6 @@
 import type { V1Secret } from "@kubernetes/client-node";
 import { getClients, LABELS } from "./client.js";
+import { ensureTenantSecretRbac } from "./rbac.js";
 import { HttpError } from "../http/errors.js";
 
 export const GHCR_PULL_SECRET_NAME = "ghcr-pull-secret";
@@ -22,6 +23,7 @@ async function readPlatformSecret(name: string): Promise<V1Secret> {
 }
 
 export async function ensureGhcrPullSecret(namespace: string, slug: string): Promise<void> {
+  await ensureTenantSecretRbac(namespace);
   const { core } = getClients();
   const source = await readPlatformSecret(GHCR_PULL_SECRET_NAME);
   const secret: V1Secret = {
@@ -47,6 +49,7 @@ export async function ensureGhcrPullSecret(namespace: string, slug: string): Pro
 }
 
 export async function readSecret(namespace: string, name: string): Promise<V1Secret | null> {
+  await ensureTenantSecretRbac(namespace);
   const { core } = getClients();
   try {
     const result = await core.readNamespacedSecret(name, namespace);
@@ -64,6 +67,7 @@ export async function upsertSecret(secret: V1Secret): Promise<void> {
   if (!name || !namespace) {
     throw new HttpError(500, "Secret name/namespace missing.");
   }
+  await ensureTenantSecretRbac(namespace);
   try {
     await core.createNamespacedSecret(namespace, secret);
   } catch (error: any) {
@@ -92,6 +96,7 @@ export async function upsertSecret(secret: V1Secret): Promise<void> {
 }
 
 export async function deleteSecret(namespace: string, name: string): Promise<void> {
+  await ensureTenantSecretRbac(namespace);
   const { core } = getClients();
   try {
     await core.deleteNamespacedSecret(name, namespace);

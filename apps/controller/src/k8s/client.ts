@@ -11,6 +11,7 @@ type Clients = {
   apps: k8s.AppsV1Api;
   net: k8s.NetworkingV1Api;
   batch: k8s.BatchV1Api;
+  rbac: k8s.RbacAuthorizationV1Api;
 };
 
 let cached: Clients | null = null;
@@ -29,7 +30,8 @@ export function getClients(): Clients {
     core: kc.makeApiClient(k8s.CoreV1Api),
     apps: kc.makeApiClient(k8s.AppsV1Api),
     net: kc.makeApiClient(k8s.NetworkingV1Api),
-    batch: kc.makeApiClient(k8s.BatchV1Api)
+    batch: kc.makeApiClient(k8s.BatchV1Api),
+    rbac: kc.makeApiClient(k8s.RbacAuthorizationV1Api)
   };
 
   return cached;

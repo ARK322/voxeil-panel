@@ -22,16 +22,30 @@ export default async function HomePage() {
         <h2>Create site</h2>
         <form action={createSiteAction} style={{ display: "grid", gap: 12, maxWidth: 420 }}>
           <label style={{ display: "grid", gap: 6 }}>
-            <span>Site ID (lowercase, a-z0-9-)</span>
-            <input name="siteId" minLength={3} maxLength={40} pattern="[a-z0-9-]+" required />
+            <span>Domain</span>
+            <input name="domain" type="text" placeholder="app.example.com" required />
           </label>
           <label style={{ display: "grid", gap: 6 }}>
-            <span>Image (registry/user:tag)</span>
-            <input name="image" required />
+            <span>CPU (cores)</span>
+            <input name="cpu" type="number" min={1} defaultValue={1} required />
           </label>
           <label style={{ display: "grid", gap: 6 }}>
-            <span>Container port</span>
-            <input name="containerPort" type="number" defaultValue={3000} min={1} required />
+            <span>RAM (Gi)</span>
+            <input name="ramGi" type="number" min={1} defaultValue={2} required />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Disk (Gi)</span>
+            <input name="diskGi" type="number" min={1} defaultValue={10} required />
+          </label>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>TLS</span>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <input name="tlsEnabled" type="checkbox" />
+              <select name="tlsIssuer" defaultValue="letsencrypt-staging">
+                <option value="letsencrypt-staging">letsencrypt-staging</option>
+                <option value="letsencrypt-prod">letsencrypt-prod</option>
+              </select>
+            </div>
           </label>
           <button type="submit" style={{ padding: "10px 16px" }}>Create</button>
         </form>
@@ -47,12 +61,15 @@ export default async function HomePage() {
               <li key={site.namespace} style={{ border: "1px solid #e2e8f0", borderRadius: 8, padding: 12 }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
-                    <div style={{ fontWeight: 600 }}>{site.siteId ?? "unknown"}</div>
+                    <div style={{ fontWeight: 600 }}>{site.slug}</div>
                     <div style={{ color: "#475569", fontSize: 14 }}>{site.namespace}</div>
+                    {site.domain ? (
+                      <div style={{ color: "#475569", fontSize: 14 }}>{site.domain}</div>
+                    ) : null}
                   </div>
-                  {site.siteId ? (
+                  {site.slug ? (
                     <form action={deleteSiteAction}>
-                      <input type="hidden" name="siteId" value={site.siteId} />
+                      <input type="hidden" name="slug" value={site.slug} />
                       <button type="submit" style={{ color: "crimson" }}>Delete</button>
                     </form>
                   ) : null}
