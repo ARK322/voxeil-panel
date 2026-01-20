@@ -7,9 +7,10 @@ data:
   named.conf.options: |
     options {
       directory "/var/cache/bind";
-      recursion yes;
+      recursion no;
       allow-query { any; };
-      allow-recursion { any; };
+      allow-recursion { none; };
+      allow-query-cache { none; };
       listen-on { any; };
       listen-on-v6 { any; };
       dnssec-validation auto;
@@ -24,6 +25,7 @@ metadata:
 data:
   named.conf.local: |
     // Managed by Voxeil controller.
+    include "/etc/bind/tsig/tsig.conf";
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -40,6 +42,35 @@ spec:
       labels:
         app: bind9
     spec:
+      initContainers:
+        - name: render-tsig
+          image: busybox:1.36
+          command: ["/bin/sh","-c"]
+          args:
+            - >
+              set -eu;
+              mkdir -p /etc/bind/tsig;
+              umask 177;
+              printf 'key "%s" { algorithm %s; secret "%s"; };\n' "$TSIG_NAME" "$TSIG_ALG" "$TSIG_SECRET" > /etc/bind/tsig/tsig.conf
+          env:
+            - name: TSIG_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: bind9-tsig
+                  key: TSIG_NAME
+            - name: TSIG_ALG
+              valueFrom:
+                secretKeyRef:
+                  name: bind9-tsig
+                  key: TSIG_ALG
+            - name: TSIG_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bind9-tsig
+                  key: TSIG_SECRET
+          volumeMounts:
+            - name: tsig
+              mountPath: /etc/bind/tsig
       containers:
         - name: bind9
           image: internetsystemsconsortium/bind9:9.18
@@ -59,6 +90,9 @@ spec:
               subPath: named.conf.local
             - name: zones
               mountPath: /etc/bind/zones
+            - name: tsig
+              mountPath: /etc/bind/tsig
+              readOnly: true
       volumes:
         - name: config
           configMap:
@@ -66,6 +100,8 @@ spec:
         - name: zones
           configMap:
             name: bind9-zones
+        - name: tsig
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service

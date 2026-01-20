@@ -4,8 +4,30 @@ metadata:
   name: traefik
   namespace: kube-system
 spec:
-  valuesContent: |
+  valuesContent: |-
     ports:
+      web:
+        port: 80
+        expose: true
+        exposedPort: 80
+        protocol: TCP
+      websecure:
+        port: 443
+        expose: true
+        exposedPort: 443
+        protocol: TCP
+        tls:
+          enabled: true
+      dns-tcp:
+        port: 53
+        expose: true
+        exposedPort: 53
+        protocol: TCP
+      dns-udp:
+        port: 53
+        expose: true
+        exposedPort: 53
+        protocol: UDP
       smtp:
         port: 25
         expose: true
@@ -41,13 +63,3 @@ spec:
         expose: true
         exposedPort: 995
         protocol: TCP
-      dns-tcp:
-        port: 53
-        expose: true
-        exposedPort: 53
-        protocol: TCP
-      dns-udp:
-        port: 53
-        expose: true
-        exposedPort: 53
-        protocol: UDP

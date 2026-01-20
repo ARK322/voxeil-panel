@@ -148,20 +148,37 @@ if [[ ! -d infra/k8s/platform ]]; then
   echo "infra/k8s/platform is missing; run from the repository root or download the full archive."
   exit 1
 fi
+if [[ ! -d infra/k8s/infra-db ]]; then
+  echo "infra/k8s/infra-db is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+if [[ ! -d infra/k8s/dns ]]; then
+  echo "infra/k8s/dns is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+if [[ ! -d infra/k8s/mailcow ]]; then
+  echo "infra/k8s/mailcow is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+if [[ ! -d infra/k8s/backup ]]; then
+  echo "infra/k8s/backup is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+if [[ ! -d infra/k8s/cert-manager ]]; then
+  echo "infra/k8s/cert-manager is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+if [[ ! -d infra/k8s/traefik ]]; then
+  echo "infra/k8s/traefik is missing; run from the repository root or download the full archive."
+  exit 1
+fi
 cp -r infra/k8s/platform "${RENDER_DIR}/platform"
-if [[ -d infra/k8s/mailcow ]]; then
-  cp -r infra/k8s/mailcow "${RENDER_DIR}/mailcow"
-fi
-if [[ -d infra/k8s/infra-db ]]; then
-  cp -r infra/k8s/infra-db "${RENDER_DIR}/infra-db"
-fi
-if [[ -d infra/k8s/backup ]]; then
-  cp -r infra/k8s/backup "${RENDER_DIR}/backup"
-fi
-if [[ -d infra/k8s/dns ]]; then
-  cp -r infra/k8s/dns "${RENDER_DIR}/dns"
-fi
+cp -r infra/k8s/mailcow "${RENDER_DIR}/mailcow"
+cp -r infra/k8s/infra-db "${RENDER_DIR}/infra-db"
+cp -r infra/k8s/backup "${RENDER_DIR}/backup"
+cp -r infra/k8s/dns "${RENDER_DIR}/dns"
 cp -r infra/k8s/cert-manager "${RENDER_DIR}/cert-manager"
+cp -r infra/k8s/traefik "${RENDER_DIR}/traefik"
 
 cat > "${RENDER_DIR}/platform/platform-secrets.yaml" <<EOF
 apiVersion: v1
@@ -186,8 +203,7 @@ stringData:
   POSTGRES_DB: "${POSTGRES_DB}"
 EOF
 
-if [[ -d "${RENDER_DIR}/mailcow" ]]; then
-  cat > "${RENDER_DIR}/mailcow/mailcow-secrets.yaml" <<EOF
+cat > "${RENDER_DIR}/mailcow/mailcow-secrets.yaml" <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -200,7 +216,6 @@ stringData:
   MYSQL_PASSWORD: "${MAILCOW_DB_PASSWORD}"
   MYSQL_ROOT_PASSWORD: "${MAILCOW_DB_ROOT_PASSWORD}"
 EOF
-fi
 
 echo "Templating manifests..."
 sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE}|g" "${RENDER_DIR}/platform/controller-deploy.yaml"
@@ -211,21 +226,34 @@ sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${RENDER_DIR}/platfor
 if [[ -n "${LETSENCRYPT_EMAIL}" ]]; then
   sed -i "s|REPLACE_LETSENCRYPT_EMAIL|${LETSENCRYPT_EMAIL}|g" "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
 fi
-if [[ -d "${RENDER_DIR}/infra-db" ]]; then
-  sed -i "s|REPLACE_POSTGRES_PASSWORD|${POSTGRES_PASSWORD}|g" "${RENDER_DIR}/infra-db/postgres-secret.yaml"
-  sed -i "s|REPLACE_PGADMIN_EMAIL|${PGADMIN_EMAIL}|g" "${RENDER_DIR}/infra-db/pgadmin-secret.yaml"
-  sed -i "s|REPLACE_PGADMIN_PASSWORD|${PGADMIN_PASSWORD}|g" "${RENDER_DIR}/infra-db/pgadmin-secret.yaml"
-  sed -i "s|REPLACE_PGADMIN_DOMAIN|${PGADMIN_DOMAIN}|g" "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
-  sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
-fi
-if [[ -d "${RENDER_DIR}/mailcow" ]]; then
-  sed -i "s|REPLACE_MAILCOW_HOSTNAME|${MAILCOW_DOMAIN}|g" "${RENDER_DIR}/mailcow/mailcow-core.yaml"
-  sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN}|g" "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
-  sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER}|g" "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
-fi
+sed -i "s|REPLACE_POSTGRES_PASSWORD|${POSTGRES_PASSWORD}|g" "${RENDER_DIR}/infra-db/postgres-secret.yaml"
+sed -i "s|REPLACE_PGADMIN_EMAIL|${PGADMIN_EMAIL}|g" "${RENDER_DIR}/infra-db/pgadmin-secret.yaml"
+sed -i "s|REPLACE_PGADMIN_PASSWORD|${PGADMIN_PASSWORD}|g" "${RENDER_DIR}/infra-db/pgadmin-secret.yaml"
+sed -i "s|REPLACE_PGADMIN_DOMAIN|${PGADMIN_DOMAIN}|g" "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
+sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
+sed -i "s|REPLACE_MAILCOW_HOSTNAME|${MAILCOW_DOMAIN}|g" "${RENDER_DIR}/mailcow/mailcow-core.yaml"
+sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN}|g" "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
+sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER}|g" "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
 
 # ========= apply =========
-echo "Applying platform manifests..."
+echo "Applying Traefik entrypoints config..."
+kubectl apply -f "${RENDER_DIR}/traefik"
+
+echo "Installing cert-manager (cluster-wide)..."
+kubectl apply -f "${RENDER_DIR}/cert-manager/cert-manager.yaml"
+kubectl wait --for=condition=Established crd/certificates.cert-manager.io --timeout=180s
+kubectl wait --for=condition=Established crd/certificaterequests.cert-manager.io --timeout=180s
+kubectl wait --for=condition=Established crd/challenges.acme.cert-manager.io --timeout=180s
+kubectl wait --for=condition=Established crd/clusterissuers.cert-manager.io --timeout=180s
+kubectl wait --for=condition=Established crd/issuers.cert-manager.io --timeout=180s
+kubectl wait --for=condition=Established crd/orders.acme.cert-manager.io --timeout=180s
+kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout=180s
+kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=180s
+kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout=180s
+echo "Applying ClusterIssuers."
+kubectl apply -f "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
+
+echo "Applying platform base manifests..."
 kubectl apply -f "${RENDER_DIR}/platform/namespace.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/rbac.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/platform-secrets.yaml"
@@ -240,49 +268,48 @@ if [[ -n "${GHCR_USERNAME}" && -n "${GHCR_TOKEN}" ]]; then
 else
   echo "Skipping GHCR pull secret (public images)."
 fi
+
+echo "Applying infra DB manifests..."
+kubectl apply -f "${RENDER_DIR}/infra-db/namespace.yaml"
+kubectl apply -f "${RENDER_DIR}/infra-db/postgres-secret.yaml"
+kubectl apply -f "${RENDER_DIR}/infra-db/postgres-service.yaml"
+kubectl apply -f "${RENDER_DIR}/infra-db/postgres-statefulset.yaml"
+kubectl apply -f "${RENDER_DIR}/infra-db/networkpolicy.yaml"
+kubectl apply -f "${RENDER_DIR}/infra-db/pgadmin-secret.yaml"
+kubectl apply -f "${RENDER_DIR}/infra-db/pgadmin-svc.yaml"
+kubectl apply -f "${RENDER_DIR}/infra-db/pgadmin-deploy.yaml"
+
+echo "Applying DNS (bind9) manifests..."
+kubectl apply -f "${RENDER_DIR}/dns/namespace.yaml"
+kubectl apply -f "${RENDER_DIR}/dns/tsig-secret.yaml"
+kubectl apply -f "${RENDER_DIR}/dns/bind9.yaml"
+kubectl apply -f "${RENDER_DIR}/dns/traefik-tcp"
+
+echo "Applying mailcow manifests..."
+kubectl apply -f "${RENDER_DIR}/mailcow/namespace.yaml"
+kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-secrets.yaml"
+kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-core.yaml"
+kubectl apply -f "${RENDER_DIR}/mailcow/networkpolicy.yaml"
+kubectl apply -f "${RENDER_DIR}/mailcow/traefik-tcp"
+
+echo "Applying backup manifests..."
+mkdir -p /backups/sites
+kubectl apply -f "${RENDER_DIR}/backup/namespace.yaml"
+kubectl apply -f "${RENDER_DIR}/backup/serviceaccount.yaml"
+kubectl apply -f "${RENDER_DIR}/backup/rbac.yaml"
+kubectl apply -f "${RENDER_DIR}/backup/backup-script-configmap.yaml"
+kubectl apply -f "${RENDER_DIR}/backup/backup-cronjob.yaml"
+
+echo "Applying platform workloads..."
 kubectl apply -f "${RENDER_DIR}/platform/controller-deploy.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/controller-svc.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/panel-deploy.yaml"
 kubectl apply -f "${RENDER_DIR}/platform/panel-svc.yaml"
+
+echo "Applying ingresses..."
 kubectl apply -f "${RENDER_DIR}/platform/panel-ingress.yaml"
-
-if [[ -d "${RENDER_DIR}/infra-db" ]]; then
-  echo "Applying infra DB manifests..."
-  kubectl apply -f "${RENDER_DIR}/infra-db"
-fi
-
-if [[ -d "${RENDER_DIR}/backup" ]]; then
-  echo "Applying backup manifests..."
-  mkdir -p /backups/sites
-  if ! kubectl apply -f "${RENDER_DIR}/backup"; then
-    echo "Warning: failed to apply backup manifests; continuing install."
-  fi
-fi
-
-if [[ -d "${RENDER_DIR}/dns" ]]; then
-  echo "Applying DNS (bind9) manifests..."
-  kubectl apply -f "${RENDER_DIR}/dns/namespace.yaml"
-  kubectl apply -f "${RENDER_DIR}/dns/bind9.yaml"
-  if [[ -d "${RENDER_DIR}/dns/traefik-tcp" ]]; then
-    kubectl apply -f "${RENDER_DIR}/dns/traefik-tcp"
-  fi
-fi
-
-if [[ -d "${RENDER_DIR}/mailcow" ]]; then
-  echo "Applying mailcow manifests..."
-  kubectl apply -f "${RENDER_DIR}/mailcow/namespace.yaml"
-  kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-secrets.yaml"
-  kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-core.yaml"
-  kubectl apply -f "${RENDER_DIR}/mailcow/networkpolicy.yaml"
-  if [[ -d "${RENDER_DIR}/mailcow/traefik-tcp" ]]; then
-    kubectl apply -f "${RENDER_DIR}/mailcow/traefik-tcp"
-  fi
-fi
-
-echo "Installing cert-manager (cluster-wide)..."
-kubectl apply -f "${RENDER_DIR}/cert-manager/cert-manager.yaml"
-echo "Applying ClusterIssuers."
-kubectl apply -f "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
+kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
+kubectl apply -f "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
 
 echo "Controller stays internal (no NodePort)."
 

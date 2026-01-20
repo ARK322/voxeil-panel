@@ -1,0 +1,35 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: infra-backup-runner
+  namespace: backup
+spec:
+  schedule: "0 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: backup-runner
+          restartPolicy: OnFailure
+          containers:
+            - name: runner
+              image: bitnami/kubectl:latest
+              command: ["/bin/sh","-c"]
+              args: ["chmod +x /scripts/run.sh && /scripts/run.sh"]
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                - name: backups
+                  mountPath: /backups/sites
+          volumes:
+            - name: scripts
+              configMap:
+                name: backup-scripts
+                defaultMode: 0755
+            - name: backups
+              hostPath:
+                path: /backups/sites
+                type: DirectoryOrCreate
