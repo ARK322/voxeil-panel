@@ -35,6 +35,7 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
    - Controller API key (stored in `platform-secrets`)
    - Panel URL: `https://<PANEL_DOMAIN>`
   - pgAdmin URL: `https://pgadmin.<PANEL_DOMAIN>`
+  - Mailcow UI: `https://mail.<PANEL_DOMAIN>`
   - Note: `SITE_NODEPORT_START/END` are reserved for Phase 3 and currently unused by the controller.
 
 ### Phase 2 publish

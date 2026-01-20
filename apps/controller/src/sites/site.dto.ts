@@ -23,7 +23,8 @@ export const PatchLimitsSchema = z
 
 export const DeploySiteSchema = z.object({
   image: z.string().min(1),
-  containerPort: z.number().int().positive()
+  containerPort: z.number().int().positive(),
+  uploadDirs: z.array(z.string().min(1)).optional()
 });
 
 export const PatchTlsSchema = z.object({
@@ -50,7 +51,8 @@ export const GithubEnableSchema = z.object({
   branch: z.string().min(1).optional(),
   workflow: z.string().min(1).optional(),
   image: z.string().min(1),
-  token: z.string().min(1)
+  token: z.string().min(1),
+  webhookSecret: z.string().min(1).optional()
 });
 
 export const GithubDeploySchema = z.object({

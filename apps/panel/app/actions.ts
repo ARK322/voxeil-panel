@@ -34,8 +34,8 @@ import {
   runSiteBackup,
   restoreSiteBackup,
   purgeSiteBackup
-} from "./lib/controller.js";
-import { clearSession, requireSession } from "./lib/session.js";
+} from "./lib/controller";
+import { clearSession, requireSession } from "./lib/session";
 
 export async function createSiteAction(formData: FormData) {
   const session = await requireSession();
@@ -98,6 +98,7 @@ export async function enableGithubAction(formData: FormData) {
   const workflow = String(formData.get("workflow") ?? "").trim();
   const image = String(formData.get("image") ?? "").trim();
   const token = String(formData.get("token") ?? "").trim();
+  const webhookSecret = String(formData.get("webhookSecret") ?? "").trim();
   if (!slug || !repo || !image || !token) {
     throw new Error("slug, repo, image, and token are required.");
   }
@@ -108,7 +109,8 @@ export async function enableGithubAction(formData: FormData) {
     branch: branch || undefined,
     workflow: workflow || undefined,
     image,
-    token
+    token,
+    webhookSecret: webhookSecret || undefined
   });
   revalidatePath("/");
 }

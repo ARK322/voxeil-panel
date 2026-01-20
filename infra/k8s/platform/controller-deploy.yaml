@@ -4,7 +4,7 @@ metadata:
   name: controller
   namespace: platform
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: controller
@@ -19,6 +19,18 @@ spec:
           image: REPLACE_CONTROLLER_IMAGE
           ports:
             - containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 20
           volumeMounts:
             - name: backups
               mountPath: /backups

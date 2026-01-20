@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { getSessionToken } from "../lib/session.js";
+import { getSessionToken } from "../lib/session";
 import { LoginForm } from "./login-form";
 
 export default function LoginPage() {

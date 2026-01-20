@@ -44,12 +44,14 @@ export async function requireSession(): Promise<SessionInfo> {
 }
 
 export function establishSession(token: string) {
+  const secureCookie =
+    process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
   cookies().set({
     name: SESSION_COOKIE,
     value: token,
     httpOnly: true,
     sameSite: "lax",
-    secure: false,
+    secure: secureCookie,
     path: "/",
     maxAge: SESSION_TTL_SECONDS
   });

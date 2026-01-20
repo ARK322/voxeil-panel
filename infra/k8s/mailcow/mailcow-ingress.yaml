@@ -1,0 +1,25 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: mailcow
+  namespace: mail-zone
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    cert-manager.io/cluster-issuer: REPLACE_MAILCOW_TLS_ISSUER
+spec:
+  tls:
+    - hosts:
+        - REPLACE_MAILCOW_DOMAIN
+      secretName: tls-mailcow
+  rules:
+    - host: REPLACE_MAILCOW_DOMAIN
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: mailcow-api
+                port:
+                  number: 80

@@ -4,7 +4,7 @@ metadata:
   name: mailcow-config
   namespace: mail-zone
 data:
-  MAILCOW_HOSTNAME: "mail.example.com"
+  MAILCOW_HOSTNAME: "REPLACE_MAILCOW_HOSTNAME"
   TZ: "UTC"
 ---
 apiVersion: v1

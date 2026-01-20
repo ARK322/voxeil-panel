@@ -1,9 +1,11 @@
 import type { V1Deployment, V1Ingress, V1Service } from "@kubernetes/client-node";
 import { LABELS } from "./client.js";
+import { TENANT_PVC_NAME } from "./pvc.js";
 
 export const APP_DEPLOYMENT_NAME = "app";
 export const SERVICE_NAME = "web";
 export const INGRESS_NAME = "web";
+const DEFAULT_UPLOAD_DIRS = ["/app/public/uploads"];
 
 type PublishSpec = {
   namespace: string;
@@ -16,6 +18,7 @@ type PublishSpec = {
   tlsEnabled?: boolean;
   tlsIssuer?: string;
   imagePullSecretName?: string;
+  uploadDirs?: string[];
 };
 
 function buildSelector(slug: string): Record<string, string> {
@@ -25,11 +28,22 @@ function buildSelector(slug: string): Record<string, string> {
   };
 }
 
+function resolveUploadDirs(uploadDirs?: string[]): string[] {
+  const values = uploadDirs?.length ? uploadDirs : DEFAULT_UPLOAD_DIRS;
+  const unique = new Set<string>();
+  for (const entry of values) {
+    const trimmed = entry.trim();
+    if (trimmed) unique.add(trimmed);
+  }
+  return unique.size > 0 ? Array.from(unique) : DEFAULT_UPLOAD_DIRS;
+}
+
 export function buildDeployment(spec: PublishSpec): V1Deployment {
   const selector = buildSelector(spec.slug);
   const imagePullSecrets = spec.imagePullSecretName
     ? [{ name: spec.imagePullSecretName }]
     : undefined;
+  const uploadDirs = resolveUploadDirs(spec.uploadDirs);
   return {
     apiVersion: "apps/v1",
     kind: "Deployment",
@@ -60,6 +74,10 @@ export function buildDeployment(spec: PublishSpec): V1Deployment {
               name: "app",
               image: spec.image,
               ports: [{ containerPort: spec.containerPort }],
+              volumeMounts: uploadDirs.map((mountPath) => ({
+                name: TENANT_PVC_NAME,
+                mountPath
+              })),
               resources: {
                 requests: {
                   cpu: String(spec.cpu),
@@ -69,6 +87,14 @@ export function buildDeployment(spec: PublishSpec): V1Deployment {
                   cpu: String(spec.cpu),
                   memory: `${spec.ramGi}Gi`
                 }
+              }
+            }
+          ],
+          volumes: [
+            {
+              name: TENANT_PVC_NAME,
+              persistentVolumeClaim: {
+                claimName: TENANT_PVC_NAME
               }
             }
           ]

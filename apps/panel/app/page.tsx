@@ -38,8 +38,9 @@ import {
   listSiteMailboxes,
   listSiteAliases,
   listSiteBackupSnapshots
-} from "./lib/controller.js";
-import { requireSession } from "./lib/session.js";
+} from "./lib/controller";
+import { requireSession } from "./lib/session";
+import { LogStream } from "./components/log-stream";
 
 export default async function HomePage() {
   const session = await requireSession();
@@ -265,6 +266,10 @@ export default async function HomePage() {
                         <span>GitHub Token</span>
                         <input name="token" type="password" required />
                       </label>
+                      <label style={{ display: "grid", gap: 6 }}>
+                        <span>Webhook Secret</span>
+                        <input name="webhookSecret" type="password" placeholder="optional but recommended" />
+                      </label>
                       <button type="submit">Save GitHub Config</button>
                     </form>
                     <form action={deployGithubAction} style={{ display: "grid", gap: 8 }}>
@@ -299,6 +304,12 @@ export default async function HomePage() {
                       <input type="hidden" name="slug" value={site.slug} />
                       <button type="submit" style={{ color: "crimson" }}>Disable GitHub</button>
                     </form>
+                  </div>
+                </details>
+                <details style={{ marginTop: 12 }}>
+                  <summary style={{ cursor: "pointer" }}>Logs</summary>
+                  <div style={{ marginTop: 12 }}>
+                    <LogStream slug={site.slug} />
                   </div>
                 </details>
                 <details style={{ marginTop: 12 }}>

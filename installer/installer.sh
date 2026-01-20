@@ -69,6 +69,10 @@ prompt_required() {
 echo ""
 echo "== Config prompts =="
 LETSENCRYPT_EMAIL="$(prompt_required "Let's Encrypt email" "${LETSENCRYPT_EMAIL}")"
+if [[ -z "${LETSENCRYPT_EMAIL}" ]]; then
+  echo "LETSENCRYPT_EMAIL must be set"
+  exit 1
+fi
 PANEL_DOMAIN="$(prompt_required "Panel domain (e.g. panel.example.com)" "${PANEL_DOMAIN}")"
 PANEL_ADMIN_USERNAME="$(prompt_required "Panel admin username" "${PANEL_ADMIN_USERNAME:-admin}")"
 PANEL_ADMIN_EMAIL="$(prompt_required "Panel admin email" "${PANEL_ADMIN_EMAIL:-}")"
@@ -83,6 +87,10 @@ if [[ -z "${PGADMIN_PASSWORD}" ]]; then
 fi
 PGADMIN_EMAIL="$(prompt_required "pgAdmin email" "${PGADMIN_EMAIL}")"
 PGADMIN_PASSWORD="$(prompt_required "pgAdmin password" "${PGADMIN_PASSWORD}")"
+if [[ -z "${MAILCOW_DOMAIN}" ]]; then
+  MAILCOW_DOMAIN="mail.${PANEL_DOMAIN}"
+fi
+MAILCOW_DOMAIN="$(prompt_required "Mailcow UI domain" "${MAILCOW_DOMAIN}")"
 
 CONTROLLER_API_KEY="$(rand)"
 PANEL_ADMIN_PASSWORD="${PANEL_ADMIN_PASSWORD:-$(rand)}"
@@ -94,6 +102,8 @@ POSTGRES_ADMIN_USER="${POSTGRES_ADMIN_USER:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-postgres}"
 MAILCOW_API_URL="${MAILCOW_API_URL:-http://mailcow-api.mail-zone.svc.cluster.local}"
 MAILCOW_API_KEY="${MAILCOW_API_KEY:-$(rand)}"
+MAILCOW_DOMAIN="${MAILCOW_DOMAIN:-}"
+MAILCOW_TLS_ISSUER="${MAILCOW_TLS_ISSUER:-${PANEL_TLS_ISSUER}}"
 MAILCOW_DB_NAME="${MAILCOW_DB_NAME:-mailcow}"
 MAILCOW_DB_USER="${MAILCOW_DB_USER:-mailcow}"
 MAILCOW_DB_PASSWORD="${MAILCOW_DB_PASSWORD:-$(rand)}"
@@ -107,6 +117,7 @@ echo "  Panel admin username: ${PANEL_ADMIN_USERNAME}"
 echo "  Panel admin email: ${PANEL_ADMIN_EMAIL}"
 echo "  pgAdmin domain: ${PGADMIN_DOMAIN}"
 echo "  pgAdmin email: ${PGADMIN_EMAIL}"
+echo "  Mailcow UI domain: ${MAILCOW_DOMAIN}"
 echo "  Site NodePort range: ${SITE_PORT_START}-${SITE_PORT_END}"
 if [[ -n "${GHCR_USERNAME}" && -n "${GHCR_TOKEN}" ]]; then
   echo "  GHCR Username: ${GHCR_USERNAME}"
@@ -206,6 +217,11 @@ if [[ -d "${RENDER_DIR}/infra-db" ]]; then
   sed -i "s|REPLACE_PGADMIN_PASSWORD|${PGADMIN_PASSWORD}|g" "${RENDER_DIR}/infra-db/pgadmin-secret.yaml"
   sed -i "s|REPLACE_PGADMIN_DOMAIN|${PGADMIN_DOMAIN}|g" "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
   sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
+fi
+if [[ -d "${RENDER_DIR}/mailcow" ]]; then
+  sed -i "s|REPLACE_MAILCOW_HOSTNAME|${MAILCOW_DOMAIN}|g" "${RENDER_DIR}/mailcow/mailcow-core.yaml"
+  sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN}|g" "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
+  sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER}|g" "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
 fi
 
 # ========= apply =========
@@ -407,6 +423,7 @@ echo "Panel admin password: ${PANEL_ADMIN_PASSWORD}"
 echo "pgAdmin: https://${PGADMIN_DOMAIN}"
 echo "pgAdmin email: ${PGADMIN_EMAIL}"
 echo "pgAdmin password: ${PGADMIN_PASSWORD}"
+echo "Mailcow UI: https://${MAILCOW_DOMAIN}"
 echo "Controller API key: ${CONTROLLER_API_KEY}"
 echo "Postgres: ${POSTGRES_HOST}:${POSTGRES_PORT} (admin user: ${POSTGRES_ADMIN_USER})"
 echo "Controller DB creds stored in platform-secrets (POSTGRES_ADMIN_PASSWORD)."

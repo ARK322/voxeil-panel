@@ -24,7 +24,7 @@ import {
   requireNamespace,
   slugFromNamespace
 } from "../k8s/namespace.js";
-import { patchIngress } from "../k8s/ingress.js";
+import { patchIngress, resolveIngressIssuer } from "../k8s/ingress.js";
 import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
 import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
 import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
@@ -90,7 +90,7 @@ const BACKUP_NAMESPACE = "backup";
 const DEFAULT_BACKUP_RETENTION_DAYS = 14;
 const DEFAULT_BACKUP_SCHEDULE = "0 3 * * *";
 const DEFAULT_BACKUP_RUNNER_IMAGE = "ghcr.io/voxeil/backup-runner:latest";
-const GITHUB_SECRET_NAME = "github-credentials";
+export const GITHUB_SECRET_NAME = "github-credentials";
 const DEFAULT_REGISTRY_SERVER = "ghcr.io";
 
 function resolveMaintenanceImage(): string {
@@ -407,7 +407,8 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
   const maintenanceImage = resolveMaintenanceImage();
   const maintenancePort = resolveMaintenancePort();
   const tlsEnabled = input.tlsEnabled ?? false;
-  const tlsIssuer = input.tlsIssuer ?? DEFAULT_TLS_ISSUER;
+  const desiredIssuer = input.tlsIssuer ?? DEFAULT_TLS_ISSUER;
+  const tlsIssuer = tlsEnabled ? "letsencrypt-staging" : desiredIssuer;
   const { slug, namespace } = await allocateTenantNamespace(baseSlug, {
     [SITE_ANNOTATIONS.domain]: input.domain,
     [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
@@ -647,7 +648,8 @@ export async function deploySite(
     containerPort: input.containerPort,
     cpu: quotaStatus.limits.cpu,
     ramGi: quotaStatus.limits.ramGi,
-    imagePullSecretName
+    imagePullSecretName,
+    uploadDirs: input.uploadDirs
   };
 
   await Promise.all([
@@ -696,8 +698,11 @@ export async function updateSiteTls(
     throw new HttpError(500, "Site domain is missing.");
   }
   const previousIssuer = namespaceEntry.annotations[SITE_ANNOTATIONS.tlsIssuer] ?? DEFAULT_TLS_ISSUER;
-  const issuer = input.issuer ?? previousIssuer;
+  const desiredIssuer = input.issuer ?? previousIssuer;
   const tlsEnabled = input.enabled;
+  const issuer = tlsEnabled
+    ? await resolveIngressIssuer(namespace, normalized, desiredIssuer)
+    : desiredIssuer;
 
   await patchNamespaceAnnotations(namespace, {
     [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
@@ -1400,6 +1405,7 @@ export async function enableSiteGithub(
   const workflow = resolveWorkflow(input.workflow);
   const image = input.image.trim();
   const token = input.token.trim();
+  const webhookSecret = input.webhookSecret?.trim();
   if (!image || !token) {
     throw new HttpError(400, "image and token are required.");
   }
@@ -1417,7 +1423,8 @@ export async function enableSiteGithub(
     },
     type: "Opaque",
     stringData: {
-      token
+      token,
+      ...(webhookSecret ? { webhookSecret } : {})
     }
   });
 

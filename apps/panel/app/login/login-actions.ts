@@ -1,6 +1,6 @@
 "use server";
 
-import { establishSession, getSessionToken } from "../lib/session.js";
+import { establishSession, getSessionToken } from "../lib/session";
 
 type LoginState = { success: boolean; error?: string };
 

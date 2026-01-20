@@ -3,6 +3,7 @@ import { parseGiToNumber } from "./quantity.js";
 import { HttpError } from "../http/errors.js";
 
 export const TENANT_PVC_NAME = "site-data";
+const DEFAULT_STORAGE_CLASS = process.env.STORAGE_CLASS_NAME ?? "local-path";
 
 export async function ensurePvc(namespace: string, sizeGi: number): Promise<void> {
   const { core } = getClients();
@@ -11,6 +12,7 @@ export async function ensurePvc(namespace: string, sizeGi: number): Promise<void
       metadata: { name: TENANT_PVC_NAME },
       spec: {
         accessModes: ["ReadWriteOnce"],
+        storageClassName: DEFAULT_STORAGE_CLASS,
         resources: {
           requests: {
             storage: `${sizeGi}Gi`

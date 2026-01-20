@@ -1,4 +1,4 @@
-import { getSessionToken } from "./session.js";
+import { getSessionToken } from "./session";
 
 const CONTROLLER_BASE =
   process.env.CONTROLLER_BASE_URL ?? "http://controller.platform.svc.cluster.local:8080";
@@ -94,6 +94,7 @@ export async function enableGithub(input: {
   workflow?: string;
   image: string;
   token: string;
+  webhookSecret?: string;
 }) {
   await controllerFetch(`/sites/${input.slug}/github/enable`, {
     method: "POST",
@@ -102,7 +103,8 @@ export async function enableGithub(input: {
       branch: input.branch,
       workflow: input.workflow,
       image: input.image,
-      token: input.token
+      token: input.token,
+      webhookSecret: input.webhookSecret
     })
   });
 }

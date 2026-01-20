@@ -2,6 +2,9 @@ import type { V1Ingress } from "@kubernetes/client-node";
 import { getClients } from "./client.js";
 import { HttpError } from "../http/errors.js";
 
+const STAGING_ISSUER = "letsencrypt-staging";
+const PROD_ISSUER = "letsencrypt-prod";
+
 export type IngressPatch = {
   metadata?: {
     annotations?: Record<string, string | null>;
@@ -55,4 +58,28 @@ export async function patchIngress(
     undefined,
     { headers: { "Content-Type": "application/merge-patch+json" } }
   );
+}
+
+async function hasTlsSecret(namespace: string, slug: string): Promise<boolean> {
+  const { core } = getClients();
+  try {
+    await core.readNamespacedSecret(`tls-${slug}`, namespace);
+    return true;
+  } catch (error: any) {
+    if (error?.response?.statusCode === 404) return false;
+    throw error;
+  }
+}
+
+export async function resolveIngressIssuer(
+  namespace: string,
+  slug: string,
+  desiredIssuer?: string
+): Promise<string> {
+  const requested = desiredIssuer ?? STAGING_ISSUER;
+  if (requested !== STAGING_ISSUER && requested !== PROD_ISSUER) {
+    return requested;
+  }
+  const verified = await hasTlsSecret(namespace, slug);
+  return verified ? PROD_ISSUER : STAGING_ISSUER;
 }
