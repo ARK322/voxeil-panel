@@ -40,6 +40,28 @@ export const MailEnableSchema = z.object({
   domain: z.string().min(1)
 });
 
+export const DnsEnableSchema = z.object({
+  domain: z.string().min(1),
+  targetIp: z.string().min(1)
+});
+
+export const GithubEnableSchema = z.object({
+  repo: z.string().min(1),
+  branch: z.string().min(1).optional(),
+  workflow: z.string().min(1).optional(),
+  image: z.string().min(1),
+  token: z.string().min(1)
+});
+
+export const GithubDeploySchema = z.object({
+  ref: z.string().min(1).optional(),
+  image: z.string().min(1).optional(),
+  registryUsername: z.string().min(1).optional(),
+  registryToken: z.string().min(1).optional(),
+  registryServer: z.string().min(1).optional(),
+  registryEmail: z.string().min(1).optional()
+});
+
 export const DbEnableSchema = z.object({
   dbName: z.string().min(1).optional()
 });
@@ -62,6 +84,9 @@ export type DeploySiteInput = z.infer<typeof DeploySiteSchema>;
 export type PatchTlsInput = z.infer<typeof PatchTlsSchema>;
 export type ConfirmDeleteInput = z.infer<typeof ConfirmDeleteSchema>;
 export type MailEnableInput = z.infer<typeof MailEnableSchema>;
+export type DnsEnableInput = z.infer<typeof DnsEnableSchema>;
+export type GithubEnableInput = z.infer<typeof GithubEnableSchema>;
+export type GithubDeployInput = z.infer<typeof GithubDeploySchema>;
 export type DbEnableInput = z.infer<typeof DbEnableSchema>;
 export type MailboxCreateInput = z.infer<typeof MailboxCreateSchema>;
 export type AliasCreateInput = z.infer<typeof AliasCreateSchema>;
@@ -109,6 +134,14 @@ export type SiteListItem = {
   containerPort?: number;
   tlsEnabled?: boolean;
   tlsIssuer?: string;
+  dnsEnabled?: boolean;
+  dnsDomain?: string;
+  dnsTarget?: string;
+  githubEnabled?: boolean;
+  githubRepo?: string;
+  githubBranch?: string;
+  githubWorkflow?: string;
+  githubImage?: string;
   dbEnabled?: boolean;
   dbName?: string;
   dbUser?: string;

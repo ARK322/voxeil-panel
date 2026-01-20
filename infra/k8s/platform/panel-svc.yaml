@@ -4,11 +4,10 @@ metadata:
   name: panel
   namespace: platform
 spec:
-  type: NodePort
+  type: ClusterIP
   selector:
     app: panel
   ports:
     - name: http
       port: 3000
       targetPort: 3000
-      nodePort: REPLACE_PANEL_NODEPORT

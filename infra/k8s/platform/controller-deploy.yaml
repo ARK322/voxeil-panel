@@ -22,15 +22,34 @@ spec:
           volumeMounts:
             - name: backups
               mountPath: /backups
+            - name: voxeil-config
+              mountPath: /etc/voxeil
           env:
             - name: PORT
               value: "8080"
+            - name: ALLOWLIST_PATH
+              value: "/etc/voxeil/allowlist.txt"
 
             - name: ADMIN_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: platform-secrets
                   key: ADMIN_API_KEY
+            - name: PANEL_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_USERNAME
+            - name: PANEL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_PASSWORD
+            - name: PANEL_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_EMAIL
             - name: SITE_NODEPORT_START
               valueFrom:
                 secretKeyRef:
@@ -86,4 +105,8 @@ spec:
         - name: backups
           hostPath:
             path: /backups
+            type: DirectoryOrCreate
+        - name: voxeil-config
+          hostPath:
+            path: /etc/voxeil
             type: DirectoryOrCreate

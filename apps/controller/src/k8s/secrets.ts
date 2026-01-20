@@ -25,7 +25,16 @@ async function readPlatformSecret(name: string): Promise<V1Secret> {
 export async function ensureGhcrPullSecret(namespace: string, slug: string): Promise<void> {
   await ensureTenantSecretRbac(namespace);
   const { core } = getClients();
-  const source = await readPlatformSecret(GHCR_PULL_SECRET_NAME);
+  let source: V1Secret;
+  try {
+    source = await readPlatformSecret(GHCR_PULL_SECRET_NAME);
+  } catch (error: any) {
+    if (error instanceof HttpError && error.statusCode === 500) {
+      // Public images: no pull secret to copy.
+      return;
+    }
+    throw error;
+  }
   const secret: V1Secret = {
     apiVersion: "v1",
     kind: "Secret",

@@ -7,11 +7,12 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 - `apps/panel`: Next.js UI that talks only to the controller service inside the cluster.
 - `infra/k8s/platform`: k3s-compatible manifests with placeholders (`REPLACE_*`) for images and NodePorts.
 - `infra/k8s/templates/tenant`: Baseline ResourceQuota, LimitRange, and default-deny NetworkPolicy used for every tenant namespace.
+- `infra/k8s/dns`: Bind9 DNS service (installed by default; site usage opt-in).
 
 ### Data model note
 - Control-plane DB: one shared PostgreSQL instance for controller state in `infra`.
 - Tenant site DBs: per-site database + role/user inside that same shared PostgreSQL cluster.
-- Shared services run in their own namespaces (`infra`, `mail-zone`, `backup`); tenant namespaces only host site workloads.
+- Shared services run in their own namespaces (`infra`, `mail-zone`, `backup`, `dns-zone`); tenant namespaces only host site workloads.
 
 ### Install
 1) Build/push your own images (no hardcoded registry):
@@ -23,22 +24,17 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
    curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash
    ```
    - Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
-   - Provide GHCR credentials via env vars before running:
-     - `GHCR_USERNAME`
-     - `GHCR_TOKEN` (PAT with `read:packages`)
-     - `GHCR_EMAIL` (optional)
+  - For private site images, provide GHCR credentials during deploy from the panel.
    - Provide Let's Encrypt email:
      - `LETSENCRYPT_EMAIL`
-   The installer will ask for:
-   - Panel NodePort
-   - Optional controller NodePort (admin-only)
-   - Site NodePort range
-   - IP allowlist (used with UFW if available)
-   - Controller + panel image references
+   The installer will ask only for:
+   - Panel domain (TLS enabled via cert-manager)
+   - Let's Encrypt email
 3) Outputs:
-   - Panel admin password (stored in `platform-secrets`)
+  - Panel admin username + password + email (stored in `platform-secrets`)
    - Controller API key (stored in `platform-secrets`)
-   - Panel URL: `http://<VPS_IP>:<PANEL_NODEPORT>`
+   - Panel URL: `https://<PANEL_DOMAIN>`
+  - pgAdmin URL: `https://pgadmin.<PANEL_DOMAIN>`
   - Note: `SITE_NODEPORT_START/END` are reserved for Phase 3 and currently unused by the controller.
 
 ### Phase 2 publish
@@ -75,6 +71,8 @@ spec:
 - Controller creates tenant Deployments, Services, and Ingress on site creation.
 - GHCR images are pulled via the `ghcr-pull-secret` copied into each tenant namespace.
 - TLS is optional and site-based; HTTP ingress remains the default.
+- UFW + fail2ban are configured on install; ClamAV is installed when available.
+- Controller stays internal (ClusterIP only).
 
 ### Controller API
 All routes require `X-API-Key` (except `/health`). The UI uses purge-only deletion via `POST /sites/:slug/purge`.
@@ -203,3 +201,6 @@ Internal/admin endpoints (UI does not use):
 - Add HTTPS/ingress once domain support is enabled.
 - Extend quota/limit presets per plan.
 - Add per-tenant API keys and audit logging.
+
+### GitHub Deploy
+See `docs/github-workflow-example.md` for a sample workflow that builds an image and triggers deploy.

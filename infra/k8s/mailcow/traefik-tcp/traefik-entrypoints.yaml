@@ -41,3 +41,13 @@ spec:
         expose: true
         exposedPort: 995
         protocol: TCP
+      dns-tcp:
+        port: 53
+        expose: true
+        exposedPort: 53
+        protocol: TCP
+      dns-udp:
+        port: 53
+        expose: true
+        exposedPort: 53
+        protocol: UDP

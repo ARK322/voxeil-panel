@@ -1,6 +1,6 @@
 "use server";
 
-import { establishSession, hasSession } from "../lib/session.js";
+import { establishSession, getSessionToken } from "../lib/session.js";
 
 type LoginState = { success: boolean; error?: string };
 
@@ -8,18 +8,29 @@ export async function loginAction(
   _prevState: LoginState,
   formData: FormData
 ): Promise<LoginState> {
-  if (hasSession()) return { success: true };
+  if (getSessionToken()) return { success: true };
 
-  const provided = String(formData.get("password") ?? "");
-  const adminPassword = process.env.PANEL_ADMIN_PASSWORD;
-  if (!adminPassword) {
-    return { success: false, error: "PANEL_ADMIN_PASSWORD is not set." };
+  const providedUsername = String(formData.get("username") ?? "");
+  const providedPassword = String(formData.get("password") ?? "");
+  const controllerBase =
+    process.env.CONTROLLER_BASE_URL ?? "http://controller.platform.svc.cluster.local:8080";
+
+  const res = await fetch(`${controllerBase}/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ username: providedUsername, password: providedPassword })
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return { success: false, error: text || "Invalid credentials." };
   }
 
-  if (provided !== adminPassword) {
-    return { success: false, error: "Invalid password." };
+  const payload = (await res.json()) as { token?: string };
+  if (!payload.token) {
+    return { success: false, error: "Login failed." };
   }
 
-  establishSession();
+  establishSession(payload.token);
   return { success: true };
 }

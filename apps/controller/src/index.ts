@@ -2,6 +2,7 @@ import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import { z } from "zod";
 import { registerRoutes } from "./http/routes.js";
 import { HttpError } from "./http/errors.js";
+import { ensureAdminUserFromEnv } from "./users/user.service.js";
 
 const app = Fastify({ logger: true });
 
@@ -11,7 +12,10 @@ if (!ADMIN_API_KEY) {
 }
 
 app.addHook("onRequest", async (req: FastifyRequest, reply: FastifyReply) => {
-  if (req.url.startsWith("/health")) return;
+  if (req.url.startsWith("/health") || req.url.startsWith("/auth")) return;
+  const sessionHeader = req.headers["x-session-token"];
+  const sessionToken = Array.isArray(sessionHeader) ? sessionHeader[0] : sessionHeader;
+  if (sessionToken) return;
   const header = req.headers["x-api-key"];
   const provided = Array.isArray(header) ? header[0] : header;
   if (!provided || provided !== ADMIN_API_KEY) {
@@ -33,6 +37,8 @@ app.setErrorHandler((error, _req, reply) => {
 app.get("/health", async () => ({ ok: true }));
 
 registerRoutes(app);
+
+await ensureAdminUserFromEnv();
 
 const port = Number(process.env.PORT ?? 8080);
 app.listen({ host: "0.0.0.0", port });

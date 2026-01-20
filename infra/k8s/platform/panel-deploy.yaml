@@ -29,5 +29,10 @@ spec:
                 secretKeyRef:
                   name: platform-secrets
                   key: PANEL_ADMIN_PASSWORD
+            - name: PANEL_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_USERNAME
             - name: CONTROLLER_BASE_URL
               value: "http://controller.platform.svc.cluster.local:8080"

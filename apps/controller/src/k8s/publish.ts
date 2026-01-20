@@ -1,6 +1,5 @@
 import type { V1Deployment, V1Ingress, V1Service } from "@kubernetes/client-node";
 import { LABELS } from "./client.js";
-import { GHCR_PULL_SECRET_NAME } from "./secrets.js";
 
 export const APP_DEPLOYMENT_NAME = "app";
 export const SERVICE_NAME = "web";
@@ -16,6 +15,7 @@ type PublishSpec = {
   host: string;
   tlsEnabled?: boolean;
   tlsIssuer?: string;
+  imagePullSecretName?: string;
 };
 
 function buildSelector(slug: string): Record<string, string> {
@@ -27,6 +27,9 @@ function buildSelector(slug: string): Record<string, string> {
 
 export function buildDeployment(spec: PublishSpec): V1Deployment {
   const selector = buildSelector(spec.slug);
+  const imagePullSecrets = spec.imagePullSecretName
+    ? [{ name: spec.imagePullSecretName }]
+    : undefined;
   return {
     apiVersion: "apps/v1",
     kind: "Deployment",
@@ -51,7 +54,7 @@ export function buildDeployment(spec: PublishSpec): V1Deployment {
           }
         },
         spec: {
-          imagePullSecrets: [{ name: GHCR_PULL_SECRET_NAME }],
+          ...(imagePullSecrets ? { imagePullSecrets } : {}),
           containers: [
             {
               name: "app",

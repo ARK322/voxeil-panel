@@ -28,7 +28,13 @@ import { patchIngress } from "../k8s/ingress.js";
 import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
 import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
 import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
-import { deleteSecret, ensureGhcrPullSecret, readSecret, upsertSecret } from "../k8s/secrets.js";
+import {
+  deleteSecret,
+  ensureGhcrPullSecret,
+  readSecret,
+  upsertSecret,
+  GHCR_PULL_SECRET_NAME
+} from "../k8s/secrets.js";
 import { getClients, LABELS } from "../k8s/client.js";
 import { SITE_ANNOTATIONS } from "../k8s/annotations.js";
 import {
@@ -45,6 +51,8 @@ import {
 } from "../postgres/admin.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
 import { restoreSiteDb, restoreSiteFiles } from "../backup/restore.service.js";
+import { ensureDnsZone, removeDnsZone } from "../dns/bind9.js";
+import { dispatchWorkflow, parseRepo, resolveWorkflow } from "../github/client.js";
 import {
   createMailcowMailbox,
   createMailcowAlias,
@@ -61,6 +69,9 @@ import type {
   CreateSiteInput,
   PatchLimitsInput,
   PatchTlsInput,
+  DnsEnableInput,
+  GithubEnableInput,
+  GithubDeployInput,
   CreateSiteResponse,
   DeploySiteInput,
   DeploySiteResponse,
@@ -69,7 +80,7 @@ import type {
   SiteLimitsResponse
 } from "./site.dto.js";
 
-const DEFAULT_MAINTENANCE_IMAGE = "ghcr.io/OWNER/voxeil-maintenance:latest";
+const DEFAULT_MAINTENANCE_IMAGE = "ghcr.io/ark322/voxeil-maintenance:latest";
 const DEFAULT_MAINTENANCE_PORT = 3000;
 const DEFAULT_TLS_ISSUER = "letsencrypt-staging";
 const SITE_DB_SECRET_NAME = "db-conn";
@@ -79,6 +90,8 @@ const BACKUP_NAMESPACE = "backup";
 const DEFAULT_BACKUP_RETENTION_DAYS = 14;
 const DEFAULT_BACKUP_SCHEDULE = "0 3 * * *";
 const DEFAULT_BACKUP_RUNNER_IMAGE = "ghcr.io/voxeil/backup-runner:latest";
+const GITHUB_SECRET_NAME = "github-credentials";
+const DEFAULT_REGISTRY_SERVER = "ghcr.io";
 
 function resolveMaintenanceImage(): string {
   const value = process.env.GHCR_MAINTENANCE_IMAGE ?? DEFAULT_MAINTENANCE_IMAGE;
@@ -99,6 +112,61 @@ function resolveMaintenancePort(): number {
 
 function resolveBackupRunnerImage(): string {
   return process.env.BACKUP_RUNNER_IMAGE?.trim() || DEFAULT_BACKUP_RUNNER_IMAGE;
+}
+
+function buildDockerConfig(options: {
+  server: string;
+  username: string;
+  token: string;
+  email?: string;
+}): string {
+  const auth = Buffer.from(`${options.username}:${options.token}`).toString("base64");
+  return JSON.stringify({
+    auths: {
+      [options.server]: {
+        username: options.username,
+        password: options.token,
+        auth,
+        ...(options.email ? { email: options.email } : {})
+      }
+    }
+  });
+}
+
+async function resolveImagePullSecretName(namespace: string): Promise<string | undefined> {
+  const secret = await readSecret(namespace, GHCR_PULL_SECRET_NAME);
+  return secret ? GHCR_PULL_SECRET_NAME : undefined;
+}
+
+async function upsertRegistryPullSecret(options: {
+  namespace: string;
+  slug: string;
+  server: string;
+  username: string;
+  token: string;
+  email?: string;
+}): Promise<void> {
+  await upsertSecret({
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: {
+      name: GHCR_PULL_SECRET_NAME,
+      namespace: options.namespace,
+      labels: {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: options.slug
+      }
+    },
+    type: "kubernetes.io/dockerconfigjson",
+    stringData: {
+      ".dockerconfigjson": buildDockerConfig({
+        server: options.server,
+        username: options.username,
+        token: options.token,
+        email: options.email
+      })
+    }
+  });
 }
 
 function parseBooleanAnnotation(value?: string): boolean | undefined {
@@ -351,7 +419,9 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
     [SITE_ANNOTATIONS.diskGi]: String(input.diskGi),
     [SITE_ANNOTATIONS.dbEnabled]: "false",
     [SITE_ANNOTATIONS.mailEnabled]: "false",
-    [SITE_ANNOTATIONS.backupEnabled]: "false"
+    [SITE_ANNOTATIONS.backupEnabled]: "false",
+    [SITE_ANNOTATIONS.dnsEnabled]: "false",
+    [SITE_ANNOTATIONS.githubEnabled]: "false"
   });
 
   const templates = await loadTenantTemplates();
@@ -376,6 +446,7 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
   ]);
 
   await ensureGhcrPullSecret(namespace, slug);
+  const imagePullSecretName = await resolveImagePullSecretName(namespace);
   const host = input.domain.trim();
   if (!host) {
     throw new HttpError(400, "Domain is required.");
@@ -389,7 +460,8 @@ export async function createSite(input: CreateSiteInput): Promise<CreateSiteResp
     cpu: input.cpu,
     ramGi: input.ramGi,
     tlsEnabled,
-    tlsIssuer
+    tlsIssuer,
+    imagePullSecretName
   };
   await Promise.all([
     upsertDeployment(buildDeployment(maintenanceSpec)),
@@ -436,6 +508,14 @@ export async function listSites(): Promise<SiteListItem[]> {
         containerPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.containerPort]),
         tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]) ?? false,
         tlsIssuer: annotations[SITE_ANNOTATIONS.tlsIssuer],
+        dnsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dnsEnabled]) ?? false,
+        dnsDomain: annotations[SITE_ANNOTATIONS.dnsDomain],
+        dnsTarget: annotations[SITE_ANNOTATIONS.dnsTarget],
+        githubEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.githubEnabled]) ?? false,
+        githubRepo: annotations[SITE_ANNOTATIONS.githubRepo],
+        githubBranch: annotations[SITE_ANNOTATIONS.githubBranch],
+        githubWorkflow: annotations[SITE_ANNOTATIONS.githubWorkflow],
+        githubImage: annotations[SITE_ANNOTATIONS.githubImage],
         dbEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false,
         dbName: annotations[SITE_ANNOTATIONS.dbName],
         dbUser: annotations[SITE_ANNOTATIONS.dbUser],
@@ -462,6 +542,14 @@ export async function listSites(): Promise<SiteListItem[]> {
         containerPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.containerPort]),
         tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]) ?? false,
         tlsIssuer: annotations[SITE_ANNOTATIONS.tlsIssuer],
+        dnsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dnsEnabled]) ?? false,
+        dnsDomain: annotations[SITE_ANNOTATIONS.dnsDomain],
+        dnsTarget: annotations[SITE_ANNOTATIONS.dnsTarget],
+        githubEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.githubEnabled]) ?? false,
+        githubRepo: annotations[SITE_ANNOTATIONS.githubRepo],
+        githubBranch: annotations[SITE_ANNOTATIONS.githubBranch],
+        githubWorkflow: annotations[SITE_ANNOTATIONS.githubWorkflow],
+        githubImage: annotations[SITE_ANNOTATIONS.githubImage],
         dbEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false,
         dbName: annotations[SITE_ANNOTATIONS.dbName],
         dbUser: annotations[SITE_ANNOTATIONS.dbUser],
@@ -542,6 +630,7 @@ export async function deploySite(
   await requireNamespace(namespace);
 
   await ensureGhcrPullSecret(namespace, normalized);
+  const imagePullSecretName = await resolveImagePullSecretName(namespace);
 
   const templates = await loadTenantTemplates();
   const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
@@ -557,7 +646,8 @@ export async function deploySite(
     image: input.image,
     containerPort: input.containerPort,
     cpu: quotaStatus.limits.cpu,
-    ramGi: quotaStatus.limits.ramGi
+    ramGi: quotaStatus.limits.ramGi,
+    imagePullSecretName
   };
 
   await Promise.all([
@@ -665,6 +755,15 @@ export async function enableSiteMail(
   const namespaceEntry = await readTenantNamespace(normalized);
   const namespace = namespaceEntry.name;
   const domain = normalizeMailDomain(input.domain);
+  const siteDomain = normalizeMailDomain(
+    namespaceEntry.annotations[SITE_ANNOTATIONS.domain] ?? ""
+  );
+  if (!siteDomain) {
+    throw new HttpError(500, "Site domain is missing.");
+  }
+  if (domain !== siteDomain) {
+    throw new HttpError(400, "Mail domain must match site domain.");
+  }
 
   try {
     await ensureMailcowDomain(domain);
@@ -1175,6 +1274,291 @@ export async function getSiteMailStatus(slug: string): Promise<{
   }
   const activeInMailcow = await getMailcowDomainActive(domain);
   return { ok: true, slug: normalized, domain, mailEnabled, activeInMailcow };
+}
+
+export async function enableSiteDns(
+  slug: string,
+  input: DnsEnableInput
+): Promise<{ ok: true; slug: string; dnsEnabled: true; domain: string; targetIp: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const domain = input.domain.trim();
+  const targetIp = input.targetIp.trim();
+  if (!domain || !targetIp) {
+    throw new HttpError(400, "domain and targetIp are required.");
+  }
+
+  await ensureDnsZone({ domain, targetIp });
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.dnsEnabled]: "true",
+    [SITE_ANNOTATIONS.dnsDomain]: domain,
+    [SITE_ANNOTATIONS.dnsTarget]: targetIp
+  });
+
+  return { ok: true, slug: normalized, dnsEnabled: true, domain, targetIp };
+}
+
+export async function disableSiteDns(
+  slug: string
+): Promise<{ ok: true; slug: string; dnsEnabled: false; domain?: string; targetIp?: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const annotations = namespaceEntry.annotations;
+  const domain = annotations[SITE_ANNOTATIONS.dnsDomain]?.trim();
+  const targetIp = annotations[SITE_ANNOTATIONS.dnsTarget]?.trim();
+  if (!domain) {
+    throw new HttpError(409, "DNS domain not configured.");
+  }
+
+  await removeDnsZone(domain);
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.dnsEnabled]: "false"
+  });
+
+  return { ok: true, slug: normalized, dnsEnabled: false, domain, targetIp };
+}
+
+export async function purgeSiteDns(
+  slug: string
+): Promise<{ ok: true; slug: string; dnsEnabled: false; purged: true }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const annotations = namespaceEntry.annotations;
+  const domain = annotations[SITE_ANNOTATIONS.dnsDomain]?.trim();
+  if (domain) {
+    await removeDnsZone(domain);
+  }
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.dnsEnabled]: "false",
+    [SITE_ANNOTATIONS.dnsDomain]: "",
+    [SITE_ANNOTATIONS.dnsTarget]: ""
+  });
+  return { ok: true, slug: normalized, dnsEnabled: false, purged: true };
+}
+
+export async function getSiteDnsStatus(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  dnsEnabled: boolean;
+  domain?: string;
+  targetIp?: string;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const annotations = namespaceEntry.annotations;
+  const dnsEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dnsEnabled]) ?? false;
+  const domain = annotations[SITE_ANNOTATIONS.dnsDomain];
+  const targetIp = annotations[SITE_ANNOTATIONS.dnsTarget];
+  return { ok: true, slug: normalized, dnsEnabled, domain, targetIp };
+}
+
+export async function enableSiteGithub(
+  slug: string,
+  input: GithubEnableInput
+): Promise<{
+  ok: true;
+  slug: string;
+  githubEnabled: true;
+  repo: string;
+  branch: string;
+  workflow: string;
+  image: string;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const repoInfo = parseRepo(input.repo);
+  const branch = input.branch?.trim() || "main";
+  const workflow = resolveWorkflow(input.workflow);
+  const image = input.image.trim();
+  const token = input.token.trim();
+  if (!image || !token) {
+    throw new HttpError(400, "image and token are required.");
+  }
+
+  await upsertSecret({
+    apiVersion: "v1",
+    kind: "Secret",
+    metadata: {
+      name: GITHUB_SECRET_NAME,
+      namespace,
+      labels: {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: normalized
+      }
+    },
+    type: "Opaque",
+    stringData: {
+      token
+    }
+  });
+
+  const repo = `${repoInfo.owner}/${repoInfo.repo}`;
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.githubEnabled]: "true",
+    [SITE_ANNOTATIONS.githubRepo]: repo,
+    [SITE_ANNOTATIONS.githubBranch]: branch,
+    [SITE_ANNOTATIONS.githubWorkflow]: workflow,
+    [SITE_ANNOTATIONS.githubImage]: image
+  });
+
+  return {
+    ok: true,
+    slug: normalized,
+    githubEnabled: true,
+    repo,
+    branch,
+    workflow,
+    image
+  };
+}
+
+export async function disableSiteGithub(
+  slug: string
+): Promise<{ ok: true; slug: string; githubEnabled: false }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  await deleteSecret(namespace, GITHUB_SECRET_NAME);
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.githubEnabled]: "false",
+    [SITE_ANNOTATIONS.githubRepo]: "",
+    [SITE_ANNOTATIONS.githubBranch]: "",
+    [SITE_ANNOTATIONS.githubWorkflow]: "",
+    [SITE_ANNOTATIONS.githubImage]: ""
+  });
+  return { ok: true, slug: normalized, githubEnabled: false };
+}
+
+export async function triggerSiteGithubDeploy(
+  slug: string,
+  input: GithubDeployInput
+): Promise<{ ok: true; slug: string; dispatched: true; ref: string; image: string }> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const namespace = namespaceEntry.name;
+  const annotations = namespaceEntry.annotations;
+  const repoValue = annotations[SITE_ANNOTATIONS.githubRepo]?.trim();
+  const branch = annotations[SITE_ANNOTATIONS.githubBranch]?.trim() || "main";
+  const workflow = annotations[SITE_ANNOTATIONS.githubWorkflow]?.trim() || resolveWorkflow();
+  const image = input.image?.trim() || annotations[SITE_ANNOTATIONS.githubImage]?.trim() || "";
+  if (!repoValue || !image) {
+    throw new HttpError(409, "GitHub deploy not configured.");
+  }
+  const secret =
+    (await readSecret(namespace, GITHUB_SECRET_NAME)) ??
+    (await readSecret(namespace, `${normalized}-${GITHUB_SECRET_NAME}`));
+  const token = secret?.data?.token ? Buffer.from(secret.data.token, "base64").toString("utf8") : "";
+  if (!token) {
+    throw new HttpError(409, "GitHub token missing.");
+  }
+
+  const registryUsername = input.registryUsername?.trim();
+  const registryToken = input.registryToken?.trim();
+  const registryEmail = input.registryEmail?.trim();
+  const registryServer = input.registryServer?.trim() || DEFAULT_REGISTRY_SERVER;
+  const wantsRegistry = Boolean(registryUsername || registryToken || registryEmail);
+  if (wantsRegistry && (!registryUsername || !registryToken)) {
+    throw new HttpError(400, "registryUsername and registryToken are required.");
+  }
+  if (registryUsername && registryToken) {
+    await upsertRegistryPullSecret({
+      namespace,
+      slug: normalized,
+      server: registryServer,
+      username: registryUsername,
+      token: registryToken,
+      email: registryEmail
+    });
+  }
+
+  const repoInfo = parseRepo(repoValue);
+  const ref = input.ref?.trim() || branch;
+  await dispatchWorkflow({
+    token,
+    repo: repoInfo,
+    ref,
+    workflow,
+    inputs: {
+      image,
+      slug: normalized,
+      namespace
+    }
+  });
+
+  await patchNamespaceAnnotations(namespace, {
+    [SITE_ANNOTATIONS.githubImage]: image,
+    [SITE_ANNOTATIONS.githubBranch]: ref
+  });
+
+  return { ok: true, slug: normalized, dispatched: true, ref, image };
+}
+
+export async function getSiteGithubStatus(slug: string): Promise<{
+  ok: true;
+  slug: string;
+  githubEnabled: boolean;
+  repo?: string;
+  branch?: string;
+  workflow?: string;
+  image?: string;
+}> {
+  let normalized: string;
+  try {
+    normalized = validateSlug(slug);
+  } catch (error: any) {
+    throw new HttpError(400, error?.message ?? "Invalid slug.");
+  }
+  const namespaceEntry = await readTenantNamespace(normalized);
+  const annotations = namespaceEntry.annotations;
+  const githubEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.githubEnabled]) ?? false;
+  return {
+    ok: true,
+    slug: normalized,
+    githubEnabled,
+    repo: annotations[SITE_ANNOTATIONS.githubRepo],
+    branch: annotations[SITE_ANNOTATIONS.githubBranch],
+    workflow: annotations[SITE_ANNOTATIONS.githubWorkflow],
+    image: annotations[SITE_ANNOTATIONS.githubImage]
+  };
 }
 
 async function purgeSiteBackups(slug: string): Promise<void> {
