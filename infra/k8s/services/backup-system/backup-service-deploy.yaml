@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backup-service
+  namespace: backup-system
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backup-service
+  template:
+    metadata:
+      labels:
+        app: backup-service
+    spec:
+      serviceAccountName: backup-service
+      containers:
+        - name: backup-service
+          image: backup-service:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: BACKUP_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: backup-service-secret
+                  key: BACKUP_TOKEN
+            - name: BACKUPS_ROOT
+              value: /backups
+          volumeMounts:
+            - name: backups
+              mountPath: /backups
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: backups
+          persistentVolumeClaim:
+            claimName: backups-pvc
+        - name: scripts
+          configMap:
+            name: backup-scripts
+            defaultMode: 0755

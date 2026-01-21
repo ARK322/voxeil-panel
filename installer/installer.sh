@@ -4,30 +4,50 @@ set -euo pipefail
 # ========= helpers =========
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
 rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48; }
+backup_apply() {
+  kubectl apply -f "$1" || {
+    echo "Backup manifests failed to apply; aborting (backup is required)."
+    exit 1
+  }
+}
 
 echo "== Voxeil Panel Installer =="
 
 need_cmd curl
 need_cmd sed
 need_cmd mktemp
+if ! command -v openssl >/dev/null 2>&1; then
+  echo "Missing required command: openssl"
+  exit 1
+fi
 
 GHCR_USERNAME="${GHCR_USERNAME:-}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
 GHCR_EMAIL="${GHCR_EMAIL:-}"
+GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-ark322/voxeil-panel}"
+GHCR_OWNER="${GHCR_OWNER:-${GITHUB_REPOSITORY%%/*}}"
+GHCR_REPO="${GHCR_REPO:-${GITHUB_REPOSITORY##*/}}"
 LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-}"
 PANEL_ADMIN_USERNAME="${PANEL_ADMIN_USERNAME:-}"
 PANEL_ADMIN_PASSWORD="${PANEL_ADMIN_PASSWORD:-}"
 PANEL_ADMIN_EMAIL="${PANEL_ADMIN_EMAIL:-}"
 PGADMIN_EMAIL="${PGADMIN_EMAIL:-}"
 PGADMIN_PASSWORD="${PGADMIN_PASSWORD:-}"
+PGADMIN_AUTH_USER="${PGADMIN_AUTH_USER:-admin}"
+PGADMIN_AUTH_PASS="${PGADMIN_AUTH_PASS:-}"
+PANEL_AUTH_USER="${PANEL_AUTH_USER:-admin}"
+PANEL_AUTH_PASS="${PANEL_AUTH_PASS:-}"
 PGADMIN_DOMAIN="${PGADMIN_DOMAIN:-}"
+TSIG_SECRET="${TSIG_SECRET:-$(openssl rand -base64 32)}"
+BACKUP_TOKEN="${BACKUP_TOKEN:-}"
+MAILCOW_AUTH_USER="${MAILCOW_AUTH_USER:-admin}"
+MAILCOW_AUTH_PASS="${MAILCOW_AUTH_PASS:-}"
 
 # ========= inputs (interactive, with defaults) =========
 PANEL_DOMAIN="${PANEL_DOMAIN:-}"
 PANEL_TLS_ISSUER="${PANEL_TLS_ISSUER:-letsencrypt-prod}"
 SITE_PORT_START="${SITE_PORT_START:-31000}"
 SITE_PORT_END="${SITE_PORT_END:-31999}"
-CONTROLLER_NODEPORT="${CONTROLLER_NODEPORT:-30081}"
 CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-ghcr.io/ark322/voxeil-controller:latest}"
 PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/ark322/voxeil-panel:latest}"
 
@@ -68,14 +88,15 @@ prompt_required() {
 
 echo ""
 echo "== Config prompts =="
-LETSENCRYPT_EMAIL="$(prompt_required "Let's Encrypt email" "${LETSENCRYPT_EMAIL}")"
-if [[ -z "${LETSENCRYPT_EMAIL}" ]]; then
-  echo "LETSENCRYPT_EMAIL must be set"
-  exit 1
-fi
+LETSENCRYPT_EMAIL="$(prompt_with_default "Let's Encrypt email" "${LETSENCRYPT_EMAIL}")"
 PANEL_DOMAIN="$(prompt_required "Panel domain (e.g. panel.example.com)" "${PANEL_DOMAIN}")"
 PANEL_ADMIN_USERNAME="$(prompt_required "Panel admin username" "${PANEL_ADMIN_USERNAME:-admin}")"
 PANEL_ADMIN_EMAIL="$(prompt_required "Panel admin email" "${PANEL_ADMIN_EMAIL:-}")"
+LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-${PANEL_ADMIN_EMAIL}}"
+if [[ -z "${LETSENCRYPT_EMAIL}" ]]; then
+  echo "LETSENCRYPT_EMAIL is required (or set PANEL_ADMIN_EMAIL)."
+  exit 1
+fi
 if [[ -z "${PGADMIN_DOMAIN}" ]]; then
   PGADMIN_DOMAIN="pgadmin.${PANEL_DOMAIN}"
 fi
@@ -87,10 +108,19 @@ if [[ -z "${PGADMIN_PASSWORD}" ]]; then
 fi
 PGADMIN_EMAIL="$(prompt_required "pgAdmin email" "${PGADMIN_EMAIL}")"
 PGADMIN_PASSWORD="$(prompt_required "pgAdmin password" "${PGADMIN_PASSWORD}")"
+PGADMIN_AUTH_USER="$(prompt_required "pgAdmin BasicAuth username" "${PGADMIN_AUTH_USER}")"
+PGADMIN_AUTH_PASS="$(prompt_required "pgAdmin BasicAuth password" "${PGADMIN_AUTH_PASS}")"
+if [[ -z "${PANEL_AUTH_PASS}" ]]; then
+  PANEL_AUTH_PASS="$(rand)"
+fi
+PANEL_AUTH_USER="$(prompt_required "Panel BasicAuth username" "${PANEL_AUTH_USER}")"
+PANEL_AUTH_PASS="$(prompt_required "Panel BasicAuth password" "${PANEL_AUTH_PASS}")"
 if [[ -z "${MAILCOW_DOMAIN}" ]]; then
   MAILCOW_DOMAIN="mail.${PANEL_DOMAIN}"
 fi
 MAILCOW_DOMAIN="$(prompt_required "Mailcow UI domain" "${MAILCOW_DOMAIN}")"
+MAILCOW_AUTH_USER="$(prompt_required "Mailcow BasicAuth username" "${MAILCOW_AUTH_USER}")"
+MAILCOW_AUTH_PASS="$(prompt_required "Mailcow BasicAuth password" "${MAILCOW_AUTH_PASS}")"
 
 CONTROLLER_API_KEY="$(rand)"
 PANEL_ADMIN_PASSWORD="${PANEL_ADMIN_PASSWORD:-$(rand)}"
@@ -108,6 +138,9 @@ MAILCOW_DB_NAME="${MAILCOW_DB_NAME:-mailcow}"
 MAILCOW_DB_USER="${MAILCOW_DB_USER:-mailcow}"
 MAILCOW_DB_PASSWORD="${MAILCOW_DB_PASSWORD:-$(rand)}"
 MAILCOW_DB_ROOT_PASSWORD="${MAILCOW_DB_ROOT_PASSWORD:-$(rand)}"
+if [[ -z "${BACKUP_TOKEN}" ]]; then
+  BACKUP_TOKEN="$(openssl rand -hex 32)"
+fi
 
 echo ""
 echo "Config:"
@@ -143,44 +176,82 @@ kubectl wait --for=condition=Ready node --all --timeout=180s
 
 # ========= render manifests to temp dir =========
 RENDER_DIR="$(mktemp -d)"
+BACKUP_SYSTEM_NAME="backup-system"
+PLATFORM_DIR="${RENDER_DIR}/platform"
+SERVICES_DIR="${RENDER_DIR}/services"
+TEMPLATES_DIR="${RENDER_DIR}/templates"
+BACKUP_SYSTEM_DIR="${SERVICES_DIR}/${BACKUP_SYSTEM_NAME}"
 
 if [[ ! -d infra/k8s/platform ]]; then
   echo "infra/k8s/platform is missing; run from the repository root or download the full archive."
   exit 1
 fi
-if [[ ! -d infra/k8s/infra-db ]]; then
-  echo "infra/k8s/infra-db is missing; run from the repository root or download the full archive."
+if [[ ! -d infra/k8s/services/infra-db ]]; then
+  echo "infra/k8s/services/infra-db is missing; run from the repository root or download the full archive."
   exit 1
 fi
-if [[ ! -d infra/k8s/dns ]]; then
-  echo "infra/k8s/dns is missing; run from the repository root or download the full archive."
+if [[ ! -d infra/k8s/services/dns-zone ]]; then
+  echo "infra/k8s/services/dns-zone is missing; run from the repository root or download the full archive."
   exit 1
 fi
-if [[ ! -d infra/k8s/mailcow ]]; then
-  echo "infra/k8s/mailcow is missing; run from the repository root or download the full archive."
+if [[ ! -d infra/k8s/services/mail-zone ]]; then
+  echo "infra/k8s/services/mail-zone is missing; run from the repository root or download the full archive."
   exit 1
 fi
-if [[ ! -d infra/k8s/backup ]]; then
-  echo "infra/k8s/backup is missing; run from the repository root or download the full archive."
+if [[ ! -d infra/k8s/services/backup-system ]]; then
+  echo "infra/k8s/services/backup-system is missing; run from the repository root or download the full archive."
   exit 1
 fi
-if [[ ! -d infra/k8s/cert-manager ]]; then
-  echo "infra/k8s/cert-manager is missing; run from the repository root or download the full archive."
+if [[ ! -d infra/k8s/services/cert-manager ]]; then
+  echo "infra/k8s/services/cert-manager is missing; run from the repository root or download the full archive."
   exit 1
 fi
-if [[ ! -d infra/k8s/traefik ]]; then
-  echo "infra/k8s/traefik is missing; run from the repository root or download the full archive."
+if [[ ! -d infra/k8s/services/traefik ]]; then
+  echo "infra/k8s/services/traefik is missing; run from the repository root or download the full archive."
   exit 1
 fi
-cp -r infra/k8s/platform "${RENDER_DIR}/platform"
-cp -r infra/k8s/mailcow "${RENDER_DIR}/mailcow"
-cp -r infra/k8s/infra-db "${RENDER_DIR}/infra-db"
-cp -r infra/k8s/backup "${RENDER_DIR}/backup"
-cp -r infra/k8s/dns "${RENDER_DIR}/dns"
-cp -r infra/k8s/cert-manager "${RENDER_DIR}/cert-manager"
-cp -r infra/k8s/traefik "${RENDER_DIR}/traefik"
+if [[ ! -d infra/k8s/services/kyverno ]]; then
+  echo "infra/k8s/services/kyverno is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+if [[ ! -d infra/k8s/templates ]]; then
+  echo "infra/k8s/templates is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+mkdir -p "${SERVICES_DIR}"
+cp -r infra/k8s/platform "${PLATFORM_DIR}"
+cp -r infra/k8s/services/* "${SERVICES_DIR}/"
+cp -r infra/k8s/templates "${TEMPLATES_DIR}"
 
-cat > "${RENDER_DIR}/platform/platform-secrets.yaml" <<EOF
+if command -v htpasswd >/dev/null 2>&1; then
+  bcrypt_line() {
+    htpasswd -nbB "$1" "$2"
+  }
+elif command -v python3 >/dev/null 2>&1; then
+  bcrypt_line() {
+    local user="$1"
+    local pass="$2"
+    local salt=""
+    salt="$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 22)"
+    python3 - "${user}" "${pass}" "${salt}" <<'PY'
+import crypt
+import sys
+
+user, password, salt = sys.argv[1], sys.argv[2], sys.argv[3]
+hashed = crypt.crypt(password, f"$2b$12${salt}")
+print(f"{user}:{hashed}")
+PY
+  }
+else
+  echo "Missing required command: htpasswd (apache2-utils) or python3 for bcrypt generation"
+  exit 1
+fi
+PGADMIN_BASICAUTH="$(bcrypt_line "${PGADMIN_AUTH_USER}" "${PGADMIN_AUTH_PASS}")"
+MAILCOW_BASICAUTH="$(bcrypt_line "${MAILCOW_AUTH_USER}" "${MAILCOW_AUTH_PASS}")"
+PANEL_BASICAUTH="$(bcrypt_line "${PANEL_AUTH_USER}" "${PANEL_AUTH_PASS}")"
+PANEL_BASICAUTH_B64="$(printf "%s" "${PANEL_BASICAUTH}" | base64 | tr -d '\n')"
+
+cat > "${PLATFORM_DIR}/platform-secrets.yaml" <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -203,7 +274,7 @@ stringData:
   POSTGRES_DB: "${POSTGRES_DB}"
 EOF
 
-cat > "${RENDER_DIR}/mailcow/mailcow-secrets.yaml" <<EOF
+cat > "${SERVICES_DIR}/mail-zone/mailcow-secrets.yaml" <<EOF
 apiVersion: v1
 kind: Secret
 metadata:
@@ -218,29 +289,43 @@ stringData:
 EOF
 
 echo "Templating manifests..."
-sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE}|g" "${RENDER_DIR}/platform/controller-deploy.yaml"
-sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE}|g" "${RENDER_DIR}/platform/panel-deploy.yaml"
-sed -i "s|REPLACE_CONTROLLER_NODEPORT|${CONTROLLER_NODEPORT}|g" "${RENDER_DIR}/platform/controller-nodeport.yaml"
-sed -i "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN}|g" "${RENDER_DIR}/platform/panel-ingress.yaml"
-sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${RENDER_DIR}/platform/panel-ingress.yaml"
-if [[ -n "${LETSENCRYPT_EMAIL}" ]]; then
-  sed -i "s|REPLACE_LETSENCRYPT_EMAIL|${LETSENCRYPT_EMAIL}|g" "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
+IMAGE_BASE="ghcr.io/${GHCR_OWNER}/${GHCR_REPO}"
+if grep -rl "REPLACE_IMAGE_BASE" "${BACKUP_SYSTEM_DIR}" >/dev/null 2>&1; then
+  grep -rl "REPLACE_IMAGE_BASE" "${BACKUP_SYSTEM_DIR}" | xargs sed -i "s|REPLACE_IMAGE_BASE|${IMAGE_BASE}|g"
 fi
-sed -i "s|REPLACE_POSTGRES_PASSWORD|${POSTGRES_PASSWORD}|g" "${RENDER_DIR}/infra-db/postgres-secret.yaml"
-sed -i "s|REPLACE_PGADMIN_EMAIL|${PGADMIN_EMAIL}|g" "${RENDER_DIR}/infra-db/pgadmin-secret.yaml"
-sed -i "s|REPLACE_PGADMIN_PASSWORD|${PGADMIN_PASSWORD}|g" "${RENDER_DIR}/infra-db/pgadmin-secret.yaml"
-sed -i "s|REPLACE_PGADMIN_DOMAIN|${PGADMIN_DOMAIN}|g" "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
-sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
-sed -i "s|REPLACE_MAILCOW_HOSTNAME|${MAILCOW_DOMAIN}|g" "${RENDER_DIR}/mailcow/mailcow-core.yaml"
-sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN}|g" "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
-sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER}|g" "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
+sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE}|g" "${PLATFORM_DIR}/controller-deploy.yaml"
+sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE}|g" "${PLATFORM_DIR}/panel-deploy.yaml"
+sed -i "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
+sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
+sed -i "s|REPLACE_PANEL_BASICAUTH|${PANEL_BASICAUTH_B64}|g" "${PLATFORM_DIR}/panel-auth.yaml"
+sed -i "s|REPLACE_LETSENCRYPT_EMAIL|${LETSENCRYPT_EMAIL}|g" "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
+sed -i "s|REPLACE_POSTGRES_PASSWORD|${POSTGRES_PASSWORD}|g" "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
+sed -i "s|REPLACE_PGADMIN_EMAIL|${PGADMIN_EMAIL}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
+sed -i "s|REPLACE_PGADMIN_PASSWORD|${PGADMIN_PASSWORD}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
+sed -i "s|REPLACE_PGADMIN_DOMAIN|${PGADMIN_DOMAIN}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
+sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
+sed -i "s|REPLACE_PGADMIN_BASICAUTH|${PGADMIN_BASICAUTH}|g" "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
+sed -i "s|REPLACE_MAILCOW_HOSTNAME|${MAILCOW_DOMAIN}|g" "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
+sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+sed -i "s|REPLACE_MAILCOW_BASICAUTH|${MAILCOW_BASICAUTH}|g" "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
+sed -i "s|REPLACE_ME_BASE64LIKE|${TSIG_SECRET}|g" "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
+sed -i "s|REPLACE_BACKUP_TOKEN|${BACKUP_TOKEN}|g" "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
+if grep -rl "REPLACE_IMAGE_BASE" "${BACKUP_SYSTEM_DIR}" >/dev/null 2>&1; then
+  echo "ERROR: REPLACE_IMAGE_BASE placeholder not fully replaced in backup-system manifests."
+  exit 1
+fi
+if grep -q "REPLACE_PANEL_BASICAUTH" "${PLATFORM_DIR}/panel-auth.yaml"; then
+  echo "ERROR: REPLACE_PANEL_BASICAUTH placeholder not fully replaced in panel-auth.yaml."
+  exit 1
+fi
 
 # ========= apply =========
 echo "Applying Traefik entrypoints config..."
-kubectl apply -f "${RENDER_DIR}/traefik"
+kubectl apply -f "${SERVICES_DIR}/traefik"
 
 echo "Installing cert-manager (cluster-wide)..."
-kubectl apply -f "${RENDER_DIR}/cert-manager/cert-manager.yaml"
+kubectl apply -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml"
 kubectl wait --for=condition=Established crd/certificates.cert-manager.io --timeout=180s
 kubectl wait --for=condition=Established crd/certificaterequests.cert-manager.io --timeout=180s
 kubectl wait --for=condition=Established crd/challenges.acme.cert-manager.io --timeout=180s
@@ -251,12 +336,20 @@ kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager -
 kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=180s
 kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout=180s
 echo "Applying ClusterIssuers."
-kubectl apply -f "${RENDER_DIR}/cert-manager/cluster-issuers.yaml"
+kubectl apply -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
+
+echo "Installing Kyverno..."
+kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
+kubectl apply -f "${SERVICES_DIR}/kyverno/install.yaml"
+kubectl wait --for=condition=Available deployment -n kyverno --all --timeout=300s
+kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
 
 echo "Applying platform base manifests..."
-kubectl apply -f "${RENDER_DIR}/platform/namespace.yaml"
-kubectl apply -f "${RENDER_DIR}/platform/rbac.yaml"
-kubectl apply -f "${RENDER_DIR}/platform/platform-secrets.yaml"
+kubectl apply -f "${PLATFORM_DIR}/namespace.yaml"
+kubectl apply -f "${PLATFORM_DIR}/rbac.yaml"
+kubectl apply -f "${PLATFORM_DIR}/pvc.yaml"
+kubectl apply -f "${PLATFORM_DIR}/platform-secrets.yaml"
+kubectl apply -f "${PLATFORM_DIR}/panel-auth.yaml"
 if [[ -n "${GHCR_USERNAME}" && -n "${GHCR_TOKEN}" ]]; then
   kubectl create secret docker-registry ghcr-pull-secret \
     -n platform \
@@ -270,46 +363,66 @@ else
 fi
 
 echo "Applying infra DB manifests..."
-kubectl apply -f "${RENDER_DIR}/infra-db/namespace.yaml"
-kubectl apply -f "${RENDER_DIR}/infra-db/postgres-secret.yaml"
-kubectl apply -f "${RENDER_DIR}/infra-db/postgres-service.yaml"
-kubectl apply -f "${RENDER_DIR}/infra-db/postgres-statefulset.yaml"
-kubectl apply -f "${RENDER_DIR}/infra-db/networkpolicy.yaml"
-kubectl apply -f "${RENDER_DIR}/infra-db/pgadmin-secret.yaml"
-kubectl apply -f "${RENDER_DIR}/infra-db/pgadmin-svc.yaml"
-kubectl apply -f "${RENDER_DIR}/infra-db/pgadmin-deploy.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/namespace.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-service.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-statefulset.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/networkpolicy.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-svc.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml"
 
 echo "Applying DNS (bind9) manifests..."
-kubectl apply -f "${RENDER_DIR}/dns/namespace.yaml"
-kubectl apply -f "${RENDER_DIR}/dns/tsig-secret.yaml"
-kubectl apply -f "${RENDER_DIR}/dns/bind9.yaml"
-kubectl apply -f "${RENDER_DIR}/dns/traefik-tcp"
+kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
+kubectl apply -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
+kubectl apply -f "${SERVICES_DIR}/dns-zone/pvc.yaml"
+kubectl apply -f "${SERVICES_DIR}/dns-zone/bind9.yaml"
+kubectl apply -f "${SERVICES_DIR}/dns-zone/traefik-tcp"
 
 echo "Applying mailcow manifests..."
-kubectl apply -f "${RENDER_DIR}/mailcow/namespace.yaml"
-kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-secrets.yaml"
-kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-core.yaml"
-kubectl apply -f "${RENDER_DIR}/mailcow/networkpolicy.yaml"
-kubectl apply -f "${RENDER_DIR}/mailcow/traefik-tcp"
+kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
+kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-secrets.yaml"
+kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
+kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
+kubectl apply -f "${SERVICES_DIR}/mail-zone/networkpolicy.yaml"
+kubectl apply -f "${SERVICES_DIR}/mail-zone/traefik-tcp"
 
-echo "Applying backup manifests..."
-mkdir -p /backups/sites
-kubectl apply -f "${RENDER_DIR}/backup/namespace.yaml"
-kubectl apply -f "${RENDER_DIR}/backup/serviceaccount.yaml"
-kubectl apply -f "${RENDER_DIR}/backup/rbac.yaml"
-kubectl apply -f "${RENDER_DIR}/backup/backup-script-configmap.yaml"
-kubectl apply -f "${RENDER_DIR}/backup/backup-cronjob.yaml"
+echo "Building and importing backup images..."
+if ! command -v docker >/dev/null 2>&1; then
+  echo "ERROR: docker is required to build backup images."
+  exit 1
+fi
+if [[ ! -d infra/docker/images/backup-service || ! -d infra/docker/images/backup-runner ]]; then
+  echo "ERROR: infra/docker/images/backup-service or backup-runner is missing."
+  exit 1
+fi
+docker build -t backup-service:local infra/docker/images/backup-service
+docker build -t backup-runner:local infra/docker/images/backup-runner
+docker save backup-service:local | k3s ctr images import -
+docker save backup-runner:local | k3s ctr images import -
+
+echo "Applying backup-system manifests..."
+backup_apply "${BACKUP_SYSTEM_DIR}/namespace.yaml"
+backup_apply "${BACKUP_SYSTEM_DIR}/serviceaccount.yaml"
+backup_apply "${BACKUP_SYSTEM_DIR}/rbac.yaml"
+backup_apply "${BACKUP_SYSTEM_DIR}/pvc.yaml"
+backup_apply "${BACKUP_SYSTEM_DIR}/backup-scripts-configmap.yaml"
+backup_apply "${BACKUP_SYSTEM_DIR}/backup-job-templates-configmap.yaml"
+backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
+backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml"
+backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml"
 
 echo "Applying platform workloads..."
-kubectl apply -f "${RENDER_DIR}/platform/controller-deploy.yaml"
-kubectl apply -f "${RENDER_DIR}/platform/controller-svc.yaml"
-kubectl apply -f "${RENDER_DIR}/platform/panel-deploy.yaml"
-kubectl apply -f "${RENDER_DIR}/platform/panel-svc.yaml"
+kubectl apply -f "${PLATFORM_DIR}/controller-deploy.yaml"
+kubectl apply -f "${PLATFORM_DIR}/controller-svc.yaml"
+kubectl apply -f "${PLATFORM_DIR}/panel-deploy.yaml"
+kubectl apply -f "${PLATFORM_DIR}/panel-svc.yaml"
 
 echo "Applying ingresses..."
-kubectl apply -f "${RENDER_DIR}/platform/panel-ingress.yaml"
-kubectl apply -f "${RENDER_DIR}/mailcow/mailcow-ingress.yaml"
-kubectl apply -f "${RENDER_DIR}/infra-db/pgadmin-ingress.yaml"
+kubectl apply -f "${PLATFORM_DIR}/panel-ingress.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
+kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
 
 echo "Controller stays internal (no NodePort)."
 
@@ -317,7 +430,6 @@ echo "Controller stays internal (no NodePort)."
 mkdir -p /etc/voxeil
 cat > /etc/voxeil/installer.env <<EOF
 EXPOSE_CONTROLLER="N"
-CONTROLLER_NODEPORT="30081"
 EOF
 touch /etc/voxeil/allowlist.txt
 
@@ -328,7 +440,6 @@ set -euo pipefail
 ALLOWLIST_FILE="/etc/voxeil/allowlist.txt"
 CONF="/etc/voxeil/installer.env"
 EXPOSE_CONTROLLER="N"
-CONTROLLER_NODEPORT="30081"
 if [[ -f "${CONF}" ]]; then
   # shellcheck disable=SC1090
   source "${CONF}"
@@ -460,5 +571,6 @@ echo "- Log in to the panel and create your first site."
 echo "- Deploy a site image via POST /sites/:slug/deploy."
 echo "- Point DNS to this server and enable TLS per site via PATCH /sites/:slug/tls."
 echo "- Configure Mailcow DNS (MX/SPF/DKIM) before enabling mail."
-echo "- Verify backups in /backups/sites if backups are enabled."
+echo "- Verify backups in the backup-system PVC (mounted at /backups)."
+echo ""
 echo ""

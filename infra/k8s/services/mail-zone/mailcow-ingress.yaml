@@ -1,26 +1,26 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: panel
-  namespace: platform
+  name: mailcow
+  namespace: mail-zone
   annotations:
     traefik.ingress.kubernetes.io/router.entrypoints: websecure
     traefik.ingress.kubernetes.io/router.tls: "true"
-    traefik.ingress.kubernetes.io/router.middlewares: platform-panel-auth@kubernetescrd
-    cert-manager.io/cluster-issuer: REPLACE_PANEL_TLS_ISSUER
+    traefik.ingress.kubernetes.io/router.middlewares: mail-zone-mailcow-auth@kubernetescrd
+    cert-manager.io/cluster-issuer: REPLACE_MAILCOW_TLS_ISSUER
 spec:
   tls:
     - hosts:
-        - REPLACE_PANEL_DOMAIN
-      secretName: tls-panel
+        - REPLACE_MAILCOW_DOMAIN
+      secretName: tls-mailcow
   rules:
-    - host: REPLACE_PANEL_DOMAIN
+    - host: REPLACE_MAILCOW_DOMAIN
       http:
         paths:
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: panel
+                name: mailcow-api
                 port:
-                  number: 3000
+                  number: 80

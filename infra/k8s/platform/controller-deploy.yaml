@@ -115,10 +115,8 @@ spec:
               value: "u_"
       volumes:
         - name: backups
-          hostPath:
-            path: /backups
-            type: DirectoryOrCreate
+          persistentVolumeClaim:
+            claimName: controller-backups-pvc
         - name: voxeil-config
-          hostPath:
-            path: /etc/voxeil
-            type: DirectoryOrCreate
+          persistentVolumeClaim:
+            claimName: controller-config-pvc

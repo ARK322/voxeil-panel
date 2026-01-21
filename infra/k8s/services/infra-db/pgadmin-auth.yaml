@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pgadmin-basicauth
+  namespace: infra-db
+type: Opaque
+stringData:
+  users: "REPLACE_PGADMIN_BASICAUTH"
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: pgadmin-auth
+  namespace: infra-db
+spec:
+  basicAuth:
+    secret: pgadmin-basicauth
