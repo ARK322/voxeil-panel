@@ -213,7 +213,8 @@ export async function deployApp(appId, userId, input) {
                 Object.entries(app.envJson).map(([key, value]) => [key, String(value)])
             )
         };
-        // Ensure namespace is set
+        // Explicitly ensure namespace is set on metadata
+        secret.metadata = secret.metadata || {};
         secret.metadata.namespace = namespace;
         await upsertSecret(secret);
     }
