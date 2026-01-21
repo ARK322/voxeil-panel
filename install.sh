@@ -5,10 +5,16 @@ need_cmd() {
   command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1"; exit 1; }
 }
 
-need_cmd sudo
 need_cmd curl
 need_cmd tar
 need_cmd mktemp
+
+# Use sudo only if not running as root
+SUDO=""
+if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+  need_cmd sudo
+  SUDO="sudo"
+fi
 
 OWNER="${OWNER:-ARK322}"
 REPO="${REPO:-voxeil-panel}"
@@ -41,4 +47,4 @@ cd "${EXTRACTED_DIR}"
 chmod +x installer/installer.sh
 
 echo "Starting installer..."
-exec sudo bash installer/installer.sh "$@"
+exec ${SUDO} bash installer/installer.sh "$@"
