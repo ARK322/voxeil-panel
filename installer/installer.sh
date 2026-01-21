@@ -272,8 +272,16 @@ fi
 
 need_cmd kubectl
 
+echo "Waiting for node to be registered..."
+for i in {1..60}; do
+  if kubectl get nodes >/dev/null 2>&1 && [[ "$(kubectl get nodes --no-headers 2>/dev/null | wc -l)" -gt 0 ]]; then
+    break
+  fi
+  sleep 2
+done
+
 echo "Waiting for node to be ready..."
-kubectl wait --for=condition=Ready node --all --timeout=180s
+kubectl wait --for=condition=Ready node --all --timeout=300s
 
 # ========= render manifests to temp dir =========
 RENDER_DIR="$(mktemp -d)"
