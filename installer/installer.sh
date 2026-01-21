@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ========= helpers =========
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
-rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48; }
+rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 || true; }
 backup_apply() {
   kubectl apply -f "$1" || {
     echo "Backup manifests failed to apply; aborting (backup is required)."
@@ -240,7 +240,10 @@ elif command -v python3 >/dev/null 2>&1; then
     local user="$1"
     local pass="$2"
     local salt=""
-    salt="$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 22)"
+    salt="$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 22 || true)"
+    if [[ -z "${salt}" ]]; then
+      salt="$(tr -dc 'A-Za-z0-9' </dev/urandom | head -c 22 || true)"
+    fi
     python3 - "${user}" "${pass}" "${salt}" <<'PY'
 import crypt
 import sys
