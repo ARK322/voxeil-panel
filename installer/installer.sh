@@ -11,6 +11,11 @@ backup_apply() {
   }
 }
 
+PROMPT_IN="/dev/stdin"
+if [[ ! -t 0 && -r /dev/tty ]]; then
+  PROMPT_IN="/dev/tty"
+fi
+
 echo "== Voxeil Panel Installer =="
 
 need_cmd curl
@@ -55,7 +60,7 @@ prompt_with_default() {
   local label="$1"
   local current="$2"
   local input=""
-  read -r -p "${label} [${current}]: " input
+  read -r -p "${label} [${current}]: " input < "${PROMPT_IN}"
   if [[ -n "${input}" ]]; then
     printf "%s" "${input}"
   else
@@ -69,7 +74,7 @@ prompt_required() {
   local input=""
   while true; do
     if [[ -n "${current}" ]]; then
-      read -r -p "${label} [${current}]: " input
+      read -r -p "${label} [${current}]: " input < "${PROMPT_IN}"
       if [[ -z "${input}" ]]; then
         printf "%s" "${current}"
         return
@@ -77,7 +82,7 @@ prompt_required() {
       printf "%s" "${input}"
       return
     else
-      read -r -p "${label}: " input
+      read -r -p "${label}: " input < "${PROMPT_IN}"
       if [[ -n "${input}" ]]; then
         printf "%s" "${input}"
         return
