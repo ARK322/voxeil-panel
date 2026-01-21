@@ -6,7 +6,31 @@ spec:
   validationFailureAction: Enforce
   background: false
   rules:
-    - name: deny-controller-non-user-namespaces
+    - name: deny-controller-namespace-mutations
+      match:
+        any:
+          - subjects:
+              - kind: ServiceAccount
+                name: controller-sa
+                namespace: platform
+            resources:
+              kinds:
+                - Namespace
+      preconditions:
+        all:
+          - key: "{{ request.operation }}"
+            operator: AnyIn
+            value:
+              - CREATE
+              - UPDATE
+              - DELETE
+          - key: "{{ regex_match('^user-.*', request.name) }}"
+            operator: Equals
+            value: false
+      validate:
+        message: "controller-sa may only manage user-* namespaces."
+        deny: {}
+    - name: deny-controller-non-user-namespace-writes
       match:
         any:
           - subjects:
@@ -30,71 +54,6 @@ spec:
           - key: "{{ regex_match('^user-.*', request.namespace) }}"
             operator: Equals
             value: false
-          - key: "{{ request.namespace }}"
-            operator: NotEquals
-            value: platform
       validate:
-        message: "controller-sa may only mutate resources in user-* or platform namespaces."
-        deny: {}
-    - name: deny-controller-restricted-namespaces
-      match:
-        any:
-          - subjects:
-              - kind: ServiceAccount
-                name: controller-sa
-                namespace: platform
-            resources:
-              kinds:
-                - "*"
-      preconditions:
-        all:
-          - key: "{{ request.operation }}"
-            operator: AnyIn
-            value:
-              - CREATE
-              - UPDATE
-              - DELETE
-          - key: "{{ request.namespace || '' }}"
-            operator: AnyIn
-            value:
-              - infra-db
-              - dns-zone
-              - mail-zone
-              - backup-system
-              - kube-system
-              - kube-public
-              - kube-node-lease
-              - cert-manager
-              - traefik
-              - kyverno
-              - flux-system
-      validate:
-        message: "controller-sa is not allowed to mutate infra/system namespaces."
-        deny: {}
-    - name: deny-controller-namespace-mutations
-      match:
-        any:
-          - subjects:
-              - kind: ServiceAccount
-                name: controller-sa
-                namespace: platform
-            resources:
-              kinds:
-                - Namespace
-      preconditions:
-        all:
-          - key: "{{ request.operation }}"
-            operator: AnyIn
-            value:
-              - CREATE
-              - UPDATE
-              - DELETE
-          - key: "{{ regex_match('^user-.*', request.name) }}"
-            operator: Equals
-            value: false
-          - key: "{{ request.name }}"
-            operator: NotEquals
-            value: platform
-      validate:
-        message: "controller-sa may only manage user-* namespaces."
+        message: "controller-sa may only mutate resources in user-* namespaces."
         deny: {}

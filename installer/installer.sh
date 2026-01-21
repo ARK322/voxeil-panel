@@ -177,15 +177,11 @@ kubectl wait --for=condition=Ready node --all --timeout=180s
 # ========= render manifests to temp dir =========
 RENDER_DIR="$(mktemp -d)"
 BACKUP_SYSTEM_NAME="backup-system"
-PLATFORM_DIR="${RENDER_DIR}/platform"
 SERVICES_DIR="${RENDER_DIR}/services"
 TEMPLATES_DIR="${RENDER_DIR}/templates"
+PLATFORM_DIR="${SERVICES_DIR}/platform"
 BACKUP_SYSTEM_DIR="${SERVICES_DIR}/${BACKUP_SYSTEM_NAME}"
 
-if [[ ! -d infra/k8s/platform ]]; then
-  echo "infra/k8s/platform is missing; run from the repository root or download the full archive."
-  exit 1
-fi
 if [[ ! -d infra/k8s/services/infra-db ]]; then
   echo "infra/k8s/services/infra-db is missing; run from the repository root or download the full archive."
   exit 1
@@ -214,12 +210,19 @@ if [[ ! -d infra/k8s/services/kyverno ]]; then
   echo "infra/k8s/services/kyverno is missing; run from the repository root or download the full archive."
   exit 1
 fi
+if [[ ! -d infra/k8s/services/flux-system ]]; then
+  echo "infra/k8s/services/flux-system is missing; run from the repository root or download the full archive."
+  exit 1
+fi
+if [[ ! -d infra/k8s/services/platform ]]; then
+  echo "infra/k8s/services/platform is missing; run from the repository root or download the full archive."
+  exit 1
+fi
 if [[ ! -d infra/k8s/templates ]]; then
   echo "infra/k8s/templates is missing; run from the repository root or download the full archive."
   exit 1
 fi
 mkdir -p "${SERVICES_DIR}"
-cp -r infra/k8s/platform "${PLATFORM_DIR}"
 cp -r infra/k8s/services/* "${SERVICES_DIR}/"
 cp -r infra/k8s/templates "${TEMPLATES_DIR}"
 
@@ -336,13 +339,22 @@ kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager -
 kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=180s
 kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout=180s
 echo "Applying ClusterIssuers."
-kubectl apply -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
+if [[ -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" ]]; then
+  kubectl apply -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
+fi
 
 echo "Installing Kyverno..."
 kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
 kubectl apply -f "${SERVICES_DIR}/kyverno/install.yaml"
 kubectl wait --for=condition=Available deployment -n kyverno --all --timeout=300s
 kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
+
+echo "Installing Flux controllers..."
+kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
+FLUX_INSTALL_URL="https://github.com/fluxcd/flux2/releases/download/v2.3.0/install.yaml"
+curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"
+kubectl apply -f "${SERVICES_DIR}/flux-system/install.yaml"
+kubectl wait --for=condition=Available deployment -n flux-system --all --timeout=300s
 
 echo "Applying platform base manifests..."
 kubectl apply -f "${PLATFORM_DIR}/namespace.yaml"
@@ -362,9 +374,16 @@ else
   echo "Skipping GHCR pull secret (public images)."
 fi
 
+echo "Applying platform workloads..."
+kubectl apply -f "${PLATFORM_DIR}/controller-deploy.yaml"
+kubectl apply -f "${PLATFORM_DIR}/controller-svc.yaml"
+kubectl apply -f "${PLATFORM_DIR}/panel-deploy.yaml"
+kubectl apply -f "${PLATFORM_DIR}/panel-svc.yaml"
+
 echo "Applying infra DB manifests..."
 kubectl apply -f "${SERVICES_DIR}/infra-db/namespace.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
+kubectl apply -f "${SERVICES_DIR}/infra-db/pvc.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-service.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-statefulset.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/networkpolicy.yaml"
@@ -378,7 +397,6 @@ kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/pvc.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/bind9.yaml"
-kubectl apply -f "${SERVICES_DIR}/dns-zone/traefik-tcp"
 
 echo "Applying mailcow manifests..."
 kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
@@ -386,7 +404,6 @@ kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-secrets.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/networkpolicy.yaml"
-kubectl apply -f "${SERVICES_DIR}/mail-zone/traefik-tcp"
 
 echo "Building and importing backup images..."
 if ! command -v docker >/dev/null 2>&1; then
@@ -413,15 +430,11 @@ backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml"
 
-echo "Applying platform workloads..."
-kubectl apply -f "${PLATFORM_DIR}/controller-deploy.yaml"
-kubectl apply -f "${PLATFORM_DIR}/controller-svc.yaml"
-kubectl apply -f "${PLATFORM_DIR}/panel-deploy.yaml"
-kubectl apply -f "${PLATFORM_DIR}/panel-svc.yaml"
-
 echo "Applying ingresses..."
 kubectl apply -f "${PLATFORM_DIR}/panel-ingress.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
+kubectl apply -f "${SERVICES_DIR}/dns-zone/traefik-tcp"
+kubectl apply -f "${SERVICES_DIR}/mail-zone/traefik-tcp"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
 
 echo "Controller stays internal (no NodePort)."

@@ -6,7 +6,7 @@ metadata:
 data:
   named.conf.options: |
     options {
-      directory "/var/cache/bind";
+      directory "/var/lib/bind";
       recursion no;
       allow-query { any; };
       allow-recursion { none; };
@@ -89,7 +89,7 @@ spec:
               mountPath: /etc/bind/named.conf.local
               subPath: named.conf.local
             - name: zones
-              mountPath: /etc/bind/zones
+              mountPath: /var/lib/bind
             - name: tsig
               mountPath: /etc/bind/tsig
               readOnly: true
