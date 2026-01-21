@@ -57,6 +57,23 @@ SITE_PORT_END="${SITE_PORT_END:-31999}"
 CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-ghcr.io/ark322/voxeil-controller:latest}"
 PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/ark322/voxeil-panel:latest}"
 
+# Admin credentials (canonical names)
+ADMIN_EMAIL="${ADMIN_EMAIL:-}"
+ADMIN_USERNAME="${ADMIN_USERNAME:-}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
+
+# Helper to extract root domain (e.g., panel.voxeil.com -> voxeil.com)
+extract_root_domain() {
+  local domain="$1"
+  if [[ "${domain}" =~ \. ]]; then
+    # Remove leftmost label if 2+ labels exist
+    echo "${domain#*.}"
+  else
+    # Single label, return as-is
+    echo "${domain}"
+  fi
+}
+
 prompt_with_default() {
   local label="$1"
   local current="$2"
@@ -92,41 +109,121 @@ prompt_required() {
   done
 }
 
+prompt_password() {
+  local label="$1"
+  local input=""
+  while true; do
+    read -r -s -p "${label}: " input < "${PROMPT_IN}"
+    echo "" >&2
+    if [[ -n "${input}" ]]; then
+      printf "%s" "${input}"
+      return
+    fi
+    echo "Password cannot be empty. Please try again." >&2
+  done
+}
+
 echo ""
 echo "== Config prompts =="
-LETSENCRYPT_EMAIL="$(prompt_with_default "Let's Encrypt email" "${LETSENCRYPT_EMAIL}")"
-PANEL_DOMAIN="$(prompt_required "Panel domain (e.g. panel.example.com)" "${PANEL_DOMAIN}")"
-PANEL_ADMIN_USERNAME="$(prompt_required "Panel admin username" "${PANEL_ADMIN_USERNAME:-admin}")"
-PANEL_ADMIN_EMAIL="$(prompt_required "Panel admin email" "${PANEL_ADMIN_EMAIL:-}")"
-LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-${PANEL_ADMIN_EMAIL}}"
-if [[ -z "${LETSENCRYPT_EMAIL}" ]]; then
-  echo "LETSENCRYPT_EMAIL is required (or set PANEL_ADMIN_EMAIL)."
+
+# Check if we have all required env vars (non-interactive mode)
+# Support both new (ADMIN_*) and old (PANEL_ADMIN_*) variable names
+HAS_ADMIN_EMAIL="${ADMIN_EMAIL:-${PANEL_ADMIN_EMAIL:-}}"
+HAS_ADMIN_USERNAME="${ADMIN_USERNAME:-${PANEL_ADMIN_USERNAME:-}}"
+HAS_ADMIN_PASSWORD="${ADMIN_PASSWORD:-${PANEL_ADMIN_PASSWORD:-}}"
+
+if [[ -n "${PANEL_DOMAIN}" && -n "${HAS_ADMIN_EMAIL}" && -n "${HAS_ADMIN_USERNAME}" && -n "${HAS_ADMIN_PASSWORD}" ]]; then
+  # All required vars provided, skip prompts
+  echo "Using provided environment variables (non-interactive mode)"
+else
+  # Check if we have a TTY for interactive prompts
+  if [[ ! -t 0 && ! -r /dev/tty ]]; then
+    echo "ERROR: Non-interactive mode requires the following environment variables:"
+    echo "  PANEL_DOMAIN (required)"
+    echo "  ADMIN_EMAIL or PANEL_ADMIN_EMAIL (required)"
+    echo "  ADMIN_USERNAME or PANEL_ADMIN_USERNAME (required, default: admin)"
+    echo "  ADMIN_PASSWORD or PANEL_ADMIN_PASSWORD (required)"
+    exit 1
+  fi
+fi
+
+# Prompt for Panel domain (required)
+if [[ -z "${PANEL_DOMAIN}" ]]; then
+  PANEL_DOMAIN="$(prompt_required "Panel domain (e.g. panel.example.com)" "")"
+fi
+
+# Prompt for Admin email (required)
+if [[ -z "${ADMIN_EMAIL}" ]]; then
+  # Backwards compatibility: if PANEL_ADMIN_EMAIL is set, use it
+  if [[ -n "${PANEL_ADMIN_EMAIL}" ]]; then
+    ADMIN_EMAIL="${PANEL_ADMIN_EMAIL}"
+  else
+    ADMIN_EMAIL="$(prompt_required "Admin email" "")"
+  fi
+fi
+
+# Validate email format (simple: must contain @ and . after @)
+if [[ ! "${ADMIN_EMAIL}" =~ @ ]] || [[ ! "${ADMIN_EMAIL}" =~ @.*[.] ]]; then
+  echo "ERROR: Invalid email format: ${ADMIN_EMAIL}"
   exit 1
 fi
+
+# Prompt for Admin username (default: admin)
+if [[ -z "${ADMIN_USERNAME}" ]]; then
+  # Backwards compatibility: if PANEL_ADMIN_USERNAME is set, use it
+  if [[ -n "${PANEL_ADMIN_USERNAME}" ]]; then
+    ADMIN_USERNAME="${PANEL_ADMIN_USERNAME}"
+  else
+    ADMIN_USERNAME="$(prompt_with_default "Admin username" "admin")"
+  fi
+fi
+
+# Prompt for Admin password (required)
+if [[ -z "${ADMIN_PASSWORD}" ]]; then
+  # Backwards compatibility: if PANEL_ADMIN_PASSWORD is set, use it
+  if [[ -n "${PANEL_ADMIN_PASSWORD}" ]]; then
+    ADMIN_PASSWORD="${PANEL_ADMIN_PASSWORD}"
+  else
+    ADMIN_PASSWORD="$(prompt_password "Admin password")"
+  fi
+fi
+
+# Validate password is not empty
+if [[ -z "${ADMIN_PASSWORD}" ]]; then
+  echo "ERROR: Admin password cannot be empty"
+  exit 1
+fi
+
+# Derive all credentials from single admin credentials
+LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-${ADMIN_EMAIL}}"
+PANEL_ADMIN_EMAIL="${PANEL_ADMIN_EMAIL:-${ADMIN_EMAIL}}"
+PANEL_ADMIN_USERNAME="${PANEL_ADMIN_USERNAME:-${ADMIN_USERNAME}}"
+PANEL_ADMIN_PASSWORD="${PANEL_ADMIN_PASSWORD:-${ADMIN_PASSWORD}}"
+PANEL_AUTH_USER="${PANEL_AUTH_USER:-${ADMIN_USERNAME}}"
+PANEL_AUTH_PASS="${PANEL_AUTH_PASS:-${ADMIN_PASSWORD}}"
+PGADMIN_EMAIL="${PGADMIN_EMAIL:-${ADMIN_EMAIL}}"
+PGADMIN_PASSWORD="${PGADMIN_PASSWORD:-${ADMIN_PASSWORD}}"
+PGADMIN_AUTH_USER="${PGADMIN_AUTH_USER:-${ADMIN_USERNAME}}"
+PGADMIN_AUTH_PASS="${PGADMIN_AUTH_PASS:-${ADMIN_PASSWORD}}"
+MAILCOW_AUTH_USER="${MAILCOW_AUTH_USER:-${ADMIN_USERNAME}}"
+MAILCOW_AUTH_PASS="${MAILCOW_AUTH_PASS:-${ADMIN_PASSWORD}}"
+
+# Derive domains from root domain
+ROOT_DOMAIN="$(extract_root_domain "${PANEL_DOMAIN}")"
 if [[ -z "${PGADMIN_DOMAIN}" ]]; then
-  PGADMIN_DOMAIN="pgadmin.${PANEL_DOMAIN}"
+  if [[ "${ROOT_DOMAIN}" != "${PANEL_DOMAIN}" ]]; then
+    PGADMIN_DOMAIN="db.${ROOT_DOMAIN}"
+  else
+    PGADMIN_DOMAIN="pgadmin.${PANEL_DOMAIN}"
+  fi
 fi
-if [[ -z "${PGADMIN_EMAIL}" ]]; then
-  PGADMIN_EMAIL="${PANEL_ADMIN_EMAIL}"
-fi
-if [[ -z "${PGADMIN_PASSWORD}" ]]; then
-  PGADMIN_PASSWORD="$(rand)"
-fi
-PGADMIN_EMAIL="$(prompt_required "pgAdmin email" "${PGADMIN_EMAIL}")"
-PGADMIN_PASSWORD="$(prompt_required "pgAdmin password" "${PGADMIN_PASSWORD}")"
-PGADMIN_AUTH_USER="$(prompt_required "pgAdmin BasicAuth username" "${PGADMIN_AUTH_USER}")"
-PGADMIN_AUTH_PASS="$(prompt_required "pgAdmin BasicAuth password" "${PGADMIN_AUTH_PASS}")"
-if [[ -z "${PANEL_AUTH_PASS}" ]]; then
-  PANEL_AUTH_PASS="$(rand)"
-fi
-PANEL_AUTH_USER="$(prompt_required "Panel BasicAuth username" "${PANEL_AUTH_USER}")"
-PANEL_AUTH_PASS="$(prompt_required "Panel BasicAuth password" "${PANEL_AUTH_PASS}")"
 if [[ -z "${MAILCOW_DOMAIN}" ]]; then
-  MAILCOW_DOMAIN="mail.${PANEL_DOMAIN}"
+  if [[ "${ROOT_DOMAIN}" != "${PANEL_DOMAIN}" ]]; then
+    MAILCOW_DOMAIN="mail.${ROOT_DOMAIN}"
+  else
+    MAILCOW_DOMAIN="mail.${PANEL_DOMAIN}"
+  fi
 fi
-MAILCOW_DOMAIN="$(prompt_required "Mailcow UI domain" "${MAILCOW_DOMAIN}")"
-MAILCOW_AUTH_USER="$(prompt_required "Mailcow BasicAuth username" "${MAILCOW_AUTH_USER}")"
-MAILCOW_AUTH_PASS="$(prompt_required "Mailcow BasicAuth password" "${MAILCOW_AUTH_PASS}")"
 
 CONTROLLER_API_KEY="$(rand)"
 PANEL_ADMIN_PASSWORD="${PANEL_ADMIN_PASSWORD:-$(rand)}"
@@ -138,7 +235,6 @@ POSTGRES_ADMIN_USER="${POSTGRES_ADMIN_USER:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-postgres}"
 MAILCOW_API_URL="${MAILCOW_API_URL:-http://mailcow-api.mail-zone.svc.cluster.local}"
 MAILCOW_API_KEY="${MAILCOW_API_KEY:-$(rand)}"
-MAILCOW_DOMAIN="${MAILCOW_DOMAIN:-}"
 MAILCOW_TLS_ISSUER="${MAILCOW_TLS_ISSUER:-${PANEL_TLS_ISSUER}}"
 MAILCOW_DB_NAME="${MAILCOW_DB_NAME:-mailcow}"
 MAILCOW_DB_USER="${MAILCOW_DB_USER:-mailcow}"
@@ -152,10 +248,9 @@ echo ""
 echo "Config:"
 echo "  Panel domain: ${PANEL_DOMAIN}"
 echo "  Panel TLS issuer: ${PANEL_TLS_ISSUER}"
-echo "  Panel admin username: ${PANEL_ADMIN_USERNAME}"
-echo "  Panel admin email: ${PANEL_ADMIN_EMAIL}"
+echo "  Admin email: ${ADMIN_EMAIL}"
+echo "  Admin username: ${ADMIN_USERNAME}"
 echo "  pgAdmin domain: ${PGADMIN_DOMAIN}"
-echo "  pgAdmin email: ${PGADMIN_EMAIL}"
 echo "  Mailcow UI domain: ${MAILCOW_DOMAIN}"
 echo "  Site NodePort range: ${SITE_PORT_START}-${SITE_PORT_END}"
 if [[ -n "${GHCR_USERNAME}" && -n "${GHCR_TOKEN}" ]]; then
@@ -354,7 +449,8 @@ fi
 
 echo "Installing Kyverno..."
 kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
-kubectl apply -f "${SERVICES_DIR}/kyverno/install.yaml"
+kubectl create -f "${SERVICES_DIR}/kyverno/install.yaml" --save-config=false || \
+kubectl replace -f "${SERVICES_DIR}/kyverno/install.yaml" --force
 kubectl wait --for=condition=Available deployment -n kyverno --all --timeout=300s
 kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
 
