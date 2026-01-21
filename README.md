@@ -1,5 +1,7 @@
 ## Voxeil Panel (MVP)
 
+curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash
+
 Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal UI shipped in this repo.
 
 ### Components
