@@ -107,6 +107,14 @@ export async function getAppById(appId) {
     });
 }
 
+export async function getAppByIdWithOwnershipCheck(appId, userId) {
+    const app = await getAppById(appId);
+    if (app.ownerUserId !== userId) {
+        throw new HttpError(403, "Access denied.");
+    }
+    return app;
+}
+
 export async function createApp(ownerUserId, input) {
     const normalizedSlug = validateSlug(input.slug);
     const id = crypto.randomUUID();
@@ -176,10 +184,11 @@ export async function deployApp(appId, userId, input) {
     const namespace = `user-${userId}`;
     await requireNamespace(namespace);
 
-    const slug = app.slug;
+    // Validate slug before deploy
+    const slug = validateSlug(app.slug);
     const image = input.image || app.image;
     const containerPort = input.containerPort || 3000;
-    const domain = app.domain;
+    const domain = app.domain?.trim() || null;
 
     if (!image) {
         throw new HttpError(400, "Image is required.");
@@ -189,7 +198,7 @@ export async function deployApp(appId, userId, input) {
     let secretName = null;
     if (app.envJson && Object.keys(app.envJson).length > 0) {
         secretName = `app-${slug}-env`;
-        await upsertSecret({
+        const secret = {
             apiVersion: "v1",
             kind: "Secret",
             metadata: {
@@ -203,7 +212,10 @@ export async function deployApp(appId, userId, input) {
             stringData: Object.fromEntries(
                 Object.entries(app.envJson).map(([key, value]) => [key, String(value)])
             )
-        });
+        };
+        // Ensure namespace is set
+        secret.metadata.namespace = namespace;
+        await upsertSecret(secret);
     }
 
     // Build deployment spec
@@ -228,9 +240,11 @@ export async function deployApp(appId, userId, input) {
 
     const deployment = buildDeployment(deploymentSpec);
     deployment.metadata.name = deploymentName;
+    deployment.metadata.namespace = namespace;
 
     const service = buildService(deploymentSpec);
     service.metadata.name = serviceName;
+    service.metadata.namespace = namespace;
 
     // Deploy deployment and service
     await Promise.all([
@@ -238,7 +252,7 @@ export async function deployApp(appId, userId, input) {
         upsertService(service)
     ]);
 
-    // Deploy ingress if domain is provided
+    // Deploy ingress ONLY if domain is provided
     if (domain) {
         const ingressSpec = {
             ...deploymentSpec,
@@ -248,6 +262,7 @@ export async function deployApp(appId, userId, input) {
         };
         const ingress = buildIngress(ingressSpec);
         ingress.metadata.name = ingressName;
+        ingress.metadata.namespace = namespace;
         // Update ingress to use correct service name
         if (ingress.spec?.rules?.[0]?.http?.paths?.[0]?.backend?.service) {
             ingress.spec.rules[0].http.paths[0].backend.service.name = serviceName;
