@@ -34,6 +34,7 @@ import {
 } from "../users/user.dto.js";
 import {
   createUser,
+  createUserWithBootstrap,
   listUsers,
   setUserActive,
   deleteUser,
@@ -42,6 +43,8 @@ import {
   getSession,
   deleteSession
 } from "../users/user.service.js";
+import { createToken } from "../auth/jwt.js";
+import { requireAdmin, getAuthenticatedUser, type AuthenticatedRequest } from "../auth/middleware.js";
 import {
   createSite,
   deleteSite,
@@ -209,14 +212,32 @@ export function registerRoutes(app: FastifyInstance) {
       });
       throw error;
     }
-    const session = await createSession(user.id);
+    
+    // Create JWT token
+    const token = createToken({
+      sub: user.id,
+      role: user.role === "admin" ? "admin" : "user",
+      disabled: !user.active
+    });
+    
     safeAudit({
       action: "auth.login",
       actorUserId: user.id,
       actorUsername: user.username,
       ip
     });
-    return reply.send({ ok: true, token: session.token, user: session.user, expiresAt: session.expiresAt });
+    
+    return reply.send({ 
+      ok: true, 
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        siteSlug: user.siteSlug
+      }
+    });
   });
 
   app.get("/auth/session", async (req, reply) => {
@@ -239,36 +260,88 @@ export function registerRoutes(app: FastifyInstance) {
   });
 
   app.get("/users", async (req, reply) => {
-    await requireAdmin(req.headers as Record<string, string | string[] | undefined>);
+    await requireAdmin(req, reply);
     const users = await listUsers();
     return reply.send({ ok: true, users });
   });
 
-  app.post("/users", async (req, reply) => {
-    const session = await requireAdmin(req.headers as Record<string, string | string[] | undefined>);
+  app.post("/admin/users", async (req, reply) => {
+    await requireAdmin(req, reply);
+    const actor = getAuthenticatedUser(req);
     const body = CreateUserSchema.parse(req.body);
-    const user = await createUser(body);
+    
+    // Idempotency check: if user already exists, return existing user
+    try {
+      const existingUsers = await listUsers();
+      const existing = existingUsers.find(u => u.username === body.username);
+      if (existing) {
+        // Verify namespace exists if it should
+        if (existing.role === "user" || body.role === "user") {
+          const namespace = `user-${existing.id}`;
+          const { core } = getClients();
+          try {
+            await core.readNamespace(namespace);
+            // Everything exists, return existing user
+            safeAudit({
+              action: "users.create",
+              actorUserId: actor.sub,
+              actorUsername: actor.sub, // We don't have username in JWT, use sub
+              target: existing.id,
+              ip: getClientIp(req),
+              meta: { username: existing.username, role: existing.role, idempotent: true }
+            });
+            return reply.send({ ok: true, user: existing, idempotent: true });
+          } catch (error: any) {
+            // Namespace doesn't exist, continue with bootstrap
+          }
+        } else {
+          // Admin user exists, return it
+          safeAudit({
+            action: "users.create",
+            actorUserId: actor.sub,
+            actorUsername: actor.sub,
+            target: existing.id,
+            ip: getClientIp(req),
+            meta: { username: existing.username, role: existing.role, idempotent: true }
+          });
+          return reply.send({ ok: true, user: existing, idempotent: true });
+        }
+      }
+    } catch (error: any) {
+      // Continue with creation if check fails
+    }
+    
+    // Create user with namespace bootstrap
+    const user = await createUserWithBootstrap(body);
+    
     safeAudit({
       action: "users.create",
-      actorUserId: session.user.id,
-      actorUsername: session.user.username,
+      actorUserId: actor.sub,
+      actorUsername: actor.sub,
       target: user.id,
       ip: getClientIp(req),
-      meta: { username: user.username, role: user.role, siteSlug: user.siteSlug ?? null }
+      meta: { 
+        username: user.username, 
+        role: user.role, 
+        siteSlug: user.siteSlug ?? null,
+        namespace: user.role === "user" ? `user-${user.id}` : null
+      }
     });
+    
     return reply.send({ ok: true, user });
   });
 
   app.patch("/users/:id", async (req, reply) => {
-    const session = await requireAdmin(req.headers as Record<string, string | string[] | undefined>);
+    await requireAdmin(req, reply);
+    const actor = getAuthenticatedUser(req);
     const id = String((req.params as { id?: string }).id ?? "");
     if (!id) throw new HttpError(400, "User id is required.");
     const body = ToggleUserSchema.parse(req.body ?? {});
     const user = await setUserActive(id, body.active);
     safeAudit({
       action: "users.toggle",
-      actorUserId: session.user.id,
-      actorUsername: session.user.username,
+      actorUserId: actor.sub,
+      actorUsername: actor.sub,
       target: user.id,
       ip: getClientIp(req),
       meta: { active: user.active }
@@ -277,14 +350,15 @@ export function registerRoutes(app: FastifyInstance) {
   });
 
   app.delete("/users/:id", async (req, reply) => {
-    const session = await requireAdmin(req.headers as Record<string, string | string[] | undefined>);
+    await requireAdmin(req, reply);
+    const actor = getAuthenticatedUser(req);
     const id = String((req.params as { id?: string }).id ?? "");
     if (!id) throw new HttpError(400, "User id is required.");
     await deleteUser(id);
     safeAudit({
       action: "users.delete",
-      actorUserId: session.user.id,
-      actorUsername: session.user.username,
+      actorUserId: actor.sub,
+      actorUsername: actor.sub,
       target: id,
       ip: getClientIp(req)
     });
