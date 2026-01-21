@@ -1,0 +1,26 @@
+[
+  {
+    "id": "user-1",
+    "name": "Acme Corp",
+    "namespace": "user-user-1",
+    "limits": {
+      "cpu": "2",
+      "mem": "4Gi",
+      "storage": "50Gi"
+    },
+    "domainsCount": 3,
+    "sitesCount": 2
+  },
+  {
+    "id": "user-2",
+    "name": "Startup Inc",
+    "namespace": "user-user-2",
+    "limits": {
+      "cpu": "1",
+      "mem": "2Gi",
+      "storage": "20Gi"
+    },
+    "domainsCount": 1,
+    "sitesCount": 1
+  }
+]

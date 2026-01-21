@@ -1,0 +1,9 @@
+{
+  "status": "healthy",
+  "components": {
+    "controller": "healthy",
+    "postgres": "healthy",
+    "traefik": "healthy",
+    "certManager": "healthy"
+  }
+}

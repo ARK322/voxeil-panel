@@ -20,6 +20,9 @@
     ],
     "incremental": true,
     "esModuleInterop": true,
+    "paths": {
+      "@/*": ["./*"]
+    },
     "plugins": [
       {
         "name": "next"
