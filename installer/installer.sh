@@ -11,6 +11,39 @@ backup_apply() {
   }
 }
 
+ensure_docker() {
+  # Check if docker command exists and daemon is reachable
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    echo "Docker already installed."
+    return 0
+  fi
+
+  # Docker missing or daemon not running
+  if ! command -v apt-get >/dev/null 2>&1; then
+    echo "ERROR: Docker is required for backup image build, but automatic install is only supported on apt-get systems."
+    exit 1
+  fi
+
+  echo "Docker not found; installing..."
+  apt-get update -y
+  apt-get install -y docker.io
+
+  # Start and enable docker
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl enable --now docker
+  else
+    service docker start
+  fi
+
+  # Re-check docker daemon
+  if ! docker info >/dev/null 2>&1; then
+    echo "ERROR: Docker installation failed or daemon is not running."
+    exit 1
+  fi
+
+  echo "Docker started."
+}
+
 PROMPT_IN="/dev/stdin"
 if [[ ! -t 0 && -r /dev/tty ]]; then
   PROMPT_IN="/dev/tty"
@@ -263,6 +296,9 @@ echo "  Mailcow API URL: ${MAILCOW_API_URL}"
 echo "  Let's Encrypt Email: ${LETSENCRYPT_EMAIL}"
 echo "  TLS: enabled via cert-manager (site-based; opt-in)"
 echo ""
+
+# ========= ensure docker is installed =========
+ensure_docker
 
 # ========= install k3s if needed =========
 if ! command -v kubectl >/dev/null 2>&1; then
@@ -520,7 +556,11 @@ kubectl apply -f "${SERVICES_DIR}/mail-zone/networkpolicy.yaml"
 
 echo "Building and importing backup images..."
 if ! command -v docker >/dev/null 2>&1; then
-  echo "ERROR: docker is required to build backup images."
+  echo "ERROR: docker missing (should have been installed earlier)."
+  exit 1
+fi
+if ! docker info >/dev/null 2>&1; then
+  echo "ERROR: docker daemon not running."
   exit 1
 fi
 if [[ ! -d infra/docker/images/backup-service || ! -d infra/docker/images/backup-runner ]]; then
