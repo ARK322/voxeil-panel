@@ -232,9 +232,6 @@ export async function deployApp(appId, userId, input) {
     const service = buildService(deploymentSpec);
     service.metadata.name = serviceName;
 
-    const service = buildService(deploymentSpec);
-    service.metadata.name = serviceName;
-
     // Deploy deployment and service
     await Promise.all([
         upsertDeployment(deployment),
