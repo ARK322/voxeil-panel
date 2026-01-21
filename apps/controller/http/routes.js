@@ -8,8 +8,7 @@ import { createUser, listUsers, setUserActive, deleteUser, verifyUserCredentials
 import { signToken } from "../auth/jwt.js";
 import { bootstrapUserNamespace } from "../users/user.bootstrap.js";
 import { CreateAppSchema, DeployAppSchema } from "../apps/app.dto.js";
-import { listApps, createApp, deployApp } from "../apps/app.service.js";
-import { getClients } from "../k8s/client.js";
+import { listApps, createApp, deployApp, getAppByIdWithOwnershipCheck } from "../apps/app.service.js";
 const AllowlistSchema = z.object({
     items: z.array(z.string().min(1)).default([])
 });
@@ -221,6 +220,16 @@ export function registerRoutes(app) {
             });
             throw error;
         }
+        return reply.send({ ok: true, app });
+    });
+
+    app.get("/apps/:id", async (req, reply) => {
+        const user = requireUser(req);
+        const appId = String(req.params.id ?? "");
+        if (!appId) {
+            throw new HttpError(400, "App id is required.");
+        }
+        const app = await getAppByIdWithOwnershipCheck(appId, user.sub);
         return reply.send({ ok: true, app });
     });
 

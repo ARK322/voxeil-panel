@@ -252,8 +252,8 @@ export async function deployApp(appId, userId, input) {
         upsertService(service)
     ]);
 
-    // Deploy ingress ONLY if domain is provided
-    if (domain) {
+    // Deploy ingress ONLY if domain is provided and not empty
+    if (domain && domain.trim() !== "") {
         const ingressSpec = {
             ...deploymentSpec,
             host: domain,
