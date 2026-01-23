@@ -84,18 +84,44 @@ wait_for_k3s_api() {
   return 1
 }
 
-# Check if StorageClass exists
+# Check if StorageClass exists and ensure it's configured correctly
 check_storageclass() {
   local sc_name="${1:-local-path}"
-  if kubectl get storageclass "${sc_name}" >/dev/null 2>&1; then
-    echo "StorageClass '${sc_name}' exists"
-    return 0
-  else
+  if ! kubectl get storageclass "${sc_name}" >/dev/null 2>&1; then
     log_error "StorageClass '${sc_name}' not found. k3s should provide this by default."
     echo "Available StorageClasses:"
     kubectl get storageclass || true
     return 1
   fi
+  echo "StorageClass '${sc_name}' exists"
+  return 0
+}
+
+# Ensure StorageClass has Immediate volumeBindingMode (required for PVCs to bind before pod creation)
+ensure_storageclass_immediate() {
+  local sc_name="${1:-local-path}"
+  
+  if ! kubectl get storageclass "${sc_name}" >/dev/null 2>&1; then
+    log_error "StorageClass '${sc_name}' not found. Cannot patch volumeBindingMode."
+    return 1
+  fi
+  
+  local sc_mode
+  sc_mode="$(kubectl get sc "${sc_name}" -o jsonpath='{.volumeBindingMode}' 2>/dev/null || echo "")"
+  
+  if [ "${sc_mode}" = "WaitForFirstConsumer" ]; then
+    echo "Patching StorageClass '${sc_name}' volumeBindingMode from WaitForFirstConsumer to Immediate..."
+    kubectl patch sc "${sc_name}" -p '{"volumeBindingMode":"Immediate"}' || {
+      log_error "Failed to patch StorageClass '${sc_name}'"
+      return 1
+    }
+    echo "StorageClass '${sc_name}' patched successfully (volumeBindingMode=Immediate)"
+  elif [ "${sc_mode}" = "Immediate" ]; then
+    echo "StorageClass '${sc_name}' already has volumeBindingMode=Immediate (OK)"
+  else
+    echo "StorageClass '${sc_name}' has volumeBindingMode=${sc_mode} (assuming OK)"
+  fi
+  return 0
 }
 
 # Wait for PVC to become Bound
@@ -666,9 +692,17 @@ kubectl wait --for=condition=Ready node --all --timeout="${K3S_NODE_READY_TIMEOU
   exit 1
 }
 
-# Verify StorageClass exists
-check_storageclass "local-path" || {
-  log_error "local-path StorageClass missing. This may cause PVC issues."
+# Verify StorageClass exists and ensure it's configured correctly
+log_step "Ensuring StorageClass is configured correctly"
+if ! check_storageclass "local-path"; then
+  log_error "local-path StorageClass missing. This will cause PVC issues."
+  exit 1
+fi
+
+# Patch StorageClass to use Immediate binding mode (required for PVCs to bind before pod creation)
+ensure_storageclass_immediate "local-path" || {
+  log_error "Failed to ensure StorageClass volumeBindingMode. PVCs may not bind correctly."
+  exit 1
 }
 
 # ========= render manifests to temp dir =========
@@ -974,10 +1008,8 @@ else
   echo "Skipping GHCR pull secret (public images)."
 fi
 
-# Wait for PVCs to be Bound before deploying workloads
-echo "Waiting for platform PVCs to be Bound..."
-wait_for_pvc_bound "platform" "controller-backups-pvc"
-wait_for_pvc_bound "platform" "controller-config-pvc"
+# Note: Platform PVCs will be bound automatically when deployments are created
+# (StorageClass is now Immediate, so no need to wait before deployment)
 
 # Validate controller image before applying deployment
 log_step "Validating controller image"
