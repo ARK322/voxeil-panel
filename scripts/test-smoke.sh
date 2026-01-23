@@ -119,6 +119,27 @@ echo "6. Checking RBAC configuration..."
 if kubectl get clusterrole user-operator >/dev/null 2>&1; then
     test_pass "user-operator ClusterRole exists"
     
+    # Check if pods permission exists (NEW)
+    if kubectl get clusterrole user-operator -o yaml | grep -q "pods"; then
+        test_pass "user-operator ClusterRole has pods permission"
+    else
+        test_fail "user-operator ClusterRole missing pods permission"
+    fi
+    
+    # Check if update verb is NOT used (should be removed)
+    if kubectl get clusterrole user-operator -o yaml | grep -q "update"; then
+        test_warn "user-operator ClusterRole still has 'update' verb (should be removed)"
+    else
+        test_pass "user-operator ClusterRole does not use 'update' verb"
+    fi
+    
+    # Check if watch verb is NOT used (should be removed)
+    if kubectl get clusterrole user-operator -o yaml | grep -q "watch"; then
+        test_warn "user-operator ClusterRole still has 'watch' verb (should be removed)"
+    else
+        test_pass "user-operator ClusterRole does not use 'watch' verb"
+    fi
+    
     # Check if edit role is NOT used
     if kubectl get clusterrole edit >/dev/null 2>&1; then
         test_warn "edit ClusterRole still exists (should not be used in RoleBindings)"
@@ -133,22 +154,22 @@ else
     test_fail "controller-sa ServiceAccount not found"
 fi
 
-# Check template directories
+# Check template directories (NEW STRUCTURE: All templates in infra/k8s/templates/)
 echo ""
 echo "7. Checking template structure..."
-if [ -d "apps/controller/templates/user" ]; then
-    test_pass "User templates directory exists (apps/controller/templates/user)"
+if [ -d "infra/k8s/templates/user" ]; then
+    test_pass "User templates directory exists (infra/k8s/templates/user)"
     
-    REQUIRED_USER_TEMPLATES=("namespace.yaml.tpl" "resourcequota.yaml.tpl" "limitrange.yaml.tpl" "networkpolicy-deny-all.yaml.tpl" "controller-rolebinding.yaml.tpl")
+    REQUIRED_USER_TEMPLATES=("namespace.yaml" "resourcequota.yaml" "limitrange.yaml" "networkpolicy-deny-all.yaml" "controller-rolebinding.yaml")
     for tpl in "${REQUIRED_USER_TEMPLATES[@]}"; do
-        if [ -f "apps/controller/templates/user/${tpl}" ]; then
+        if [ -f "infra/k8s/templates/user/${tpl}" ]; then
             test_pass "User template ${tpl} exists"
         else
             test_fail "User template ${tpl} missing"
         fi
     done
 else
-    test_fail "User templates directory not found"
+    test_fail "User templates directory not found (infra/k8s/templates/user)"
 fi
 
 if [ -d "infra/k8s/templates/tenant" ]; then
@@ -166,11 +187,11 @@ else
     test_fail "Tenant templates directory not found"
 fi
 
-# Check for template duplication (should NOT exist)
-if [ -d "infra/k8s/templates/user" ]; then
-    test_fail "Template duplication: infra/k8s/templates/user should not exist"
+# Check for template duplication (old location should NOT exist)
+if [ -d "apps/controller/templates/user" ]; then
+    test_warn "Old user templates directory still exists (apps/controller/templates/user) - can be removed"
 else
-    test_pass "No template duplication (infra/k8s/templates/user removed)"
+    test_pass "No old template duplication (apps/controller/templates/user removed)"
 fi
 
 # Summary

@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: user-quota
+  namespace: PLACEHOLDER_NAMESPACE
+spec:
+  hard:
+    requests.cpu: PLACEHOLDER_CPU_REQUEST
+    requests.memory: PLACEHOLDER_MEMORY_REQUEST
+    limits.cpu: PLACEHOLDER_CPU_LIMIT
+    limits.memory: PLACEHOLDER_MEMORY_LIMIT
+    persistentvolumeclaims: PLACEHOLDER_PVC_COUNT

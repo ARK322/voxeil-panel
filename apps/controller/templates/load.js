@@ -17,12 +17,17 @@ function resolveTemplatesDir() {
     throw new Error("Tenant templates directory not found. Expected: infra/k8s/templates/tenant");
 }
 function resolveUserTemplatesDir() {
-    // Single source of truth: apps/controller/templates/user
-    const dir = path.resolve(__dirname, "user");
-    if (existsSync(dir)) {
-        return dir;
+    // Single source of truth: infra/k8s/templates/user
+    const candidates = [
+        path.resolve(process.cwd(), "infra", "k8s", "templates", "user"),
+        path.resolve(__dirname, "..", "..", "..", "infra", "k8s", "templates", "user")
+    ];
+    for (const candidate of candidates) {
+        if (existsSync(candidate)) {
+            return candidate;
+        }
     }
-    throw new Error("User templates directory not found. Expected: apps/controller/templates/user");
+    throw new Error("User templates directory not found. Expected: infra/k8s/templates/user");
 }
 async function readYaml(filePath) {
     if (!existsSync(filePath)) {
@@ -30,12 +35,6 @@ async function readYaml(filePath) {
     }
     const raw = await fs.readFile(filePath, "utf8");
     return k8s.loadYaml(raw);
-}
-async function readTemplate(filePath) {
-    if (!existsSync(filePath)) {
-        throw new Error(`Template file not found: ${filePath}`);
-    }
-    return await fs.readFile(filePath, "utf8");
 }
 export async function loadTenantTemplates() {
     if (cached)
@@ -60,11 +59,11 @@ export async function loadUserTemplates() {
     if (userTemplatesCached)
         return userTemplatesCached;
     const dir = resolveUserTemplatesDir();
-    const namespace = await readTemplate(path.join(dir, "namespace.yaml.tpl"));
-    const resourceQuota = await readTemplate(path.join(dir, "resourcequota.yaml.tpl"));
-    const limitRange = await readTemplate(path.join(dir, "limitrange.yaml.tpl"));
-    const networkPolicyDenyAll = await readTemplate(path.join(dir, "networkpolicy-deny-all.yaml.tpl"));
-    const controllerRoleBinding = await readTemplate(path.join(dir, "controller-rolebinding.yaml.tpl"));
+    const namespace = await readYaml(path.join(dir, "namespace.yaml"));
+    const resourceQuota = await readYaml(path.join(dir, "resourcequota.yaml"));
+    const limitRange = await readYaml(path.join(dir, "limitrange.yaml"));
+    const networkPolicyDenyAll = await readYaml(path.join(dir, "networkpolicy-deny-all.yaml"));
+    const controllerRoleBinding = await readYaml(path.join(dir, "controller-rolebinding.yaml"));
     userTemplatesCached = {
         namespace,
         resourceQuota,

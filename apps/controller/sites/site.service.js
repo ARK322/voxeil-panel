@@ -696,6 +696,37 @@ export async function enableSiteDb(slug, input) {
             url: databaseUrl
         }
     });
+    // Validate secret was created successfully
+    const createdSecret = await readSecret(namespace, SITE_DB_SECRET_NAME);
+    if (!createdSecret) {
+        // Rollback: delete DB and user if secret creation failed
+        try {
+            await revokeAndTerminate(dbName);
+            await dropDatabase(dbName);
+            await dropRole(dbUser);
+        }
+        catch (rollbackError) {
+            // Log rollback error but don't throw (original error is more important)
+            console.error("Failed to rollback DB resources after secret creation failure:", rollbackError);
+        }
+        throw new HttpError(500, "Failed to create DB secret in tenant namespace.");
+    }
+    // Validate secret content matches expected values
+    const secretDbName = decodeSecretValue(createdSecret.data?.database);
+    const secretDbUser = decodeSecretValue(createdSecret.data?.username);
+    if (secretDbName !== dbName || secretDbUser !== dbUser) {
+        // Rollback: delete DB and user if secret content is wrong
+        try {
+            await revokeAndTerminate(dbName);
+            await dropDatabase(dbName);
+            await dropRole(dbUser);
+            await deleteSecret(namespace, SITE_DB_SECRET_NAME);
+        }
+        catch (rollbackError) {
+            console.error("Failed to rollback DB resources after secret content mismatch:", rollbackError);
+        }
+        throw new HttpError(500, "DB secret content mismatch. Expected dbName/user do not match secret values.");
+    }
     await patchNamespaceAnnotations(namespace, {
         [SITE_ANNOTATIONS.dbEnabled]: "true",
         [SITE_ANNOTATIONS.dbName]: dbName,

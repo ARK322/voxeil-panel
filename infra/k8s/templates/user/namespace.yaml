@@ -1,8 +1,8 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: REPLACE_NAMESPACE
+  name: PLACEHOLDER_NAMESPACE
   labels:
     managed-by: controller
     voxeil.io/user: "true"
-    voxeil.io/user-id: REPLACE_TENANT_ID
+    voxeil.io/user-id: PLACEHOLDER_USER_ID

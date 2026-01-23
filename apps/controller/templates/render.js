@@ -4,13 +4,6 @@ function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }
 
-function replacePlaceholders(template, replacements) {
-    let result = template;
-    for (const [key, value] of Object.entries(replacements)) {
-        result = result.replace(new RegExp(`REPLACE_${key}`, "g"), value);
-    }
-    return result;
-}
 export function renderResourceQuota(template, namespace, limits) {
     const quota = clone(template);
     quota.metadata = {
@@ -77,46 +70,83 @@ export function renderNetworkPolicy(template, namespace) {
 }
 
 export function renderUserNamespace(template, namespace, tenantId) {
-    const rendered = replacePlaceholders(template, {
-        NAMESPACE: namespace,
-        TENANT_ID: tenantId
-    });
-    return k8s.loadYaml(rendered);
+    const resource = clone(template);
+    resource.metadata = {
+        ...resource.metadata,
+        name: namespace,
+        labels: {
+            ...resource.metadata?.labels,
+            "voxeil.io/user-id": tenantId
+        }
+    };
+    return resource;
 }
 
 export function renderUserResourceQuota(template, namespace, cpuRequest, cpuLimit, memoryRequest, memoryLimit, pvcCount) {
-    const rendered = replacePlaceholders(template, {
-        NAMESPACE: namespace,
-        CPU_REQUEST: cpuRequest,
-        CPU_LIMIT: cpuLimit,
-        MEMORY_REQUEST: memoryRequest,
-        MEMORY_LIMIT: memoryLimit,
-        PVC_COUNT: pvcCount
-    });
-    return k8s.loadYaml(rendered);
+    const quota = clone(template);
+    quota.metadata = {
+        ...quota.metadata,
+        namespace
+    };
+    quota.spec = quota.spec ?? {};
+    quota.spec.hard = {
+        ...quota.spec.hard,
+        "requests.cpu": cpuRequest,
+        "requests.memory": memoryRequest,
+        "limits.cpu": cpuLimit,
+        "limits.memory": memoryLimit,
+        "persistentvolumeclaims": pvcCount
+    };
+    return quota;
 }
 
 export function renderUserLimitRange(template, namespace, cpuRequest, cpuLimit, memoryRequest, memoryLimit) {
-    const rendered = replacePlaceholders(template, {
-        NAMESPACE: namespace,
-        CPU_REQUEST: cpuRequest,
-        CPU_LIMIT: cpuLimit,
-        MEMORY_REQUEST: memoryRequest,
-        MEMORY_LIMIT: memoryLimit
-    });
-    return k8s.loadYaml(rendered);
+    const limitRange = clone(template);
+    limitRange.metadata = {
+        ...limitRange.metadata,
+        namespace
+    };
+    limitRange.spec = limitRange.spec ?? {};
+    if (!limitRange.spec.limits || limitRange.spec.limits.length === 0) {
+        limitRange.spec.limits = [{
+            type: "Container",
+            default: {
+                cpu: cpuLimit,
+                memory: memoryLimit
+            },
+            defaultRequest: {
+                cpu: cpuRequest,
+                memory: memoryRequest
+            }
+        }];
+    } else {
+        const limit = limitRange.spec.limits[0];
+        limit.default = {
+            cpu: cpuLimit,
+            memory: memoryLimit
+        };
+        limit.defaultRequest = {
+            cpu: cpuRequest,
+            memory: memoryRequest
+        };
+    }
+    return limitRange;
 }
 
 export function renderUserNetworkPolicy(template, namespace) {
-    const rendered = replacePlaceholders(template, {
-        NAMESPACE: namespace
-    });
-    return k8s.loadYaml(rendered);
+    const policy = clone(template);
+    policy.metadata = {
+        ...policy.metadata,
+        namespace
+    };
+    return policy;
 }
 
 export function renderUserControllerRoleBinding(template, namespace) {
-    const rendered = replacePlaceholders(template, {
-        NAMESPACE: namespace
-    });
-    return k8s.loadYaml(rendered);
+    const roleBinding = clone(template);
+    roleBinding.metadata = {
+        ...roleBinding.metadata,
+        namespace
+    };
+    return roleBinding;
 }

@@ -18,24 +18,58 @@ kind: ClusterRole
 metadata:
   name: user-operator
 rules:
+  # Services: patch, get (create/delete gerekli değil, sadece patch)
   - apiGroups: [""]
-    resources: ["services","configmaps","secrets","persistentvolumeclaims"]
-    verbs: ["get","list","watch","create","patch","update","delete"]
+    resources: ["services"]
+    verbs: ["get","patch"]
+  # ConfigMaps: create, patch, get (DNS zone yönetimi için)
   - apiGroups: [""]
-    resources: ["resourcequotas","limitranges"]
-    verbs: ["get","list","watch","create","patch","update","delete"]
+    resources: ["configmaps"]
+    verbs: ["get","create","patch"]
+  # Secrets: create, patch, delete, get (DB credentials, image pull secrets)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get","create","patch","delete"]
+  # PVCs: create, replace, get (PVC yönetimi)
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get","create","replace"]
+  # ResourceQuotas: create, patch, replace, get
+  - apiGroups: [""]
+    resources: ["resourcequotas"]
+    verbs: ["get","create","patch","replace"]
+  # LimitRanges: create, patch, get
+  - apiGroups: [""]
+    resources: ["limitranges"]
+    verbs: ["get","create","patch"]
+  # Deployments: patch, get (sadece patch, create/delete gerekli değil)
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get","list","watch","create","patch","update","delete"]
+    verbs: ["get","patch"]
+  # Ingresses: patch, get
   - apiGroups: ["networking.k8s.io"]
-    resources: ["ingresses","networkpolicies"]
-    verbs: ["get","list","watch","create","patch","update","delete"]
+    resources: ["ingresses"]
+    verbs: ["get","patch"]
+  # NetworkPolicies: create, patch, get
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get","create","patch"]
+  # RoleBindings: create, patch, get
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["rolebindings"]
-    verbs: ["get","list","watch","create","patch","update","delete"]
+    verbs: ["get","create","patch"]
+  # CronJobs: create, replace, delete, get (backup cronjob yönetimi)
   - apiGroups: ["batch"]
-    resources: ["cronjobs","jobs"]
-    verbs: ["get","list","watch","create","patch","update","delete"]
+    resources: ["cronjobs"]
+    verbs: ["get","create","replace","delete"]
+  # Jobs: create, get (backup job oluşturma)
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get","create"]
+  # Pods: create, delete, get (backup restore için)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get","create","delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

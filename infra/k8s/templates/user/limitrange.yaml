@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: user-limits
+  namespace: PLACEHOLDER_NAMESPACE
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: PLACEHOLDER_CPU_LIMIT
+        memory: PLACEHOLDER_MEMORY_LIMIT
+      defaultRequest:
+        cpu: PLACEHOLDER_CPU_REQUEST
+        memory: PLACEHOLDER_MEMORY_REQUEST
