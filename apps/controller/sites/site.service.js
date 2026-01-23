@@ -324,11 +324,13 @@ export async function createSite(input) {
     });
     const denyAll = renderNetworkPolicy(templates.networkPolicyDenyAll, namespace);
     const allowIngress = renderNetworkPolicy(templates.networkPolicyAllowIngress, namespace);
+    const allowEgress = renderNetworkPolicy(templates.networkPolicyAllowEgress, namespace);
     await Promise.all([
         upsertResourceQuota(resourceQuota),
         upsertLimitRange(limitRange),
         upsertNetworkPolicy(denyAll),
         upsertNetworkPolicy(allowIngress),
+        upsertNetworkPolicy(allowEgress),
         ensurePvc(namespace, input.diskGi)
     ]);
     await ensureGhcrPullSecret(namespace, slug);

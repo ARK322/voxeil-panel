@@ -28,7 +28,6 @@ CERT_MANAGER_TIMEOUT="${CERT_MANAGER_TIMEOUT:-300}"
 KYVERNO_TIMEOUT="${KYVERNO_TIMEOUT:-600}"
 FLUX_TIMEOUT="${FLUX_TIMEOUT:-600}"
 DEPLOYMENT_ROLLOUT_TIMEOUT="${DEPLOYMENT_ROLLOUT_TIMEOUT:-600}"
-PVC_BOUND_TIMEOUT="${PVC_BOUND_TIMEOUT:-300}"
 IMAGE_VALIDATION_TIMEOUT="${IMAGE_VALIDATION_TIMEOUT:-60}"
 
 # ========= helpers =========
@@ -84,7 +83,7 @@ wait_for_k3s_api() {
   return 1
 }
 
-# Check if StorageClass exists and ensure it's configured correctly
+# Check if StorageClass exists and log its volumeBindingMode
 check_storageclass() {
   local sc_name="${1:-local-path}"
   if ! kubectl get storageclass "${sc_name}" >/dev/null 2>&1; then
@@ -93,72 +92,17 @@ check_storageclass() {
     kubectl get storageclass || true
     return 1
   fi
-  echo "StorageClass '${sc_name}' exists"
-  return 0
-}
-
-# Ensure StorageClass has Immediate volumeBindingMode (required for PVCs to bind before pod creation)
-ensure_storageclass_immediate() {
-  local sc_name="${1:-local-path}"
-  
-  if ! kubectl get storageclass "${sc_name}" >/dev/null 2>&1; then
-    log_error "StorageClass '${sc_name}' not found. Cannot patch volumeBindingMode."
-    return 1
-  fi
   
   local sc_mode
   sc_mode="$(kubectl get sc "${sc_name}" -o jsonpath='{.volumeBindingMode}' 2>/dev/null || echo "")"
   
   if [ "${sc_mode}" = "WaitForFirstConsumer" ]; then
-    echo "Patching StorageClass '${sc_name}' volumeBindingMode from WaitForFirstConsumer to Immediate..."
-    kubectl patch sc "${sc_name}" -p '{"volumeBindingMode":"Immediate"}' || {
-      log_error "Failed to patch StorageClass '${sc_name}'"
-      return 1
-    }
-    echo "StorageClass '${sc_name}' patched successfully (volumeBindingMode=Immediate)"
+    echo "StorageClass '${sc_name}' exists with volumeBindingMode=WaitForFirstConsumer (OK for k3s local-path)."
   elif [ "${sc_mode}" = "Immediate" ]; then
-    echo "StorageClass '${sc_name}' already has volumeBindingMode=Immediate (OK)"
+    echo "StorageClass '${sc_name}' exists with volumeBindingMode=Immediate (OK)."
   else
-    echo "StorageClass '${sc_name}' has volumeBindingMode=${sc_mode} (assuming OK)"
+    echo "StorageClass '${sc_name}' exists with volumeBindingMode=${sc_mode} (OK)."
   fi
-  return 0
-}
-
-# Wait for PVC to become Bound
-wait_for_pvc_bound() {
-  local namespace="$1"
-  local pvc_name="$2"
-  local timeout="${3:-${PVC_BOUND_TIMEOUT}}"
-  
-  echo "Waiting for PVC ${namespace}/${pvc_name} to become Bound (timeout: ${timeout}s)..."
-  
-  # Poll first to ensure PVC exists
-  local attempt=0
-  local max_poll=30
-  while [ ${attempt} -lt ${max_poll} ]; do
-    if kubectl get pvc "${pvc_name}" -n "${namespace}" >/dev/null 2>&1; then
-      break
-    fi
-    attempt=$((attempt + 1))
-    sleep 1
-  done
-  
-  if ! kubectl wait --for=condition=Bound pvc/"${pvc_name}" -n "${namespace}" --timeout="${timeout}s" 2>/dev/null; then
-    log_error "PVC ${namespace}/${pvc_name} did not become Bound within ${timeout}s"
-    echo "=== PVC Diagnostic ==="
-    kubectl get pvc "${pvc_name}" -n "${namespace}" -o yaml || true
-    echo ""
-    kubectl describe pvc "${pvc_name}" -n "${namespace}" || true
-    echo ""
-    echo "=== StorageClass Status ==="
-    kubectl get storageclass || true
-    echo ""
-    echo "=== Recent Events ==="
-    kubectl get events -n "${namespace}" --sort-by='.lastTimestamp' | tail -20 || true
-    return 1
-  fi
-  
-  echo "PVC ${namespace}/${pvc_name} is Bound"
   return 0
 }
 
@@ -692,18 +636,12 @@ kubectl wait --for=condition=Ready node --all --timeout="${K3S_NODE_READY_TIMEOU
   exit 1
 }
 
-# Verify StorageClass exists and ensure it's configured correctly
+# Verify StorageClass exists and log its configuration
 log_step "Ensuring StorageClass is configured correctly"
 if ! check_storageclass "local-path"; then
   log_error "local-path StorageClass missing. This will cause PVC issues."
   exit 1
 fi
-
-# Patch StorageClass to use Immediate binding mode (required for PVCs to bind before pod creation)
-ensure_storageclass_immediate "local-path" || {
-  log_error "Failed to ensure StorageClass volumeBindingMode. PVCs may not bind correctly."
-  exit 1
-}
 
 # ========= render manifests to temp dir =========
 RENDER_DIR="$(mktemp -d)"
@@ -1008,8 +946,8 @@ else
   echo "Skipping GHCR pull secret (public images)."
 fi
 
-# Note: Platform PVCs will be bound automatically when deployments are created
-# (StorageClass is now Immediate, so no need to wait before deployment)
+# Note: Platform PVCs will be bound automatically when controller/panel pods are scheduled
+# (WaitForFirstConsumer: PVC binds when pod is scheduled, not before)
 
 # Validate controller image before applying deployment
 log_step "Validating controller image"
@@ -1033,12 +971,6 @@ if ! validate_image "${PANEL_IMAGE}"; then
   exit 1
 fi
 
-log_step "Applying platform workloads"
-kubectl apply -f "${PLATFORM_DIR}/controller-deploy.yaml"
-kubectl apply -f "${PLATFORM_DIR}/controller-svc.yaml"
-kubectl apply -f "${PLATFORM_DIR}/panel-deploy.yaml"
-kubectl apply -f "${PLATFORM_DIR}/panel-svc.yaml"
-
 log_step "Applying infra DB manifests"
 kubectl apply -f "${SERVICES_DIR}/infra-db/namespace.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
@@ -1051,8 +983,56 @@ kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-svc.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml"
 
-# Wait for infra-db PVC to be Bound
-wait_for_pvc_bound "infra-db" "postgres-pvc"
+# Wait for postgres StatefulSet to be ready (PVC will bind when pod is scheduled)
+# This is critical because controller depends on postgres
+echo "Waiting for postgres StatefulSet to be ready..."
+# Poll first to ensure StatefulSet exists
+for i in {1..30}; do
+  if kubectl get statefulset postgres -n infra-db >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! kubectl wait --for=condition=Ready pod -l app=postgres -n infra-db --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
+  log_error "postgres StatefulSet did not become ready within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
+  echo "=== Postgres Pod Status ==="
+  kubectl get pods -n infra-db -l app=postgres || true
+  echo ""
+  kubectl describe pod -l app=postgres -n infra-db || true
+  echo ""
+  echo "=== PVC Status ==="
+  kubectl get pvc -n infra-db || true
+  exit 1
+fi
+echo "postgres StatefulSet is ready"
+
+# Wait for pgadmin Deployment to be ready
+echo "Waiting for pgadmin Deployment to be ready..."
+# Poll first to ensure Deployment exists
+for i in {1..30}; do
+  if kubectl get deployment pgadmin -n infra-db >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! kubectl wait --for=condition=Available deployment/pgadmin -n infra-db --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
+  log_error "pgadmin Deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
+  echo "=== pgadmin Pod Status ==="
+  kubectl get pods -n infra-db -l app=pgadmin || true
+  echo ""
+  kubectl describe deployment pgadmin -n infra-db || true
+  exit 1
+fi
+echo "pgadmin Deployment is ready"
+
+# Now apply platform workloads after postgres is ready
+log_step "Applying platform workloads"
+kubectl apply -f "${PLATFORM_DIR}/controller-deploy.yaml"
+kubectl apply -f "${PLATFORM_DIR}/controller-svc.yaml"
+kubectl apply -f "${PLATFORM_DIR}/panel-deploy.yaml"
+kubectl apply -f "${PLATFORM_DIR}/panel-svc.yaml"
 
 log_step "Applying DNS (bind9) manifests"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
@@ -1060,8 +1040,28 @@ kubectl apply -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/pvc.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/bind9.yaml"
 
-# Wait for dns-zone PVC to be Bound
-wait_for_pvc_bound "dns-zone" "dns-zones-pvc"
+# Wait for bind9 Deployment to be ready (PVC will bind when pod is scheduled)
+echo "Waiting for bind9 Deployment to be ready..."
+# Poll first to ensure Deployment exists
+for i in {1..30}; do
+  if kubectl get deployment bind9 -n dns-zone >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! kubectl wait --for=condition=Available deployment/bind9 -n dns-zone --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
+  log_error "bind9 Deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
+  echo "=== bind9 Pod Status ==="
+  kubectl get pods -n dns-zone -l app=bind9 || true
+  echo ""
+  kubectl describe deployment bind9 -n dns-zone || true
+  echo ""
+  echo "=== PVC Status ==="
+  kubectl get pvc -n dns-zone || true
+  exit 1
+fi
+echo "bind9 Deployment is ready"
 
 log_step "Applying mailcow manifests"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
@@ -1069,6 +1069,30 @@ kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-secrets.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/networkpolicy.yaml"
+
+# Wait for mailcow-mysql StatefulSet to be ready (PVC will bind when pod is scheduled)
+# This is critical because other mailcow components (php-fpm, postfix, dovecot) depend on mysql
+echo "Waiting for mailcow-mysql StatefulSet to be ready..."
+# Poll first to ensure StatefulSet exists
+for i in {1..30}; do
+  if kubectl get statefulset mailcow-mysql -n mail-zone >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! kubectl wait --for=condition=Ready pod -l app=mailcow,component=mysql -n mail-zone --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
+  log_error "mailcow-mysql StatefulSet did not become ready within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
+  echo "=== mailcow-mysql Pod Status ==="
+  kubectl get pods -n mail-zone -l app=mailcow,component=mysql || true
+  echo ""
+  kubectl describe pod -l app=mailcow,component=mysql -n mail-zone || true
+  echo ""
+  echo "=== PVC Status ==="
+  kubectl get pvc -n mail-zone || true
+  exit 1
+fi
+echo "mailcow-mysql StatefulSet is ready"
 
 log_step "Importing backup images to k3s"
 # Images were already built before k3s installation
@@ -1111,8 +1135,28 @@ backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml"
 
-# Wait for backup-system PVC to be Bound
-wait_for_pvc_bound "backup-system" "backups-pvc"
+# Wait for backup-service Deployment to be ready (PVC will bind when pod is scheduled)
+echo "Waiting for backup-service Deployment to be ready..."
+# Poll first to ensure Deployment exists
+for i in {1..30}; do
+  if kubectl get deployment backup-service -n backup-system >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+if ! kubectl wait --for=condition=Available deployment/backup-service -n backup-system --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
+  log_error "backup-service Deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
+  echo "=== backup-service Pod Status ==="
+  kubectl get pods -n backup-system -l app=backup-service || true
+  echo ""
+  kubectl describe deployment backup-service -n backup-system || true
+  echo ""
+  echo "=== PVC Status ==="
+  kubectl get pvc -n backup-system || true
+  exit 1
+fi
+echo "backup-service Deployment is ready"
 
 log_step "Applying ingresses"
 kubectl apply -f "${PLATFORM_DIR}/panel-ingress.yaml"
@@ -1242,6 +1286,33 @@ maxretry = 5
 EOF
     systemctl enable fail2ban || true
     systemctl restart fail2ban || true
+  fi
+  
+  # Disable SSH root login for security
+  echo "Configuring SSH security..."
+  if [ -f /etc/ssh/sshd_config ]; then
+    # Backup original config
+    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.voxeil-backup.$(date +%Y%m%d_%H%M%S) || true
+    
+    # Disable root login
+    if grep -q "^PermitRootLogin" /etc/ssh/sshd_config; then
+      sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
+    else
+      echo "PermitRootLogin no" >> /etc/ssh/sshd_config
+    fi
+    
+    # Ensure password authentication is still enabled (for non-root users)
+    if grep -q "^PasswordAuthentication" /etc/ssh/sshd_config; then
+      sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
+    else
+      echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
+    fi
+    
+    # Reload SSH config if systemctl is available
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl reload sshd || systemctl reload ssh || true
+      echo "SSH root login disabled. Please ensure you have a non-root user with sudo access."
+    fi
   fi
 fi
 

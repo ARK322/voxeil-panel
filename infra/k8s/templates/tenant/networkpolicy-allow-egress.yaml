@@ -1,15 +1,13 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: deny-all
-  namespace: REPLACE_NAMESPACE
+  name: allow-egress
 spec:
   podSelector: {}
   policyTypes:
-    - Ingress
     - Egress
-  ingress: []
   egress:
+    # Allow DNS resolution (kube-dns in kube-system)
     - to:
         - namespaceSelector:
             matchLabels:
@@ -22,3 +20,14 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
+    # Allow egress to infra-db Postgres
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: infra-db
+          podSelector:
+            matchLabels:
+              app: postgres
+      ports:
+        - protocol: TCP
+          port: 5432

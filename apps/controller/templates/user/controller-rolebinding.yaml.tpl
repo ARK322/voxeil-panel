@@ -5,9 +5,9 @@ metadata:
   namespace: REPLACE_NAMESPACE
 subjects:
   - kind: ServiceAccount
-    name: controller
+    name: controller-sa
     namespace: platform
 roleRef:
   kind: ClusterRole
-  name: edit
+  name: user-operator
   apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: site-quota
+spec:
+  hard:
+    pods: "1"
+    persistentvolumeclaims: "1"

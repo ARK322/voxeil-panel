@@ -127,6 +127,14 @@ spec:
               value: "db_"
             - name: DB_USER_PREFIX
               value: "u_"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
       volumes:
         - name: backups
           persistentVolumeClaim:

@@ -1,6 +1,6 @@
 import k8s from "@kubernetes/client-node";
 export const LABELS = {
-    managedBy: "vhp-controller"
+    managedBy: "controller"
 };
 let cached = null;
 export function getClients() {

@@ -27,7 +27,8 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
    ```
    - Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
   - For private site images, provide GHCR credentials during deploy from the panel.
-   - For upgrades run: `sudo bash scripts/update.sh`
+   - For upgrades run: `sudo bash update/update.sh`
+   - For smoke tests run: `bash scripts/test-smoke.sh`
    - Provide Let's Encrypt email:
      - `LETSENCRYPT_EMAIL`
    The installer will ask only for:

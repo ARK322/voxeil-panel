@@ -4,31 +4,25 @@ import k8s from "@kubernetes/client-node";
 let cached = null;
 let userTemplatesCached = null;
 function resolveTemplatesDir() {
+    // Single source of truth: infra/k8s/templates/tenant
     const candidates = [
-        path.resolve(process.cwd(), "templates", "tenant"),
         path.resolve(process.cwd(), "infra", "k8s", "templates", "tenant"),
-        path.resolve(process.cwd(), "..", "..", "infra", "k8s", "templates", "tenant"),
-        path.resolve(process.cwd(), "..", "infra", "k8s", "templates", "tenant")
+        path.resolve(__dirname, "..", "..", "..", "infra", "k8s", "templates", "tenant")
     ];
     for (const candidate of candidates) {
         if (existsSync(candidate)) {
             return candidate;
         }
     }
-    return candidates[0];
+    throw new Error("Tenant templates directory not found. Expected: infra/k8s/templates/tenant");
 }
 function resolveUserTemplatesDir() {
-    const candidates = [
-        path.resolve(process.cwd(), "templates", "user"),
-        path.resolve(process.cwd(), "dist", "templates", "user"),
-        path.resolve(__dirname, "user")
-    ];
-    for (const candidate of candidates) {
-        if (existsSync(candidate)) {
-            return candidate;
-        }
+    // Single source of truth: apps/controller/templates/user
+    const dir = path.resolve(__dirname, "user");
+    if (existsSync(dir)) {
+        return dir;
     }
-    return candidates[1];
+    throw new Error("User templates directory not found. Expected: apps/controller/templates/user");
 }
 async function readYaml(filePath) {
     if (!existsSync(filePath)) {
@@ -51,11 +45,13 @@ export async function loadTenantTemplates() {
     const limitRange = await readYaml(path.join(dir, "limitrange.yaml"));
     const networkPolicyDenyAll = await readYaml(path.join(dir, "networkpolicy-deny-all.yaml"));
     const networkPolicyAllowIngress = await readYaml(path.join(dir, "networkpolicy-allow-ingress.yaml"));
+    const networkPolicyAllowEgress = await readYaml(path.join(dir, "networkpolicy-allow-egress.yaml"));
     cached = {
         resourceQuota,
         limitRange,
         networkPolicyDenyAll,
-        networkPolicyAllowIngress
+        networkPolicyAllowIngress,
+        networkPolicyAllowEgress
     };
     return cached;
 }

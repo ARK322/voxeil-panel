@@ -16,6 +16,12 @@ spec:
               managed-by: controller
         - namespaceSelector:
             matchLabels:
+              managed-by: vhp-controller
+        - namespaceSelector:
+            matchLabels:
+              voxeil.io/tenant: "true"
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: platform
           podSelector:
             matchLabels:
