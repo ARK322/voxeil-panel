@@ -9,6 +9,53 @@ import { signToken } from "../auth/jwt.js";
 import { bootstrapUserNamespace } from "../users/user.bootstrap.js";
 import { CreateAppSchema, DeployAppSchema } from "../apps/app.dto.js";
 import { listApps, createApp, deployApp, getAppByIdWithOwnershipCheck } from "../apps/app.service.js";
+import {
+    CreateSiteSchema,
+    PatchLimitsSchema,
+    DeploySiteSchema,
+    PatchTlsSchema,
+    ConfirmDeleteSchema,
+    MailEnableSchema,
+    DnsEnableSchema,
+    GithubEnableSchema,
+    GithubDeploySchema,
+    DbEnableSchema,
+    MailboxCreateSchema,
+    AliasCreateSchema
+} from "../sites/site.dto.js";
+import {
+    createSite,
+    listSites,
+    deleteSite,
+    updateSiteLimits,
+    deploySite,
+    updateSiteTls,
+    enableSiteDb,
+    disableSiteDb,
+    purgeSiteDb,
+    enableSiteMail,
+    disableSiteMail,
+    purgeSiteMail,
+    createSiteMailbox,
+    deleteSiteMailbox,
+    listSiteMailboxes,
+    listSiteAliases,
+    createSiteAlias,
+    deleteSiteAlias,
+    enableSiteDns,
+    disableSiteDns,
+    purgeSiteDns,
+    enableSiteGithub,
+    disableSiteGithub,
+    triggerSiteGithubDeploy,
+    enableSiteBackup,
+    disableSiteBackup,
+    updateSiteBackupConfig,
+    runSiteBackup,
+    listSiteBackupSnapshots,
+    restoreSiteBackup,
+    purgeSiteBackup
+} from "../sites/site.service.js";
 const AllowlistSchema = z.object({
     items: z.array(z.string().min(1)).default([])
 });
@@ -298,6 +345,383 @@ export function registerRoutes(app) {
             });
             throw error;
         }
+        return reply.send({ ok: true, ...result });
+    });
+
+    // Sites endpoints
+    app.get("/sites", async (req, reply) => {
+        const user = requireUser(req);
+        const sites = await listSites();
+        // Filter sites by user ownership (sites are in user-{userId} namespace)
+        const userSites = sites.filter(site => site.namespace === `user-${user.sub}`);
+        return reply.send({ ok: true, sites: userSites });
+    });
+
+    app.post("/sites", async (req, reply) => {
+        const user = requireUser(req);
+        const body = CreateSiteSchema.parse(req.body);
+        let site;
+        try {
+            site = await createSite(user.sub, body);
+            safeAudit({
+                action: "sites.create",
+                actorUserId: user.sub,
+                targetType: "site",
+                targetId: site.slug,
+                ip: getClientIp(req),
+                success: true
+            });
+        } catch (error) {
+            safeAudit({
+                action: "sites.create",
+                actorUserId: user.sub,
+                targetType: "site",
+                ip: getClientIp(req),
+                success: false,
+                error: error?.message ?? String(error)
+            });
+            throw error;
+        }
+        return reply.send({ ok: true, ...site });
+    });
+
+    app.delete("/sites/:slug", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        try {
+            await deleteSite(slug);
+            safeAudit({
+                action: "sites.delete",
+                actorUserId: user.sub,
+                targetType: "site",
+                targetId: slug,
+                ip: getClientIp(req),
+                success: true
+            });
+        } catch (error) {
+            safeAudit({
+                action: "sites.delete",
+                actorUserId: user.sub,
+                targetType: "site",
+                targetId: slug,
+                ip: getClientIp(req),
+                success: false,
+                error: error?.message ?? String(error)
+            });
+            throw error;
+        }
+        return reply.send({ ok: true });
+    });
+
+    app.patch("/sites/:slug/limits", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = PatchLimitsSchema.parse(req.body ?? {});
+        const result = await updateSiteLimits(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/deploy", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = DeploySiteSchema.parse(req.body ?? {});
+        const result = await deploySite(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.patch("/sites/:slug/tls", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = PatchTlsSchema.parse(req.body ?? {});
+        const result = await updateSiteTls(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/db/enable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = DbEnableSchema.parse(req.body ?? {});
+        const result = await enableSiteDb(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/db/disable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await disableSiteDb(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/db/purge", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = ConfirmDeleteSchema.parse(req.body ?? {});
+        const result = await purgeSiteDb(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/mail/enable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = MailEnableSchema.parse(req.body ?? {});
+        const result = await enableSiteMail(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/mail/disable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await disableSiteMail(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/mail/purge", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = ConfirmDeleteSchema.parse(req.body ?? {});
+        const result = await purgeSiteMail(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.get("/sites/:slug/mail/mailboxes", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await listSiteMailboxes(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/mail/mailboxes", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = MailboxCreateSchema.parse(req.body ?? {});
+        const result = await createSiteMailbox(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.delete("/sites/:slug/mail/mailboxes/:address", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        const address = String(req.params.address ?? "");
+        if (!slug || !address) {
+            throw new HttpError(400, "Site slug and address are required.");
+        }
+        const result = await deleteSiteMailbox(slug, decodeURIComponent(address));
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.get("/sites/:slug/mail/aliases", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await listSiteAliases(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/mail/aliases", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = AliasCreateSchema.parse(req.body ?? {});
+        const result = await createSiteAlias(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.delete("/sites/:slug/mail/aliases/:source", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        const source = String(req.params.source ?? "");
+        if (!slug || !source) {
+            throw new HttpError(400, "Site slug and source are required.");
+        }
+        const result = await deleteSiteAlias(slug, decodeURIComponent(source));
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/dns/enable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = DnsEnableSchema.parse(req.body ?? {});
+        const result = await enableSiteDns(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/dns/disable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await disableSiteDns(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/dns/purge", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = ConfirmDeleteSchema.parse(req.body ?? {});
+        const result = await purgeSiteDns(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/github/enable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = GithubEnableSchema.parse(req.body ?? {});
+        const result = await enableSiteGithub(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/github/disable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await disableSiteGithub(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/github/deploy", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = GithubDeploySchema.parse(req.body ?? {});
+        const result = await triggerSiteGithubDeploy(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/backup/enable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = z.object({
+            retentionDays: z.number().int().positive().optional(),
+            schedule: z.string().min(1).optional()
+        }).parse(req.body ?? {});
+        const result = await enableSiteBackup(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/backup/disable", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await disableSiteBackup(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.patch("/sites/:slug/backup/config", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = z.object({
+            retentionDays: z.number().int().positive().optional(),
+            schedule: z.string().min(1).optional()
+        }).parse(req.body ?? {});
+        const result = await updateSiteBackupConfig(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/backup/run", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await runSiteBackup(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.get("/sites/:slug/backup/snapshots", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await listSiteBackupSnapshots(slug);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/backup/restore", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = z.object({
+            snapshotId: z.string().min(1),
+            restoreFiles: z.boolean().optional(),
+            restoreDb: z.boolean().optional()
+        }).parse(req.body ?? {});
+        const result = await restoreSiteBackup(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/backup/purge", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = ConfirmDeleteSchema.parse(req.body ?? {});
+        const result = await purgeSiteBackup(slug);
         return reply.send({ ok: true, ...result });
     });
 }

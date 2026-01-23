@@ -1,6 +1,12 @@
 import { promises as fs, existsSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { dirname } from "node:path";
 import k8s from "@kubernetes/client-node";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 let cached = null;
 let userTemplatesCached = null;
 function resolveTemplatesDir() {
@@ -63,12 +69,16 @@ export async function loadUserTemplates() {
     const resourceQuota = await readYaml(path.join(dir, "resourcequota.yaml"));
     const limitRange = await readYaml(path.join(dir, "limitrange.yaml"));
     const networkPolicyDenyAll = await readYaml(path.join(dir, "networkpolicy-deny-all.yaml"));
+    const networkPolicyAllowIngress = await readYaml(path.join(dir, "networkpolicy-allow-ingress.yaml"));
+    const networkPolicyAllowEgress = await readYaml(path.join(dir, "networkpolicy-allow-egress.yaml"));
     const controllerRoleBinding = await readYaml(path.join(dir, "controller-rolebinding.yaml"));
     userTemplatesCached = {
         namespace,
         resourceQuota,
         limitRange,
         networkPolicyDenyAll,
+        networkPolicyAllowIngress,
+        networkPolicyAllowEgress,
         controllerRoleBinding
     };
     return userTemplatesCached;

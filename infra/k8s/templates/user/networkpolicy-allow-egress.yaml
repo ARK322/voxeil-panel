@@ -1,29 +1,14 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: deny-all
+  name: allow-egress
   namespace: PLACEHOLDER_NAMESPACE
 spec:
   podSelector: {}
   policyTypes:
-    - Ingress
     - Egress
-  ingress:
-    # Allow ingress from Traefik (in kube-system namespace)
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: kube-system
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: traefik
-      ports:
-        - protocol: TCP
-          port: 80
-        - protocol: TCP
-          port: 443
   egress:
-    # Allow DNS (kube-dns in kube-system)
+    # Allow DNS resolution (kube-dns in kube-system)
     - to:
         - namespaceSelector:
             matchLabels:
@@ -36,7 +21,7 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Allow egress to infra-db (PostgreSQL)
+    # Allow egress to infra-db Postgres
     - to:
         - namespaceSelector:
             matchLabels:

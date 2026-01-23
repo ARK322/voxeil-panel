@@ -233,8 +233,7 @@ else
         -H "Authorization: Bearer ${CONTROLLER_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "{\"username\":\"${TEST_USERNAME}\",\"password\":\"${TEST_PASSWORD}\",\"email\":\"${TEST_EMAIL}\",\"role\":\"user\"}" 2>/dev/null || echo '{"ok":false}')"
-    # Ensure pod is cleaned up even if command fails
-    kubectl delete pod curl-test -n platform --ignore-not-found=true >/dev/null 2>&1 || true
+    # --rm flag automatically cleans up the pod, no need for manual deletion
     
     if echo "${USER_RESPONSE}" | grep -q '"ok":true'; then
         test_pass "User created successfully"
@@ -285,8 +284,7 @@ else
                 -H "Authorization: Bearer ${CONTROLLER_TOKEN}" \
                 -H "Content-Type: application/json" \
                 -d "{\"domain\":\"${SITE1_DOMAIN}\",\"cpu\":1,\"ramGi\":1,\"diskGi\":5}" 2>/dev/null || echo '{"ok":false}')"
-            # Ensure pod is cleaned up
-            kubectl delete pod curl-test1 -n platform --ignore-not-found=true >/dev/null 2>&1 || true
+            # --rm flag automatically cleans up the pod
             
             if echo "${SITE1_RESPONSE}" | grep -q '"slug"'; then
                 test_pass "First site created successfully"
@@ -323,8 +321,7 @@ else
                 -H "Authorization: Bearer ${CONTROLLER_TOKEN}" \
                 -H "Content-Type: application/json" \
                 -d "{\"domain\":\"${SITE2_DOMAIN}\",\"cpu\":1,\"ramGi\":1,\"diskGi\":5}" 2>/dev/null || echo '{"ok":false}')"
-            # Ensure pod is cleaned up
-            kubectl delete pod curl-test2 -n platform --ignore-not-found=true >/dev/null 2>&1 || true
+            # --rm flag automatically cleans up the pod
             
             if echo "${SITE2_RESPONSE}" | grep -q '"slug"'; then
                 test_pass "Second site created successfully"

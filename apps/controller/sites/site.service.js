@@ -299,25 +299,11 @@ export async function createSite(userId, input) {
     const maintenancePort = resolveMaintenancePort();
     const tlsEnabled = input.tlsEnabled ?? false;
     const desiredIssuer = input.tlsIssuer ?? DEFAULT_TLS_ISSUER;
-    const tlsIssuer = tlsEnabled ? "letsencrypt-staging" : desiredIssuer;
+    const tlsIssuer = desiredIssuer;
     // Use user namespace instead of creating tenant namespace
     const namespace = `user-${userId}`;
     await requireNamespace(namespace);
     const slug = baseSlug;
-        [SITE_ANNOTATIONS.domain]: input.domain,
-        [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
-        [SITE_ANNOTATIONS.tlsIssuer]: tlsIssuer,
-        [SITE_ANNOTATIONS.image]: maintenanceImage,
-        [SITE_ANNOTATIONS.containerPort]: String(maintenancePort),
-        [SITE_ANNOTATIONS.cpu]: String(input.cpu),
-        [SITE_ANNOTATIONS.ramGi]: String(input.ramGi),
-        [SITE_ANNOTATIONS.diskGi]: String(input.diskGi),
-        [SITE_ANNOTATIONS.dbEnabled]: "false",
-        [SITE_ANNOTATIONS.mailEnabled]: "false",
-        [SITE_ANNOTATIONS.backupEnabled]: "false",
-        [SITE_ANNOTATIONS.dnsEnabled]: "false",
-        [SITE_ANNOTATIONS.githubEnabled]: "false"
-    });
     // Store site metadata in namespace annotations
     await patchNamespaceAnnotations(namespace, {
         [`voxeil.io/site-${slug}-domain`]: input.domain,
@@ -406,11 +392,26 @@ export async function listSites() {
                 }
             }
             
+            // Check deployment status to determine if site is ready
+            let ready = false;
+            try {
+                const { apps } = getClients();
+                const deploymentName = getDeploymentName(slug);
+                const deployment = await apps.readNamespacedDeployment(deploymentName, namespace);
+                const status = deployment.body.status;
+                ready = status.readyReplicas > 0 && 
+                        status.readyReplicas === status.replicas &&
+                        status.updatedReplicas === status.replicas;
+            } catch (error) {
+                // Deployment not found or error reading it - site is not ready
+                ready = false;
+            }
+            
             // Map annotations to site properties
             items.push({
                 slug,
                 namespace,
-                ready: true, // Sites in user namespace are considered ready
+                ready,
                 domain: siteAnnotations.domain,
                 image: siteAnnotations.image,
                 containerPort: parseNumberAnnotation(siteAnnotations.containerPort),
@@ -533,11 +534,13 @@ export async function deploySite(slug, input) {
     const cpu = parseNumberAnnotation(siteData.annotations.cpu) ?? 1;
     const ramGi = parseNumberAnnotation(siteData.annotations.ramGi) ?? 1;
     const userId = extractUserIdFromNamespace(namespace);
+    // Get domain from site metadata for host (if available)
+    const host = siteData.annotations.domain?.trim() || "";
     
     const spec = {
         namespace,
         slug: normalized,
-        host: "",
+        host,
         image: input.image,
         containerPort: input.containerPort,
         cpu,
@@ -753,8 +756,9 @@ export async function enableSiteDb(slug, input) {
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
     const { host, port } = requireDbHostConfig();
-    const existingDbName = annotations[SITE_ANNOTATIONS.dbName];
-    const existingDbUser = annotations[SITE_ANNOTATIONS.dbUser];
+    // readSiteMetadata returns annotations in new format (voxeil.io/site-{slug}-{prop})
+    const existingDbName = annotations.dbName;
+    const existingDbUser = annotations.dbUser;
     const dbName = input?.dbName
         ? normalizeDbName(input.dbName)
         : existingDbName
@@ -826,12 +830,12 @@ export async function enableSiteDb(slug, input) {
         throw new HttpError(500, "DB secret content mismatch. Expected dbName/user do not match secret values.");
     }
     await patchNamespaceAnnotations(namespace, {
-        [SITE_ANNOTATIONS.dbEnabled]: "true",
-        [SITE_ANNOTATIONS.dbName]: dbName,
-        [SITE_ANNOTATIONS.dbUser]: dbUser,
-        [SITE_ANNOTATIONS.dbHost]: host,
-        [SITE_ANNOTATIONS.dbPort]: port,
-        [SITE_ANNOTATIONS.dbSecret]: SITE_DB_SECRET_NAME
+        [`voxeil.io/site-${normalized}-dbEnabled`]: "true",
+        [`voxeil.io/site-${normalized}-dbName`]: dbName,
+        [`voxeil.io/site-${normalized}-dbUser`]: dbUser,
+        [`voxeil.io/site-${normalized}-dbHost`]: host,
+        [`voxeil.io/site-${normalized}-dbPort`]: port,
+        [`voxeil.io/site-${normalized}-dbSecret`]: SITE_DB_SECRET_NAME
     });
     return {
         ok: true,
@@ -852,12 +856,13 @@ export async function disableSiteDb(slug) {
     const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
-    const secretName = annotations[SITE_ANNOTATIONS.dbSecret];
+    // readSiteMetadata returns annotations in new format (voxeil.io/site-{slug}-{prop})
+    const secretName = annotations.dbSecret;
     const secretNames = new Set([SITE_DB_SECRET_NAME, LEGACY_DB_SECRET_NAME, secretName].filter(Boolean));
     await Promise.all(Array.from(secretNames).map((name) => deleteSecret(namespace, name)));
     await patchNamespaceAnnotations(namespace, {
-        [SITE_ANNOTATIONS.dbEnabled]: "false",
-        [SITE_ANNOTATIONS.dbSecret]: ""
+        [`voxeil.io/site-${normalized}-dbEnabled`]: "false",
+        [`voxeil.io/site-${normalized}-dbSecret`]: ""
     });
     return { ok: true, slug: normalized, dbEnabled: false };
 }
@@ -872,25 +877,26 @@ export async function purgeSiteDb(slug) {
     const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
-    const dbName = annotations[SITE_ANNOTATIONS.dbName]
-        ? normalizeDbName(annotations[SITE_ANNOTATIONS.dbName] ?? "")
+    // readSiteMetadata returns annotations in new format (voxeil.io/site-{slug}-{prop})
+    const dbName = annotations.dbName
+        ? normalizeDbName(annotations.dbName ?? "")
         : resolveDbName(normalized);
-    const dbUser = annotations[SITE_ANNOTATIONS.dbUser]
-        ? normalizeDbUser(annotations[SITE_ANNOTATIONS.dbUser] ?? "")
+    const dbUser = annotations.dbUser
+        ? normalizeDbUser(annotations.dbUser ?? "")
         : resolveDbUser(normalized);
     await revokeAndTerminate(dbName);
     await dropDatabase(dbName);
     await dropRole(dbUser);
-    const secretName = annotations[SITE_ANNOTATIONS.dbSecret];
+    const secretName = annotations.dbSecret;
     const secretNames = new Set([SITE_DB_SECRET_NAME, LEGACY_DB_SECRET_NAME, secretName].filter(Boolean));
     await Promise.all(Array.from(secretNames).map((name) => deleteSecret(namespace, name)));
     await patchNamespaceAnnotations(namespace, {
-        [SITE_ANNOTATIONS.dbEnabled]: "false",
-        [SITE_ANNOTATIONS.dbName]: "",
-        [SITE_ANNOTATIONS.dbUser]: "",
-        [SITE_ANNOTATIONS.dbHost]: "",
-        [SITE_ANNOTATIONS.dbPort]: "",
-        [SITE_ANNOTATIONS.dbSecret]: ""
+        [`voxeil.io/site-${normalized}-dbEnabled`]: "false",
+        [`voxeil.io/site-${normalized}-dbName`]: "",
+        [`voxeil.io/site-${normalized}-dbUser`]: "",
+        [`voxeil.io/site-${normalized}-dbHost`]: "",
+        [`voxeil.io/site-${normalized}-dbPort`]: "",
+        [`voxeil.io/site-${normalized}-dbSecret`]: ""
     });
     return { ok: true, slug: normalized, purged: true };
 }
@@ -904,12 +910,13 @@ export async function getSiteDbStatus(slug) {
     }
     const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
-    const secretName = annotations[SITE_ANNOTATIONS.dbSecret]?.trim() || SITE_DB_SECRET_NAME;
+    // readSiteMetadata returns annotations in new format (voxeil.io/site-{slug}-{prop})
+    const secretName = annotations.dbSecret?.trim() || SITE_DB_SECRET_NAME;
     const secret = (await readSecret(namespaceEntry.name, secretName)) ??
         (await readSecret(namespaceEntry.name, LEGACY_DB_SECRET_NAME));
-    const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
-    const dbName = annotations[SITE_ANNOTATIONS.dbName];
-    const dbUser = annotations[SITE_ANNOTATIONS.dbUser];
+    const dbEnabled = parseBooleanAnnotation(annotations.dbEnabled) ?? false;
+    const dbName = annotations.dbName;
+    const dbUser = annotations.dbUser;
     return {
         ok: true,
         slug: normalized,
@@ -1670,11 +1677,14 @@ export async function purgeSite(slug) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
     const namespaceEntry = await readSiteMetadata(normalized);
+    const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
-    await deleteTenantNamespace(normalized);
-    const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
-    const dbNameAnnotation = annotations[SITE_ANNOTATIONS.dbName];
-    const dbUserAnnotation = annotations[SITE_ANNOTATIONS.dbUser];
+    // Delete site resources first (deployment, service, ingress, etc.)
+    await deleteSite(normalized);
+    // readSiteMetadata returns annotations in new format (voxeil.io/site-{slug}-{prop})
+    const dbEnabled = parseBooleanAnnotation(annotations.dbEnabled) ?? false;
+    const dbNameAnnotation = annotations.dbName;
+    const dbUserAnnotation = annotations.dbUser;
     if (dbEnabled || dbNameAnnotation || dbUserAnnotation) {
         const dbName = dbNameAnnotation ? normalizeDbName(dbNameAnnotation) : resolveDbName(normalized);
         const dbUser = dbUserAnnotation ? normalizeDbUser(dbUserAnnotation) : resolveDbUser(normalized);
@@ -1682,10 +1692,10 @@ export async function purgeSite(slug) {
         await dropDatabase(dbName);
         await dropRole(dbUser);
     }
-    const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
-    const mailDomain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim() ??
-        annotations[SITE_ANNOTATIONS.domain]?.trim();
-    if (mailDomain && (mailEnabled || annotations[SITE_ANNOTATIONS.mailDomain])) {
+    const mailEnabled = parseBooleanAnnotation(annotations.mailEnabled) ?? false;
+    const mailDomain = annotations.mailDomain?.trim() ??
+        annotations.domain?.trim();
+    if (mailDomain && (mailEnabled || annotations.mailDomain)) {
         await purgeMailcowDomain(mailDomain);
     }
     await purgeSiteBackups(normalized);

@@ -119,6 +119,12 @@ export async function bootstrapUserNamespace(userId) {
         const networkPolicy = renderUserNetworkPolicy(templates.networkPolicyDenyAll, namespace);
         await applyResource(networkPolicy);
 
+        const networkPolicyAllowIngress = renderUserNetworkPolicy(templates.networkPolicyAllowIngress, namespace);
+        await applyResource(networkPolicyAllowIngress);
+
+        const networkPolicyAllowEgress = renderUserNetworkPolicy(templates.networkPolicyAllowEgress, namespace);
+        await applyResource(networkPolicyAllowEgress);
+
         const roleBinding = renderUserControllerRoleBinding(templates.controllerRoleBinding, namespace);
         await applyResource(roleBinding);
 
