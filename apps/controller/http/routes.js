@@ -159,6 +159,41 @@ export function registerRoutes(app) {
         const id = String(req.params.id ?? "");
         if (!id)
             throw new HttpError(400, "User id is required.");
+        
+        // Cleanup DB and namespace before deleting user record
+        try {
+            const { deleteUserNamespace } = await import("../k8s/namespace.js");
+            const { dropDatabase, dropRole, revokeAndTerminate, normalizeDbName, normalizeDbUser } = await import("../postgres/admin.js");
+            const { deleteSecret } = await import("../k8s/secrets.js");
+            
+            const namespace = `user-${id}`;
+            const dbNamePrefix = process.env.DB_NAME_PREFIX?.trim() || "db_";
+            const dbUserPrefix = process.env.DB_USER_PREFIX?.trim() || "u_";
+            const dbName = normalizeDbName(`${dbNamePrefix}${id}`);
+            const dbUser = normalizeDbUser(`${dbUserPrefix}${id}`);
+            
+            // Cleanup DB
+            try {
+                await revokeAndTerminate(dbName);
+                await dropDatabase(dbName);
+                await dropRole(dbUser);
+            } catch (dbError) {
+                // Log but don't fail user deletion if DB cleanup fails
+                console.error("Failed to cleanup DB for user:", id, dbError);
+            }
+            
+            // Cleanup namespace (this will also delete secrets)
+            try {
+                await deleteUserNamespace(id);
+            } catch (nsError) {
+                // Log but don't fail user deletion if namespace cleanup fails
+                console.error("Failed to cleanup namespace for user:", id, nsError);
+            }
+        } catch (cleanupError) {
+            // Log but don't fail user deletion if cleanup fails
+            console.error("Failed to cleanup resources for user:", id, cleanupError);
+        }
+        
         await deleteUser(id);
         safeAudit({
             action: "users.delete",

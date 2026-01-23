@@ -9,6 +9,10 @@ import {
 } from "../templates/render.js";
 import { getClients } from "../k8s/client.js";
 import { HttpError } from "../http/errors.js";
+import { ensureUserHomePvc } from "../k8s/pvc.js";
+import { ensureDatabase, ensureRole, generateDbPassword, normalizeDbName, normalizeDbUser } from "../postgres/admin.js";
+import { upsertSecret } from "../k8s/apply.js";
+import { LABELS } from "../k8s/client.js";
 
 const FIELD_MANAGER = "voxeil-controller";
 const APPLY_OPTIONS = { headers: { "Content-Type": "application/apply-patch+json" } };
@@ -117,6 +121,54 @@ export async function bootstrapUserNamespace(userId) {
 
         const roleBinding = renderUserControllerRoleBinding(templates.controllerRoleBinding, namespace);
         await applyResource(roleBinding);
+
+        // Create user home PVC
+        await ensureUserHomePvc(namespace);
+
+        // Create user database and role
+        const dbNamePrefix = process.env.DB_NAME_PREFIX?.trim() || "db_";
+        const dbUserPrefix = process.env.DB_USER_PREFIX?.trim() || "u_";
+        const dbName = normalizeDbName(`${dbNamePrefix}${userId}`);
+        const dbUser = normalizeDbUser(`${dbUserPrefix}${userId}`);
+        const dbPassword = generateDbPassword();
+        
+        await ensureRole(dbUser, dbPassword);
+        await ensureDatabase(dbName, dbUser);
+        
+        // Get DB connection config
+        const dbHost = process.env.POSTGRES_HOST?.trim() ?? process.env.DB_HOST?.trim();
+        const dbPort = process.env.POSTGRES_PORT?.trim() ?? process.env.DB_PORT?.trim() ?? "5432";
+        if (!dbHost) {
+            throw new HttpError(500, "POSTGRES_HOST must be configured for DB secret creation.");
+        }
+        
+        // Create DB secret in user namespace
+        const dbSecretName = "db-conn";
+        const encodedUser = encodeURIComponent(dbUser);
+        const encodedPassword = encodeURIComponent(dbPassword);
+        const databaseUrl = `postgres://${encodedUser}:${encodedPassword}@${dbHost}:${dbPort}/${dbName}`;
+        
+        await upsertSecret({
+            apiVersion: "v1",
+            kind: "Secret",
+            metadata: {
+                name: dbSecretName,
+                namespace,
+                labels: {
+                    [LABELS.managedBy]: LABELS.managedBy,
+                    "voxeil.io/secret-type": "db-connection"
+                }
+            },
+            type: "Opaque",
+            stringData: {
+                host: dbHost,
+                port: dbPort,
+                database: dbName,
+                username: dbUser,
+                password: dbPassword,
+                url: databaseUrl
+            }
+        });
 
         return { success: true };
     } catch (error) {

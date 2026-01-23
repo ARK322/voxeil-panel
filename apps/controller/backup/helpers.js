@@ -1,6 +1,7 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { LABELS } from "../k8s/client.js";
+import { USER_HOME_PVC_NAME } from "../k8s/pvc.js";
 export async function listLatestBackup(dir) {
     try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
@@ -24,8 +25,8 @@ export async function listLatestBackup(dir) {
 }
 export function buildRestorePod(spec) {
     const command = spec.archivePath.endsWith(".tar.zst")
-        ? `apk add --no-cache zstd >/dev/null && rm -rf /data/* /data/.[!.]* /data/..?* && tar --use-compress-program=zstd -xf ${spec.archivePath} -C /data`
-        : `apk add --no-cache gzip >/dev/null && rm -rf /data/* /data/.[!.]* /data/..?* && tar -xzf ${spec.archivePath} -C /data`;
+        ? `apk add --no-cache zstd >/dev/null && rm -rf /home/* /home/.[!.]* /home/..?* && tar --use-compress-program=zstd -xf ${spec.archivePath} -C /home`
+        : `apk add --no-cache gzip >/dev/null && rm -rf /home/* /home/.[!.]* /home/..?* && tar -xzf ${spec.archivePath} -C /home`;
     return {
         apiVersion: "v1",
         kind: "Pod",
@@ -51,8 +52,9 @@ export function buildRestorePod(spec) {
                     ],
                     volumeMounts: [
                         {
-                            name: "site-data",
-                            mountPath: "/data"
+                            name: "user-home",
+                            mountPath: "/home",
+                            subPath: `sites/${spec.slug}`
                         },
                         {
                             name: "backups",
@@ -64,9 +66,9 @@ export function buildRestorePod(spec) {
             ],
             volumes: [
                 {
-                    name: "site-data",
+                    name: "user-home",
                     persistentVolumeClaim: {
-                        claimName: "site-data"
+                        claimName: USER_HOME_PVC_NAME
                     }
                 },
                 {

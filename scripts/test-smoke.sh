@@ -194,6 +194,168 @@ else
     test_pass "No old template duplication (apps/controller/templates/user removed)"
 fi
 
+# Check controller health
+echo ""
+echo "8. Checking controller health..."
+CONTROLLER_POD="$(kubectl get pod -n platform -l app=controller -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+if [ -n "${CONTROLLER_POD}" ]; then
+    if kubectl exec -n platform "${CONTROLLER_POD}" -- wget -q -O- http://localhost:8080/health 2>/dev/null | grep -q '"ok":true'; then
+        test_pass "Controller health endpoint is OK"
+    else
+        test_fail "Controller health endpoint check failed"
+    fi
+else
+    test_fail "Controller pod not found"
+fi
+
+# Test user create -> ns+pvc+netpol+db secret
+echo ""
+echo "9. Testing user create (namespace + PVC + NetPol + DB secret)..."
+CONTROLLER_SVC="controller.platform.svc.cluster.local:8080"
+CONTROLLER_TOKEN="${CONTROLLER_TOKEN:-}"
+if [ -z "${CONTROLLER_TOKEN}" ]; then
+    # Try to get token from platform-secrets
+    CONTROLLER_TOKEN="$(kubectl get secret platform-secrets -n platform -o jsonpath='{.data.ADMIN_API_KEY}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+fi
+
+if [ -z "${CONTROLLER_TOKEN}" ]; then
+    test_warn "CONTROLLER_TOKEN not set, skipping user create test"
+else
+    # Create test user
+    TEST_USERNAME="smoketest-$(date +%s)"
+    TEST_PASSWORD="Test123!Smoke"
+    TEST_EMAIL="smoketest@example.com"
+    
+    USER_RESPONSE="$(kubectl run -it --rm --restart=Never curl-test --image=curlimages/curl:latest -n platform -- \
+        curl -s -X POST "http://${CONTROLLER_SVC}/admin/users" \
+        -H "Authorization: Bearer ${CONTROLLER_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${TEST_USERNAME}\",\"password\":\"${TEST_PASSWORD}\",\"email\":\"${TEST_EMAIL}\",\"role\":\"user\"}" 2>/dev/null || echo '{"ok":false}')"
+    
+    if echo "${USER_RESPONSE}" | grep -q '"ok":true'; then
+        test_pass "User created successfully"
+        
+        # Extract user ID
+        USER_ID="$(echo "${USER_RESPONSE}" | grep -o '"id":"[^"]*"' | cut -d'"' -f4 || true)"
+        if [ -n "${USER_ID}" ]; then
+            USER_NS="user-${USER_ID}"
+            
+            # Check namespace
+            if kubectl get namespace "${USER_NS}" >/dev/null 2>&1; then
+                test_pass "User namespace ${USER_NS} created"
+            else
+                test_fail "User namespace ${USER_NS} not found"
+            fi
+            
+            # Check PVC
+            if kubectl get pvc pvc-user-home -n "${USER_NS}" >/dev/null 2>&1; then
+                test_pass "User home PVC created"
+            else
+                test_fail "User home PVC not found"
+            fi
+            
+            # Check NetPol
+            if kubectl get networkpolicy deny-all -n "${USER_NS}" >/dev/null 2>&1; then
+                test_pass "User NetworkPolicy created"
+            else
+                test_fail "User NetworkPolicy not found"
+            fi
+            
+            # Check DB secret
+            if kubectl get secret db-conn -n "${USER_NS}" >/dev/null 2>&1; then
+                test_pass "DB secret created in user namespace"
+            else
+                test_fail "DB secret not found in user namespace"
+            fi
+            
+            # Test 2 site create -> ingress ok
+            echo ""
+            echo "10. Testing site create (2 sites, ingress check)..."
+            
+            # Create first site
+            SITE1_DOMAIN="test1-${TEST_USERNAME}.example.com"
+            SITE1_RESPONSE="$(kubectl run -it --rm --restart=Never curl-test1 --image=curlimages/curl:latest -n platform -- \
+                curl -s -X POST "http://${CONTROLLER_SVC}/sites" \
+                -H "Authorization: Bearer ${CONTROLLER_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "{\"domain\":\"${SITE1_DOMAIN}\",\"cpu\":1,\"ramGi\":1,\"diskGi\":5}" 2>/dev/null || echo '{"ok":false}')"
+            
+            if echo "${SITE1_RESPONSE}" | grep -q '"slug"'; then
+                test_pass "First site created successfully"
+                SITE1_SLUG="$(echo "${SITE1_RESPONSE}" | grep -o '"slug":"[^"]*"' | cut -d'"' -f4 || true)"
+                
+                # Check deployment
+                if kubectl get deployment "app-${SITE1_SLUG}" -n "${USER_NS}" >/dev/null 2>&1; then
+                    test_pass "First site deployment created"
+                else
+                    test_fail "First site deployment not found"
+                fi
+                
+                # Check ingress
+                if kubectl get ingress "web-${SITE1_SLUG}" -n "${USER_NS}" >/dev/null 2>&1; then
+                    INGRESS_HOST="$(kubectl get ingress "web-${SITE1_SLUG}" -n "${USER_NS}" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)"
+                    if [ "${INGRESS_HOST}" = "${SITE1_DOMAIN}" ]; then
+                        test_pass "First site ingress created with correct host"
+                    else
+                        test_fail "First site ingress host mismatch (expected: ${SITE1_DOMAIN}, got: ${INGRESS_HOST})"
+                    fi
+                else
+                    test_fail "First site ingress not found"
+                fi
+            else
+                test_fail "First site creation failed"
+            fi
+            
+            # Create second site
+            SITE2_DOMAIN="test2-${TEST_USERNAME}.example.com"
+            SITE2_RESPONSE="$(kubectl run -it --rm --restart=Never curl-test2 --image=curlimages/curl:latest -n platform -- \
+                curl -s -X POST "http://${CONTROLLER_SVC}/sites" \
+                -H "Authorization: Bearer ${CONTROLLER_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "{\"domain\":\"${SITE2_DOMAIN}\",\"cpu\":1,\"ramGi\":1,\"diskGi\":5}" 2>/dev/null || echo '{"ok":false}')"
+            
+            if echo "${SITE2_RESPONSE}" | grep -q '"slug"'; then
+                test_pass "Second site created successfully"
+                SITE2_SLUG="$(echo "${SITE2_RESPONSE}" | grep -o '"slug":"[^"]*"' | cut -d'"' -f4 || true)"
+                
+                # Check deployment
+                if kubectl get deployment "app-${SITE2_SLUG}" -n "${USER_NS}" >/dev/null 2>&1; then
+                    test_pass "Second site deployment created"
+                else
+                    test_fail "Second site deployment not found"
+                fi
+                
+                # Check ingress
+                if kubectl get ingress "web-${SITE2_SLUG}" -n "${USER_NS}" >/dev/null 2>&1; then
+                    INGRESS_HOST="$(kubectl get ingress "web-${SITE2_SLUG}" -n "${USER_NS}" -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)"
+                    if [ "${INGRESS_HOST}" = "${SITE2_DOMAIN}" ]; then
+                        test_pass "Second site ingress created with correct host"
+                    else
+                        test_fail "Second site ingress host mismatch (expected: ${SITE2_DOMAIN}, got: ${INGRESS_HOST})"
+                    fi
+                else
+                    test_fail "Second site ingress not found"
+                fi
+                
+                # Check both sites in same namespace
+                DEPLOYMENTS="$(kubectl get deployment -n "${USER_NS}" -l voxeil.io/site=true --no-headers 2>/dev/null | wc -l || echo "0")"
+                if [ "${DEPLOYMENTS}" -ge 2 ]; then
+                    test_pass "Both sites in same user namespace"
+                else
+                    test_fail "Sites not in same user namespace (found ${DEPLOYMENTS} deployments)"
+                fi
+            else
+                test_fail "Second site creation failed"
+            fi
+        else
+            test_warn "Could not extract user ID from response"
+        fi
+    else
+        test_fail "User creation failed"
+        echo "   Response: ${USER_RESPONSE}"
+    fi
+fi
+
 # Summary
 echo ""
 echo "=== TEST SUMMARY ==="

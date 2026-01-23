@@ -1,3 +1,4 @@
+// Legacy annotation keys (deprecated, use getSiteAnnotationKey instead)
 export const SITE_ANNOTATIONS = {
     domain: "voxeil.com/domain",
     tlsEnabled: "voxeil.com/tls-enabled",
@@ -31,3 +32,54 @@ export const SITE_ANNOTATIONS = {
     dbPort: "voxeil.com/db-port",
     dbSecret: "voxeil.com/db-secret"
 };
+
+// Site annotation property names (without prefix)
+export const SITE_ANNOTATION_PROPS = {
+    domain: "domain",
+    tlsEnabled: "tlsEnabled",
+    tlsIssuer: "tlsIssuer",
+    image: "image",
+    containerPort: "containerPort",
+    cpu: "cpu",
+    ramGi: "ramGi",
+    diskGi: "diskGi",
+    backupEnabled: "backupEnabled",
+    backupRetentionDays: "backupRetentionDays",
+    backupSchedule: "backupSchedule",
+    backupLastRunAt: "backupLastRunAt",
+    mailEnabled: "mailEnabled",
+    mailProvider: "mailProvider",
+    mailDomain: "mailDomain",
+    mailStatus: "mailStatus",
+    mailLastError: "mailLastError",
+    dnsEnabled: "dnsEnabled",
+    dnsDomain: "dnsDomain",
+    dnsTarget: "dnsTarget",
+    githubEnabled: "githubEnabled",
+    githubRepo: "githubRepo",
+    githubBranch: "githubBranch",
+    githubWorkflow: "githubWorkflow",
+    githubImage: "githubImage",
+    dbEnabled: "dbEnabled",
+    dbName: "dbName",
+    dbUser: "dbUser",
+    dbHost: "dbHost",
+    dbPort: "dbPort",
+    dbSecret: "dbSecret"
+};
+
+/**
+ * Get site annotation key in new format: voxeil.io/site-{slug}-{prop}
+ */
+export function getSiteAnnotationKey(slug, prop) {
+    return `voxeil.io/site-${slug}-${prop}`;
+}
+
+/**
+ * Get site annotation value from annotations object (supports both old and new format)
+ */
+export function getSiteAnnotation(annotations, slug, prop) {
+    const newKey = getSiteAnnotationKey(slug, prop);
+    const oldKey = SITE_ANNOTATIONS[prop];
+    return annotations[newKey] ?? annotations[oldKey];
+}

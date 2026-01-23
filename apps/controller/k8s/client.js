@@ -1,6 +1,7 @@
 import k8s from "@kubernetes/client-node";
 export const LABELS = {
-    managedBy: "controller"
+    managedBy: "controller",
+    siteSlug: "voxeil.io/site-slug"
 };
 let cached = null;
 export function getClients() {

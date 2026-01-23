@@ -3,7 +3,7 @@ import { Client } from "pg";
 import { HttpError } from "../http/errors.js";
 import { upsertDeployment, upsertService, upsertIngress, upsertSecret } from "../k8s/apply.js";
 import { requireNamespace } from "../k8s/namespace.js";
-import { buildDeployment, buildService, buildIngress, APP_DEPLOYMENT_NAME, SERVICE_NAME, INGRESS_NAME } from "../k8s/publish.js";
+import { buildDeployment, buildService, buildIngress, getDeploymentName, getServiceName, getIngressName } from "../k8s/publish.js";
 import { getClients, LABELS } from "../k8s/client.js";
 import { validateSlug } from "../sites/site.slug.js";
 import { logAudit } from "../audit/audit.service.js";

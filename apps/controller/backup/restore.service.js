@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { HttpError } from "../http/errors.js";
-import { requireNamespace } from "../k8s/namespace.js";
+import { requireNamespace, resolveUserNamespaceForSite } from "../k8s/namespace.js";
 import { getClients } from "../k8s/client.js";
 import { validateSlug } from "../sites/site.slug.js";
 import { buildRestorePod, listLatestBackup } from "./helpers.js";
@@ -116,7 +116,7 @@ async function runDbRestore(archivePath, dbName) {
 }
 export async function restoreSiteFiles(slug, input) {
     const normalized = normalizeSlug(slug);
-    const namespace = `tenant-${normalized}`;
+    const namespace = await resolveUserNamespaceForSite(normalized);
     await requireNamespace(namespace);
     const dir = path.join(BACKUP_ROOT, normalized, "files");
     const archive = await resolveBackupName(dir, input.backupFile, input.latest);

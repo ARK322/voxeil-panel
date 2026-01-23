@@ -1,7 +1,15 @@
 import { LABELS } from "./client.js";
-export const APP_DEPLOYMENT_NAME = "app";
-export const SERVICE_NAME = "web";
-export const INGRESS_NAME = "web";
+import { USER_HOME_PVC_NAME } from "./pvc.js";
+// Names are now dynamic: *-<siteSlug>
+export function getDeploymentName(slug) {
+    return `app-${slug}`;
+}
+export function getServiceName(slug) {
+    return `web-${slug}`;
+}
+export function getIngressName(slug) {
+    return `web-${slug}`;
+}
 const DEFAULT_UPLOAD_DIRS = ["/app/public/uploads"];
 function buildSelector(appName) {
     return {
@@ -25,15 +33,22 @@ export function buildDeployment(spec) {
         ? [{ name: spec.imagePullSecretName }]
         : undefined;
     const uploadDirs = resolveUploadDirs(spec.uploadDirs);
+    const deploymentName = getDeploymentName(spec.slug);
+    const labels = {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: spec.slug,
+        "voxeil.io/site": "true"
+    };
+    if (spec.userId) {
+        labels["voxeil.io/user-id"] = spec.userId;
+    }
     return {
         apiVersion: "apps/v1",
         kind: "Deployment",
         metadata: {
-            name: APP_DEPLOYMENT_NAME,
+            name: deploymentName,
             namespace: spec.namespace,
-            labels: {
-                [LABELS.managedBy]: LABELS.managedBy
-            }
+            labels
         },
         spec: {
             replicas: 1,
@@ -49,6 +64,14 @@ export function buildDeployment(spec) {
                 },
                 spec: {
                     ...(imagePullSecrets ? { imagePullSecrets } : {}),
+                    volumes: [
+                        {
+                            name: "user-home",
+                            persistentVolumeClaim: {
+                                claimName: USER_HOME_PVC_NAME
+                            }
+                        }
+                    ],
                     containers: [
                         {
                             name: "app",
@@ -61,6 +84,13 @@ export function buildDeployment(spec) {
                                     }
                                 }]
                             } : {}),
+                            volumeMounts: [
+                                {
+                                    name: "user-home",
+                                    mountPath: "/home",
+                                    subPath: `sites/${spec.slug}`
+                                }
+                            ],
                             resources: {
                                 requests: {
                                     cpu: String(spec.cpu),
@@ -81,15 +111,22 @@ export function buildDeployment(spec) {
 export function buildService(spec) {
     const appName = spec.appName || `app-${spec.slug}`;
     const selector = buildSelector(appName);
+    const serviceName = getServiceName(spec.slug);
+    const labels = {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: spec.slug,
+        "voxeil.io/site": "true"
+    };
+    if (spec.userId) {
+        labels["voxeil.io/user-id"] = spec.userId;
+    }
     return {
         apiVersion: "v1",
         kind: "Service",
         metadata: {
-            name: SERVICE_NAME,
+            name: serviceName,
             namespace: spec.namespace,
-            labels: {
-                [LABELS.managedBy]: LABELS.managedBy
-            }
+            labels
         },
         spec: {
             type: "ClusterIP",
@@ -108,15 +145,23 @@ export function buildService(spec) {
 export function buildIngress(spec) {
     const tlsEnabled = spec.tlsEnabled ?? false;
     const certIssuerName = spec.tlsIssuer ?? "letsencrypt-staging";
+    const ingressName = getIngressName(spec.slug);
+    const serviceName = getServiceName(spec.slug);
+    const labels = {
+        [LABELS.managedBy]: LABELS.managedBy,
+        [LABELS.siteSlug]: spec.slug,
+        "voxeil.io/site": "true"
+    };
+    if (spec.userId) {
+        labels["voxeil.io/user-id"] = spec.userId;
+    }
     const baseIngress = {
         apiVersion: "networking.k8s.io/v1",
         kind: "Ingress",
         metadata: {
-            name: INGRESS_NAME,
+            name: ingressName,
             namespace: spec.namespace,
-            labels: {
-                [LABELS.managedBy]: LABELS.managedBy
-            }
+            labels
         },
         spec: {
             ingressClassName: process.env.INGRESS_CLASS_NAME ?? "traefik",
@@ -130,7 +175,7 @@ export function buildIngress(spec) {
                                 pathType: "Prefix",
                                 backend: {
                                     service: {
-                                        name: SERVICE_NAME,
+                                        name: serviceName,
                                         port: { number: 80 }
                                     }
                                 }

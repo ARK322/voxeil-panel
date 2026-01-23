@@ -151,3 +151,89 @@ export function slugFromNamespace(namespace) {
     }
     return namespace.slice(TENANT_PREFIX.length);
 }
+
+export async function findUserNamespaceBySiteSlug(slug) {
+    const { core } = getClients();
+    const response = await core.listNamespace();
+    const userNamespaces = (response.body.items || [])
+        .filter(ns => ns.metadata?.name?.startsWith(USER_PREFIX));
+    
+    for (const ns of userNamespaces) {
+        const annotations = ns.metadata?.annotations || {};
+        // Check if this namespace has a site with the given slug
+        const siteDomainKey = `voxeil.io/site-${slug}-domain`;
+        if (annotations[siteDomainKey]) {
+            return ns.metadata.name;
+        }
+    }
+    
+    throw new HttpError(404, `Site with slug '${slug}' not found in any user namespace.`);
+}
+
+export async function readUserNamespaceSite(userNamespace, slug) {
+    const { core } = getClients();
+    try {
+        const response = await core.readNamespace(userNamespace);
+        const annotations = response.body.metadata.annotations || {};
+        const siteDomainKey = `voxeil.io/site-${slug}-domain`;
+        if (!annotations[siteDomainKey]) {
+            throw new HttpError(404, `Site with slug '${slug}' not found in namespace '${userNamespace}'.`);
+        }
+        // Extract site data from annotations
+        const siteData = {};
+        for (const [key, value] of Object.entries(annotations)) {
+            if (key.startsWith(`voxeil.io/site-${slug}-`)) {
+                const propName = key.slice(`voxeil.io/site-${slug}-`.length);
+                siteData[propName] = value;
+            }
+        }
+        return {
+            namespace: userNamespace,
+            slug,
+            annotations: siteData
+        };
+    } catch (error) {
+        if (error?.response?.statusCode === 404) {
+            throw new HttpError(404, `User namespace '${userNamespace}' not found.`);
+        }
+        throw error;
+    }
+}
+
+/**
+ * Resolve user namespace for a site by slug.
+ * This is the single source of truth for namespace resolution.
+ */
+export async function resolveUserNamespaceForSite(slug) {
+    return await findUserNamespaceBySiteSlug(slug);
+}
+
+/**
+ * Extract userId from user namespace name.
+ * @param {string} namespace - User namespace name (e.g., "user-123")
+ * @returns {string} - User ID (e.g., "123")
+ */
+export function extractUserIdFromNamespace(namespace) {
+    if (!namespace || typeof namespace !== "string") {
+        throw new HttpError(400, "Invalid namespace.");
+    }
+    if (!namespace.startsWith(USER_PREFIX)) {
+        throw new HttpError(400, "Namespace is not a user namespace.");
+    }
+    return namespace.slice(USER_PREFIX.length);
+}
+
+/**
+ * Read site metadata from user namespace (replaces readTenantNamespace).
+ * Returns format compatible with old readTenantNamespace for easier migration.
+ */
+export async function readSiteMetadata(slug) {
+    const namespace = await resolveUserNamespaceForSite(slug);
+    const siteData = await readUserNamespaceSite(namespace, slug);
+    // Return in format compatible with old readTenantNamespace
+    return {
+        name: siteData.namespace,
+        labels: {}, // User namespace labels if needed
+        annotations: siteData.annotations
+    };
+}

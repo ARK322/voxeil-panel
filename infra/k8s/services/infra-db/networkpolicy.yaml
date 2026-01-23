@@ -11,21 +11,28 @@ spec:
     - Ingress
   ingress:
     - from:
+        # Allow from user namespaces (managed-by: controller OR voxeil.io/user: "true")
         - namespaceSelector:
             matchLabels:
               managed-by: controller
         - namespaceSelector:
             matchLabels:
+              voxeil.io/user: "true"
+        - namespaceSelector:
+            matchLabels:
               managed-by: vhp-controller
+        # Legacy tenant namespaces (deprecated)
         - namespaceSelector:
             matchLabels:
               voxeil.io/tenant: "true"
+        # Allow from platform namespace (controller)
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: platform
           podSelector:
             matchLabels:
               app: controller
+        # Allow from backup namespace
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: backup

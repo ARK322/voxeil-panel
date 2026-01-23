@@ -1,16 +1,16 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { HttpError } from "../http/errors.js";
-import { loadTenantTemplates } from "../templates/load.js";
-import { renderLimitRange, renderNetworkPolicy, renderResourceQuota } from "../templates/render.js";
+import { loadUserTemplates } from "../templates/load.js";
 import { upsertDeployment, upsertIngress, upsertLimitRange, upsertNetworkPolicy, upsertResourceQuota, upsertService } from "../k8s/apply.js";
-import { allocateTenantNamespace, deleteTenantNamespace, listTenantNamespaces, patchNamespaceAnnotations, readTenantNamespace, requireNamespace, slugFromNamespace } from "../k8s/namespace.js";
+import { patchNamespaceAnnotations, requireNamespace, resolveUserNamespaceForSite, readUserNamespaceSite, extractUserIdFromNamespace, deleteNamespace, readSiteMetadata } from "../k8s/namespace.js";
 import { patchIngress, resolveIngressIssuer } from "../k8s/ingress.js";
 import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
 import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
 import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
 import { deleteSecret, ensureGhcrPullSecret, readSecret, upsertSecret, GHCR_PULL_SECRET_NAME } from "../k8s/secrets.js";
 import { getClients, LABELS } from "../k8s/client.js";
+import { getDeploymentName, getServiceName, getIngressName } from "../k8s/publish.js";
 import { SITE_ANNOTATIONS } from "../k8s/annotations.js";
 import { ensureDatabase, ensureRole, revokeAndTerminate, dropDatabase, dropRole, generateDbPassword, normalizeDbName, normalizeDbUser, resolveDbName, resolveDbUser } from "../postgres/admin.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
@@ -24,7 +24,7 @@ const DEFAULT_TLS_ISSUER = "letsencrypt-staging";
 const SITE_DB_SECRET_NAME = "db-conn";
 const LEGACY_DB_SECRET_NAME = "site-db";
 const BACKUP_ROOT = "/backups/sites";
-const BACKUP_NAMESPACE = "backup";
+const BACKUP_NAMESPACE = "backup-system";
 const DEFAULT_BACKUP_RETENTION_DAYS = 14;
 const DEFAULT_BACKUP_SCHEDULE = "0 3 * * *";
 const DEFAULT_BACKUP_RUNNER_IMAGE = "ghcr.io/voxeil/backup-runner:latest";
@@ -157,7 +157,7 @@ function buildBackupRunnerPodSpec(options) {
                     command: ["/app/run.sh"],
                     env: [
                         { name: "SITE_SLUG", value: options.slug },
-                        { name: "TENANT_NAMESPACE", value: options.namespace },
+                        { name: "USER_NAMESPACE", value: options.namespace },
                         { name: "BACKUP_RETENTION_DAYS", value: String(options.retentionDays) },
                         { name: "DB_ENABLED", value: options.dbEnabled ? "true" : "false" },
                         { name: "DB_HOST", value: dbHost },
@@ -284,7 +284,10 @@ function decodeSecretValue(value) {
         return undefined;
     return Buffer.from(value, "base64").toString("utf8");
 }
-export async function createSite(input) {
+export async function createSite(userId, input) {
+    if (!userId) {
+        throw new HttpError(400, "userId is required.");
+    }
     let baseSlug;
     try {
         baseSlug = slugFromDomain(input.domain);
@@ -297,7 +300,10 @@ export async function createSite(input) {
     const tlsEnabled = input.tlsEnabled ?? false;
     const desiredIssuer = input.tlsIssuer ?? DEFAULT_TLS_ISSUER;
     const tlsIssuer = tlsEnabled ? "letsencrypt-staging" : desiredIssuer;
-    const { slug, namespace } = await allocateTenantNamespace(baseSlug, {
+    // Use user namespace instead of creating tenant namespace
+    const namespace = `user-${userId}`;
+    await requireNamespace(namespace);
+    const slug = baseSlug;
         [SITE_ANNOTATIONS.domain]: input.domain,
         [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
         [SITE_ANNOTATIONS.tlsIssuer]: tlsIssuer,
@@ -312,33 +318,33 @@ export async function createSite(input) {
         [SITE_ANNOTATIONS.dnsEnabled]: "false",
         [SITE_ANNOTATIONS.githubEnabled]: "false"
     });
-    const templates = await loadTenantTemplates();
-    const resourceQuota = renderResourceQuota(templates.resourceQuota, namespace, {
-        cpu: input.cpu,
-        ramGi: input.ramGi,
-        diskGi: input.diskGi
+    // Store site metadata in namespace annotations
+    await patchNamespaceAnnotations(namespace, {
+        [`voxeil.io/site-${slug}-domain`]: input.domain,
+        [`voxeil.io/site-${slug}-tlsEnabled`]: tlsEnabled ? "true" : "false",
+        [`voxeil.io/site-${slug}-tlsIssuer`]: tlsIssuer,
+        [`voxeil.io/site-${slug}-image`]: maintenanceImage,
+        [`voxeil.io/site-${slug}-containerPort`]: String(maintenancePort),
+        [`voxeil.io/site-${slug}-cpu`]: String(input.cpu),
+        [`voxeil.io/site-${slug}-ramGi`]: String(input.ramGi),
+        [`voxeil.io/site-${slug}-diskGi`]: String(input.diskGi),
+        [`voxeil.io/site-${slug}-dbEnabled`]: "false",
+        [`voxeil.io/site-${slug}-mailEnabled`]: "false",
+        [`voxeil.io/site-${slug}-backupEnabled`]: "false",
+        [`voxeil.io/site-${slug}-dnsEnabled`]: "false",
+        [`voxeil.io/site-${slug}-githubEnabled`]: "false"
     });
-    const limitRange = renderLimitRange(templates.limitRange, namespace, {
-        cpu: input.cpu,
-        ramGi: input.ramGi
-    });
-    const denyAll = renderNetworkPolicy(templates.networkPolicyDenyAll, namespace);
-    const allowIngress = renderNetworkPolicy(templates.networkPolicyAllowIngress, namespace);
-    const allowEgress = renderNetworkPolicy(templates.networkPolicyAllowEgress, namespace);
-    await Promise.all([
-        upsertResourceQuota(resourceQuota),
-        upsertLimitRange(limitRange),
-        upsertNetworkPolicy(denyAll),
-        upsertNetworkPolicy(allowIngress),
-        upsertNetworkPolicy(allowEgress),
-        ensurePvc(namespace, input.diskGi)
-    ]);
+    // Note: ResourceQuota, LimitRange, and NetworkPolicy are already set up for user namespace
+    // Sites share the user namespace resources, no need to create separate ones
+    // PVC will be handled in MODULE 2 (user home PVC)
     await ensureGhcrPullSecret(namespace, slug);
     const imagePullSecretName = await resolveImagePullSecretName(namespace);
     const host = input.domain.trim();
     if (!host) {
         throw new HttpError(400, "Domain is required.");
     }
+    // Extract userId from namespace for labels
+    const extractedUserId = extractUserIdFromNamespace(namespace);
     const maintenanceSpec = {
         namespace,
         slug,
@@ -349,8 +355,10 @@ export async function createSite(input) {
         ramGi: input.ramGi,
         tlsEnabled,
         tlsIssuer,
-        imagePullSecretName
+        imagePullSecretName,
+        userId: extractedUserId
     };
+    // Note: Deployment/Service/Ingress names are now *-<siteSlug> format (handled in publish.js)
     await Promise.all([
         upsertDeployment(buildDeployment(maintenanceSpec)),
         upsertService(buildService(maintenanceSpec)),
@@ -369,87 +377,68 @@ export async function createSite(input) {
     };
 }
 export async function listSites() {
-    const templates = await loadTenantTemplates();
-    const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
-    const namespaces = await listTenantNamespaces();
+    const { core } = getClients();
+    const response = await core.listNamespace();
+    const userNamespaces = (response.body.items || [])
+        .filter(ns => ns.metadata?.name?.startsWith("user-"));
+    
     const items = [];
-    for (const namespaceEntry of namespaces) {
-        const namespace = namespaceEntry.name;
-        const annotations = namespaceEntry.annotations;
-        const slug = slugFromNamespace(namespace);
-        try {
-            const [quotaStatus, pvcSize] = await Promise.all([
-                readQuotaStatus(namespace, quotaName),
-                getPvcSizeGi(namespace)
-            ]);
-            const ready = quotaStatus.exists && pvcSize != null;
-            items.push({
-                slug,
-                namespace,
-                ready,
-                domain: annotations[SITE_ANNOTATIONS.domain],
-                image: annotations[SITE_ANNOTATIONS.image],
-                containerPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.containerPort]),
-                tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]) ?? false,
-                tlsIssuer: annotations[SITE_ANNOTATIONS.tlsIssuer],
-                dnsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dnsEnabled]) ?? false,
-                dnsDomain: annotations[SITE_ANNOTATIONS.dnsDomain],
-                dnsTarget: annotations[SITE_ANNOTATIONS.dnsTarget],
-                githubEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.githubEnabled]) ?? false,
-                githubRepo: annotations[SITE_ANNOTATIONS.githubRepo],
-                githubBranch: annotations[SITE_ANNOTATIONS.githubBranch],
-                githubWorkflow: annotations[SITE_ANNOTATIONS.githubWorkflow],
-                githubImage: annotations[SITE_ANNOTATIONS.githubImage],
-                dbEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false,
-                dbName: annotations[SITE_ANNOTATIONS.dbName],
-                dbUser: annotations[SITE_ANNOTATIONS.dbUser],
-                dbHost: annotations[SITE_ANNOTATIONS.dbHost],
-                dbPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.dbPort]),
-                dbSecret: annotations[SITE_ANNOTATIONS.dbSecret],
-                mailEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false,
-                mailDomain: annotations[SITE_ANNOTATIONS.mailDomain],
-                backupEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? false,
-                backupRetentionDays: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.backupRetentionDays]),
-                backupSchedule: annotations[SITE_ANNOTATIONS.backupSchedule],
-                backupLastRunAt: annotations[SITE_ANNOTATIONS.backupLastRunAt],
-                cpu: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.cpu]),
-                ramGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.ramGi]),
-                diskGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.diskGi])
-            });
+    for (const ns of userNamespaces) {
+        const namespace = ns.metadata.name;
+        const annotations = ns.metadata.annotations || {};
+        
+        // Find all sites in this namespace by looking for site-*-domain annotations
+        const siteSlugs = new Set();
+        for (const key of Object.keys(annotations)) {
+            const match = key.match(/^voxeil\.io\/site-(.+)-domain$/);
+            if (match) {
+                siteSlugs.add(match[1]);
+            }
         }
-        catch {
+        
+        // Build site items from annotations
+        for (const slug of siteSlugs) {
+            const siteAnnotations = {};
+            for (const [key, value] of Object.entries(annotations)) {
+                if (key.startsWith(`voxeil.io/site-${slug}-`)) {
+                    const propName = key.slice(`voxeil.io/site-${slug}-`.length);
+                    siteAnnotations[propName] = value;
+                }
+            }
+            
+            // Map annotations to site properties
             items.push({
                 slug,
                 namespace,
-                ready: false,
-                domain: annotations[SITE_ANNOTATIONS.domain],
-                image: annotations[SITE_ANNOTATIONS.image],
-                containerPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.containerPort]),
-                tlsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.tlsEnabled]) ?? false,
-                tlsIssuer: annotations[SITE_ANNOTATIONS.tlsIssuer],
-                dnsEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dnsEnabled]) ?? false,
-                dnsDomain: annotations[SITE_ANNOTATIONS.dnsDomain],
-                dnsTarget: annotations[SITE_ANNOTATIONS.dnsTarget],
-                githubEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.githubEnabled]) ?? false,
-                githubRepo: annotations[SITE_ANNOTATIONS.githubRepo],
-                githubBranch: annotations[SITE_ANNOTATIONS.githubBranch],
-                githubWorkflow: annotations[SITE_ANNOTATIONS.githubWorkflow],
-                githubImage: annotations[SITE_ANNOTATIONS.githubImage],
-                dbEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false,
-                dbName: annotations[SITE_ANNOTATIONS.dbName],
-                dbUser: annotations[SITE_ANNOTATIONS.dbUser],
-                dbHost: annotations[SITE_ANNOTATIONS.dbHost],
-                dbPort: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.dbPort]),
-                dbSecret: annotations[SITE_ANNOTATIONS.dbSecret],
-                mailEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false,
-                mailDomain: annotations[SITE_ANNOTATIONS.mailDomain],
-                backupEnabled: parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? false,
-                backupRetentionDays: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.backupRetentionDays]),
-                backupSchedule: annotations[SITE_ANNOTATIONS.backupSchedule],
-                backupLastRunAt: annotations[SITE_ANNOTATIONS.backupLastRunAt],
-                cpu: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.cpu]),
-                ramGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.ramGi]),
-                diskGi: parseNumberAnnotation(annotations[SITE_ANNOTATIONS.diskGi])
+                ready: true, // Sites in user namespace are considered ready
+                domain: siteAnnotations.domain,
+                image: siteAnnotations.image,
+                containerPort: parseNumberAnnotation(siteAnnotations.containerPort),
+                tlsEnabled: parseBooleanAnnotation(siteAnnotations.tlsEnabled) ?? false,
+                tlsIssuer: siteAnnotations.tlsIssuer,
+                dnsEnabled: parseBooleanAnnotation(siteAnnotations.dnsEnabled) ?? false,
+                dnsDomain: siteAnnotations.dnsDomain,
+                dnsTarget: siteAnnotations.dnsTarget,
+                githubEnabled: parseBooleanAnnotation(siteAnnotations.githubEnabled) ?? false,
+                githubRepo: siteAnnotations.githubRepo,
+                githubBranch: siteAnnotations.githubBranch,
+                githubWorkflow: siteAnnotations.githubWorkflow,
+                githubImage: siteAnnotations.githubImage,
+                dbEnabled: parseBooleanAnnotation(siteAnnotations.dbEnabled) ?? false,
+                dbName: siteAnnotations.dbName,
+                dbUser: siteAnnotations.dbUser,
+                dbHost: siteAnnotations.dbHost,
+                dbPort: parseNumberAnnotation(siteAnnotations.dbPort),
+                dbSecret: siteAnnotations.dbSecret,
+                mailEnabled: parseBooleanAnnotation(siteAnnotations.mailEnabled) ?? false,
+                mailDomain: siteAnnotations.mailDomain,
+                backupEnabled: parseBooleanAnnotation(siteAnnotations.backupEnabled) ?? false,
+                backupRetentionDays: parseNumberAnnotation(siteAnnotations.backupRetentionDays),
+                backupSchedule: siteAnnotations.backupSchedule,
+                backupLastRunAt: siteAnnotations.backupLastRunAt,
+                cpu: parseNumberAnnotation(siteAnnotations.cpu),
+                ramGi: parseNumberAnnotation(siteAnnotations.ramGi),
+                diskGi: parseNumberAnnotation(siteAnnotations.diskGi)
             });
         }
     }
@@ -459,28 +448,64 @@ export async function updateSiteLimits(slug, patch) {
     if (!slug) {
         throw new HttpError(400, "Slug is required.");
     }
-    const namespace = `tenant-${slug}`;
+    const normalized = validateSlug(slug);
+    const namespace = await resolveUserNamespaceForSite(normalized);
     await requireNamespace(namespace);
-    const templates = await loadTenantTemplates();
-    const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
-    if (patch.diskGi !== undefined) {
-        await expandPvcIfNeeded(namespace, patch.diskGi);
-    }
-    const updated = await updateQuotaLimits(namespace, quotaName, patch);
+    
+    // Read current site metadata
+    const siteData = await readUserNamespaceSite(namespace, normalized);
+    const currentCpu = parseNumberAnnotation(siteData.annotations.cpu) ?? 1;
+    const currentRamGi = parseNumberAnnotation(siteData.annotations.ramGi) ?? 1;
+    const currentDiskGi = parseNumberAnnotation(siteData.annotations.diskGi) ?? 1;
+    
+    // Calculate updated values
+    const updated = {
+        cpu: patch.cpu !== undefined ? patch.cpu : currentCpu,
+        ramGi: patch.ramGi !== undefined ? patch.ramGi : currentRamGi,
+        diskGi: patch.diskGi !== undefined ? patch.diskGi : currentDiskGi
+    };
+    
+    // Update deployment resources if CPU/RAM changed
     if (patch.cpu !== undefined || patch.ramGi !== undefined) {
-        const limitRange = renderLimitRange(templates.limitRange, namespace, {
-            cpu: updated.cpu,
-            ramGi: updated.ramGi
-        });
-        await upsertLimitRange(limitRange);
+        const deploymentName = getDeploymentName(normalized);
+        const { apps } = getClients();
+        try {
+            const deployment = await apps.readNamespacedDeployment(deploymentName, namespace);
+            const containers = deployment.body.spec?.template?.spec?.containers || [];
+            for (const container of containers) {
+                if (container.resources) {
+                    container.resources.requests = {
+                        cpu: String(updated.cpu),
+                        memory: `${updated.ramGi}Gi`
+                    };
+                    container.resources.limits = {
+                        cpu: String(updated.cpu),
+                        memory: `${updated.ramGi}Gi`
+                    };
+                }
+            }
+            await apps.replaceNamespacedDeployment(deploymentName, namespace, deployment.body);
+        } catch (error) {
+            if (error?.response?.statusCode !== 404) {
+                throw error;
+            }
+            // Deployment not found, skip resource update
+        }
     }
+    
+    // Note: diskGi is per-site but PVC is user-level (pvc-user-home)
+    // Site files are stored in /home/sites/<slug> subPath
+    // PVC expansion should be handled at user level, not site level
+    
+    // Update annotations
     await patchNamespaceAnnotations(namespace, {
-        [SITE_ANNOTATIONS.cpu]: String(updated.cpu),
-        [SITE_ANNOTATIONS.ramGi]: String(updated.ramGi),
-        [SITE_ANNOTATIONS.diskGi]: String(updated.diskGi)
+        [`voxeil.io/site-${normalized}-cpu`]: String(updated.cpu),
+        [`voxeil.io/site-${normalized}-ramGi`]: String(updated.ramGi),
+        [`voxeil.io/site-${normalized}-diskGi`]: String(updated.diskGi)
     });
+    
     return {
-        slug,
+        slug: normalized,
         namespace,
         limits: {
             cpu: updated.cpu,
@@ -498,34 +523,36 @@ export async function deploySite(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespace = `tenant-${normalized}`;
+    const namespace = await resolveUserNamespaceForSite(normalized);
     await requireNamespace(namespace);
     await ensureGhcrPullSecret(namespace, normalized);
     const imagePullSecretName = await resolveImagePullSecretName(namespace);
-    const templates = await loadTenantTemplates();
-    const quotaName = templates.resourceQuota.metadata?.name ?? "site-quota";
-    const quotaStatus = await readQuotaStatus(namespace, quotaName);
-    if (!quotaStatus.exists || !quotaStatus.limits) {
-        throw new HttpError(500, "Tenant limits are missing for deployment.");
-    }
+    
+    // Read current site metadata for limits
+    const siteData = await readUserNamespaceSite(namespace, normalized);
+    const cpu = parseNumberAnnotation(siteData.annotations.cpu) ?? 1;
+    const ramGi = parseNumberAnnotation(siteData.annotations.ramGi) ?? 1;
+    const userId = extractUserIdFromNamespace(namespace);
+    
     const spec = {
         namespace,
         slug: normalized,
         host: "",
         image: input.image,
         containerPort: input.containerPort,
-        cpu: quotaStatus.limits.cpu,
-        ramGi: quotaStatus.limits.ramGi,
+        cpu,
+        ramGi,
         imagePullSecretName,
-        uploadDirs: input.uploadDirs
+        uploadDirs: input.uploadDirs,
+        userId
     };
     await Promise.all([
         upsertDeployment(buildDeployment(spec)),
         upsertService(buildService(spec))
     ]);
     await patchNamespaceAnnotations(namespace, {
-        [SITE_ANNOTATIONS.image]: input.image,
-        [SITE_ANNOTATIONS.containerPort]: String(input.containerPort)
+        [`voxeil.io/site-${normalized}-image`]: input.image,
+        [`voxeil.io/site-${normalized}-containerPort`]: String(input.containerPort)
     });
     return {
         slug: normalized,
@@ -542,7 +569,76 @@ export async function deleteSite(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    await deleteTenantNamespace(normalized);
+    const namespace = await resolveUserNamespaceForSite(normalized);
+    
+    // Delete all site resources by label selector
+    const { core, apps, net } = getClients();
+    const labelSelector = `${LABELS.managedBy}=${LABELS.managedBy},${LABELS.siteSlug}=${normalized}`;
+    
+    // Delete deployment
+    const deploymentName = getDeploymentName(normalized);
+    try {
+        await apps.deleteNamespacedDeployment(deploymentName, namespace);
+    } catch (error) {
+        if (error?.response?.statusCode !== 404) throw error;
+    }
+    
+    // Delete service
+    const serviceName = getServiceName(normalized);
+    try {
+        await core.deleteNamespacedService(serviceName, namespace);
+    } catch (error) {
+        if (error?.response?.statusCode !== 404) throw error;
+    }
+    
+    // Delete ingress
+    const ingressName = getIngressName(normalized);
+    try {
+        await net.deleteNamespacedIngress(ingressName, namespace);
+    } catch (error) {
+        if (error?.response?.statusCode !== 404) throw error;
+    }
+    
+    // Delete secrets with site label
+    try {
+        const secrets = await core.listNamespacedSecret(namespace, undefined, undefined, undefined, undefined, labelSelector);
+        for (const secret of secrets.body.items || []) {
+            try {
+                await core.deleteNamespacedSecret(secret.metadata.name, namespace);
+            } catch (error) {
+                if (error?.response?.statusCode !== 404) throw error;
+            }
+        }
+    } catch (error) {
+        // Ignore errors when listing secrets
+    }
+    
+    // Delete configmaps with site label
+    try {
+        const configmaps = await core.listNamespacedConfigMap(namespace, undefined, undefined, undefined, undefined, labelSelector);
+        for (const cm of configmaps.body.items || []) {
+            try {
+                await core.deleteNamespacedConfigMap(cm.metadata.name, namespace);
+            } catch (error) {
+                if (error?.response?.statusCode !== 404) throw error;
+            }
+        }
+    } catch (error) {
+        // Ignore errors when listing configmaps
+    }
+    
+    // Remove site annotations from namespace
+    const annotationsToRemove = {};
+    const siteData = await readUserNamespaceSite(namespace, normalized);
+    for (const key of Object.keys(siteData.annotations)) {
+        if (key.startsWith(`voxeil.io/site-${normalized}-`)) {
+            annotationsToRemove[key] = null; // Set to null to remove
+        }
+    }
+    if (Object.keys(annotationsToRemove).length > 0) {
+        await patchNamespaceAnnotations(namespace, annotationsToRemove);
+    }
+    
     return { slug: normalized };
 }
 export async function updateSiteTls(slug, input) {
@@ -553,26 +649,28 @@ export async function updateSiteTls(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
-    const host = namespaceEntry.annotations[SITE_ANNOTATIONS.domain]?.trim();
+    const host = namespaceEntry.annotations.domain?.trim();
     if (!host) {
         throw new HttpError(500, "Site domain is missing.");
     }
-    const previousIssuer = namespaceEntry.annotations[SITE_ANNOTATIONS.tlsIssuer] ?? DEFAULT_TLS_ISSUER;
+    const previousIssuer = namespaceEntry.annotations.tlsIssuer ?? DEFAULT_TLS_ISSUER;
     const desiredIssuer = input.issuer ?? previousIssuer;
     const tlsEnabled = input.enabled;
     const issuer = tlsEnabled
         ? await resolveIngressIssuer(namespace, normalized, desiredIssuer)
         : desiredIssuer;
     await patchNamespaceAnnotations(namespace, {
-        [SITE_ANNOTATIONS.tlsEnabled]: tlsEnabled ? "true" : "false",
-        [SITE_ANNOTATIONS.tlsIssuer]: issuer
+        [`voxeil.io/site-${normalized}-tlsEnabled`]: tlsEnabled ? "true" : "false",
+        [`voxeil.io/site-${normalized}-tlsIssuer`]: issuer
     });
     if (!tlsEnabled && input.cleanupSecret) {
         await deleteSecret(namespace, `tls-${normalized}`);
     }
-    await patchIngress("web", namespace, {
+    const { getIngressName } = await import("../k8s/publish.js");
+    const ingressName = getIngressName(normalized);
+    await patchIngress(ingressName, namespace, {
         metadata: {
             annotations: {
                 "cert-manager.io/cluster-issuer": tlsEnabled ? issuer : null,
@@ -606,10 +704,10 @@ export async function enableSiteMail(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const domain = normalizeMailDomain(input.domain);
-    const siteDomain = normalizeMailDomain(namespaceEntry.annotations[SITE_ANNOTATIONS.domain] ?? "");
+    const siteDomain = normalizeMailDomain(namespaceEntry.annotations.domain ?? "");
     if (!siteDomain) {
         throw new HttpError(500, "Site domain is missing.");
     }
@@ -620,18 +718,18 @@ export async function enableSiteMail(slug, input) {
         await ensureMailcowDomain(domain);
         await setMailcowDomainActive(domain, true);
         await patchNamespaceAnnotations(namespace, {
-            [SITE_ANNOTATIONS.mailEnabled]: "true",
-            [SITE_ANNOTATIONS.mailProvider]: "mailcow",
-            [SITE_ANNOTATIONS.mailDomain]: domain,
-            [SITE_ANNOTATIONS.mailStatus]: "ready",
-            [SITE_ANNOTATIONS.mailLastError]: ""
+            [`voxeil.io/site-${normalized}-mailEnabled`]: "true",
+            [`voxeil.io/site-${normalized}-mailProvider`]: "mailcow",
+            [`voxeil.io/site-${normalized}-mailDomain`]: domain,
+            [`voxeil.io/site-${normalized}-mailStatus`]: "ready",
+            [`voxeil.io/site-${normalized}-mailLastError`]: ""
         });
     }
     catch (error) {
         const message = String(error?.message ?? "Mailcow error.");
         await patchNamespaceAnnotations(namespace, {
-            [SITE_ANNOTATIONS.mailStatus]: "error",
-            [SITE_ANNOTATIONS.mailLastError]: message
+            [`voxeil.io/site-${normalized}-mailStatus`]: "error",
+            [`voxeil.io/site-${normalized}-mailLastError`]: message
         });
         throw new HttpError(502, "Mail provider error.");
     }
@@ -651,7 +749,7 @@ export async function enableSiteDb(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
     const { host, port } = requireDbHostConfig();
@@ -751,7 +849,7 @@ export async function disableSiteDb(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
     const secretName = annotations[SITE_ANNOTATIONS.dbSecret];
@@ -771,7 +869,7 @@ export async function purgeSiteDb(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
     const dbName = annotations[SITE_ANNOTATIONS.dbName]
@@ -804,7 +902,7 @@ export async function getSiteDbStatus(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
     const secretName = annotations[SITE_ANNOTATIONS.dbSecret]?.trim() || SITE_DB_SECRET_NAME;
     const secret = (await readSecret(namespaceEntry.name, secretName)) ??
@@ -829,26 +927,26 @@ export async function disableSiteMail(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
+    const domain = annotations.mailDomain?.trim();
     if (!domain) {
         throw new HttpError(409, "Mail domain not configured.");
     }
     try {
         await setMailcowDomainActive(domain, false);
         await patchNamespaceAnnotations(namespace, {
-            [SITE_ANNOTATIONS.mailEnabled]: "false",
-            [SITE_ANNOTATIONS.mailStatus]: "disabled",
-            [SITE_ANNOTATIONS.mailLastError]: ""
+            [`voxeil.io/site-${normalized}-mailEnabled`]: "false",
+            [`voxeil.io/site-${normalized}-mailStatus`]: "disabled",
+            [`voxeil.io/site-${normalized}-mailLastError`]: ""
         });
     }
     catch (error) {
         const message = String(error?.message ?? "Mailcow error.");
         await patchNamespaceAnnotations(namespace, {
-            [SITE_ANNOTATIONS.mailStatus]: "error",
-            [SITE_ANNOTATIONS.mailLastError]: message
+            [`voxeil.io/site-${normalized}-mailStatus`]: "error",
+            [`voxeil.io/site-${normalized}-mailLastError`]: message
         });
         throw new HttpError(502, "Mail provider error.");
     }
@@ -862,28 +960,28 @@ export async function purgeSiteMail(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim() ??
-        annotations[SITE_ANNOTATIONS.domain]?.trim();
+    const domain = annotations.mailDomain?.trim() ??
+        annotations.domain?.trim();
     if (!domain) {
         throw new HttpError(409, "Mail domain not configured.");
     }
     try {
         await purgeMailcowDomain(domain);
         await patchNamespaceAnnotations(namespace, {
-            [SITE_ANNOTATIONS.mailEnabled]: "false",
-            [SITE_ANNOTATIONS.mailStatus]: "purged",
-            [SITE_ANNOTATIONS.mailLastError]: "",
-            [SITE_ANNOTATIONS.mailDomain]: domain
+            [`voxeil.io/site-${normalized}-mailEnabled`]: "false",
+            [`voxeil.io/site-${normalized}-mailStatus`]: "purged",
+            [`voxeil.io/site-${normalized}-mailLastError`]: "",
+            [`voxeil.io/site-${normalized}-mailDomain`]: domain
         });
     }
     catch (error) {
         const message = String(error?.message ?? "Mailcow error.");
         await patchNamespaceAnnotations(namespace, {
-            [SITE_ANNOTATIONS.mailStatus]: "error",
-            [SITE_ANNOTATIONS.mailLastError]: message
+            [`voxeil.io/site-${normalized}-mailStatus`]: "error",
+            [`voxeil.io/site-${normalized}-mailLastError`]: message
         });
         throw new HttpError(502, "Mail provider error.");
     }
@@ -904,10 +1002,10 @@ export async function createSiteMailbox(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
-    const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+    const domain = annotations.mailDomain?.trim();
+    const mailEnabled = parseBooleanAnnotation(annotations.mailEnabled) ?? false;
     if (!domain) {
         throw new HttpError(409, "Mail domain not configured.");
     }
@@ -930,10 +1028,10 @@ export async function deleteSiteMailbox(slug, address) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
-    const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+    const domain = annotations.mailDomain?.trim();
+    const mailEnabled = parseBooleanAnnotation(annotations.mailEnabled) ?? false;
     if (!domain) {
         throw new HttpError(409, "Mail domain not configured.");
     }
@@ -955,10 +1053,10 @@ export async function listSiteMailboxes(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
-    const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+    const domain = annotations.mailDomain?.trim();
+    const mailEnabled = parseBooleanAnnotation(annotations.mailEnabled) ?? false;
     if (!domain) {
         throw new HttpError(409, "Mail domain not configured.");
     }
@@ -976,10 +1074,10 @@ export async function listSiteAliases(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
-    const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+    const domain = annotations.mailDomain?.trim();
+    const mailEnabled = parseBooleanAnnotation(annotations.mailEnabled) ?? false;
     if (!domain) {
         throw new HttpError(409, "Mail domain not configured.");
     }
@@ -997,10 +1095,10 @@ export async function createSiteAlias(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
-    const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+    const domain = annotations.mailDomain?.trim();
+    const mailEnabled = parseBooleanAnnotation(annotations.mailEnabled) ?? false;
     if (!domain) {
         throw new HttpError(409, "Mail domain not configured.");
     }
@@ -1027,10 +1125,10 @@ export async function deleteSiteAlias(slug, source) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
-    const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+    const domain = annotations.mailDomain?.trim();
+    const mailEnabled = parseBooleanAnnotation(annotations.mailEnabled) ?? false;
     if (!domain) {
         throw new HttpError(409, "Mail domain not configured.");
     }
@@ -1052,10 +1150,10 @@ export async function getSiteMailStatus(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.mailDomain]?.trim();
-    const mailEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.mailEnabled]) ?? false;
+    const domain = annotations.mailDomain?.trim();
+    const mailEnabled = parseBooleanAnnotation(annotations.mailEnabled) ?? false;
     if (!domain) {
         throw new HttpError(409, "Mail domain not configured.");
     }
@@ -1070,7 +1168,7 @@ export async function enableSiteDns(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const domain = input.domain.trim();
     const targetIp = input.targetIp.trim();
@@ -1079,9 +1177,9 @@ export async function enableSiteDns(slug, input) {
     }
     await ensureDnsZone({ domain, targetIp });
     await patchNamespaceAnnotations(namespace, {
-        [SITE_ANNOTATIONS.dnsEnabled]: "true",
-        [SITE_ANNOTATIONS.dnsDomain]: domain,
-        [SITE_ANNOTATIONS.dnsTarget]: targetIp
+        [`voxeil.io/site-${normalized}-dnsEnabled`]: "true",
+        [`voxeil.io/site-${normalized}-dnsDomain`]: domain,
+        [`voxeil.io/site-${normalized}-dnsTarget`]: targetIp
     });
     return { ok: true, slug: normalized, dnsEnabled: true, domain, targetIp };
 }
@@ -1093,17 +1191,17 @@ export async function disableSiteDns(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.dnsDomain]?.trim();
-    const targetIp = annotations[SITE_ANNOTATIONS.dnsTarget]?.trim();
+    const domain = annotations.dnsDomain?.trim();
+    const targetIp = annotations.dnsTarget?.trim();
     if (!domain) {
         throw new HttpError(409, "DNS domain not configured.");
     }
     await removeDnsZone(domain);
     await patchNamespaceAnnotations(namespace, {
-        [SITE_ANNOTATIONS.dnsEnabled]: "false"
+        [`voxeil.io/site-${normalized}-dnsEnabled`]: "false"
     });
     return { ok: true, slug: normalized, dnsEnabled: false, domain, targetIp };
 }
@@ -1115,17 +1213,17 @@ export async function purgeSiteDns(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
-    const domain = annotations[SITE_ANNOTATIONS.dnsDomain]?.trim();
+    const domain = annotations.dnsDomain?.trim();
     if (domain) {
         await removeDnsZone(domain);
     }
     await patchNamespaceAnnotations(namespace, {
-        [SITE_ANNOTATIONS.dnsEnabled]: "false",
-        [SITE_ANNOTATIONS.dnsDomain]: "",
-        [SITE_ANNOTATIONS.dnsTarget]: ""
+        [`voxeil.io/site-${normalized}-dnsEnabled`]: "false",
+        [`voxeil.io/site-${normalized}-dnsDomain`]: "",
+        [`voxeil.io/site-${normalized}-dnsTarget`]: ""
     });
     return { ok: true, slug: normalized, dnsEnabled: false, purged: true };
 }
@@ -1137,11 +1235,11 @@ export async function getSiteDnsStatus(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
-    const dnsEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dnsEnabled]) ?? false;
-    const domain = annotations[SITE_ANNOTATIONS.dnsDomain];
-    const targetIp = annotations[SITE_ANNOTATIONS.dnsTarget];
+    const dnsEnabled = parseBooleanAnnotation(annotations.dnsEnabled) ?? false;
+    const domain = annotations.dnsDomain;
+    const targetIp = annotations.dnsTarget;
     return { ok: true, slug: normalized, dnsEnabled, domain, targetIp };
 }
 export async function enableSiteGithub(slug, input) {
@@ -1152,7 +1250,7 @@ export async function enableSiteGithub(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const repoInfo = parseRepo(input.repo);
     const branch = input.branch?.trim() || "main";
@@ -1206,7 +1304,7 @@ export async function disableSiteGithub(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     await deleteSecret(namespace, GITHUB_SECRET_NAME);
     await patchNamespaceAnnotations(namespace, {
@@ -1226,7 +1324,7 @@ export async function triggerSiteGithubDeploy(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
     const repoValue = annotations[SITE_ANNOTATIONS.githubRepo]?.trim();
@@ -1287,7 +1385,7 @@ export async function getSiteGithubStatus(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
     const githubEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.githubEnabled]) ?? false;
     return {
@@ -1331,7 +1429,7 @@ export async function enableSiteBackup(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
     const existingRetentionDays = parseNumberAnnotation(annotations[SITE_ANNOTATIONS.backupRetentionDays]);
@@ -1363,7 +1461,7 @@ export async function disableSiteBackup(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     await deleteBackupCronJob(normalized);
     await patchNamespaceAnnotations(namespace, {
@@ -1379,7 +1477,7 @@ export async function updateSiteBackupConfig(slug, input) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
     const existingRetentionDays = parseNumberAnnotation(annotations[SITE_ANNOTATIONS.backupRetentionDays]);
@@ -1413,7 +1511,7 @@ export async function runSiteBackup(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
     const backupEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.backupEnabled]) ?? false;
@@ -1511,7 +1609,7 @@ export async function restoreSiteBackup(slug, input) {
     if (!restoreFiles && !restoreDb) {
         throw new HttpError(400, "restoreFiles or restoreDb must be true.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
     if (restoreDb) {
         const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
@@ -1553,7 +1651,7 @@ export async function purgeSiteBackup(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const namespace = namespaceEntry.name;
     await deleteBackupCronJob(normalized);
     await purgeSiteBackups(normalized);
@@ -1571,7 +1669,7 @@ export async function purgeSite(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const namespaceEntry = await readTenantNamespace(normalized);
+    const namespaceEntry = await readSiteMetadata(normalized);
     const annotations = namespaceEntry.annotations;
     await deleteTenantNamespace(normalized);
     const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
