@@ -886,23 +886,14 @@ log_step "Installing Kyverno (idempotent)"
 # Idempotent namespace creation
 kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
 
-# Idempotent Kyverno installation: use apply only, tolerate AlreadyExists
-echo "Applying Kyverno manifests (idempotent)..."
-KYVERNO_APPLY_OUTPUT="$(kubectl apply -f "${SERVICES_DIR}/kyverno/install.yaml" 2>&1)" || {
-  KYVERNO_APPLY_EXIT=$?
-  # Check if error is AlreadyExists (acceptable for idempotent install)
-  if echo "${KYVERNO_APPLY_OUTPUT}" | grep -q "AlreadyExists"; then
-    echo "Kyverno resources already exist (idempotent), continuing..."
-  else
-    log_error "Failed to apply Kyverno manifests:"
-    echo "${KYVERNO_APPLY_OUTPUT}" >&2
-    exit ${KYVERNO_APPLY_EXIT}
-  fi
+# Idempotent Kyverno installation: use server-side apply with force-conflicts
+KYVERNO_MANIFEST="${SERVICES_DIR}/kyverno/install.yaml"
+echo "Applying Kyverno manifests (server-side, idempotent)..."
+kubectl apply --server-side --force-conflicts -f "${KYVERNO_MANIFEST}" || {
+  log_error "Failed to apply Kyverno manifests"
+  exit 1
 }
-# If apply succeeded, show status
-if echo "${KYVERNO_APPLY_OUTPUT}" | grep -qE "(created|configured|unchanged)"; then
-  echo "Kyverno resources applied successfully"
-fi
+echo "Kyverno resources applied successfully"
 
 # Wait for Kyverno deployments with proper polling
 echo "Waiting for Kyverno deployments to be available..."
