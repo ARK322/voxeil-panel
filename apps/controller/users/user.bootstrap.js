@@ -116,7 +116,7 @@ export async function bootstrapUserNamespace(userId) {
         );
         await applyResource(limitRange);
 
-        const networkPolicy = renderUserNetworkPolicy(templates.networkPolicyDenyAll, namespace);
+        const networkPolicy = renderUserNetworkPolicy(templates.networkPolicyBase, namespace);
         await applyResource(networkPolicy);
 
         const networkPolicyAllowIngress = renderUserNetworkPolicy(templates.networkPolicyAllowIngress, namespace);

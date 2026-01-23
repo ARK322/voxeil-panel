@@ -877,6 +877,15 @@ if grep -q "REPLACE_PANEL_BASICAUTH" "${PLATFORM_DIR}/panel-auth.yaml"; then
   exit 1
 fi
 
+# Validate that all REPLACE_* placeholders (except those in backup-job-templates-configmap.yaml which are runtime templates) are replaced
+log_step "Validating all REPLACE_* placeholders are replaced"
+REMAINING_PLACEHOLDERS=$(find "${SERVICES_DIR}" "${PLATFORM_DIR}" -type f \( -name "*.yaml" -o -name "*.yml" \) ! -name "backup-job-templates-configmap.yaml" -exec grep -l "REPLACE_" {} + 2>/dev/null | xargs grep -h "REPLACE_" 2>/dev/null | grep -v "REPLACE_SITE_SLUG\|REPLACE_TENANT_NAMESPACE\|REPLACE_DB_" | sort -u || true)
+if [[ -n "${REMAINING_PLACEHOLDERS}" ]]; then
+  echo "ERROR: The following REPLACE_* placeholders were not replaced:"
+  echo "${REMAINING_PLACEHOLDERS}"
+  exit 1
+fi
+
 # ========= apply =========
 log_step "Applying Traefik entrypoints config"
 if [[ ! -d "${SERVICES_DIR}/traefik" ]]; then

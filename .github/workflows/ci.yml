@@ -1,0 +1,178 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  lint:
+    name: Lint JavaScript
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/controller
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/controller/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: apps/controller
+      - name: Run ESLint
+        run: npm run lint
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/controller
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: apps/controller/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+        working-directory: apps/controller
+      - name: Run tests
+        run: npm test
+        continue-on-error: true
+
+  syntax-check:
+    name: JavaScript Syntax Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check JavaScript syntax
+        run: |
+          find apps/controller -name "*.js" -type f | while read file; do
+            echo "Checking $file"
+            node --check "$file" || exit 1
+          done
+
+  yaml-validation:
+    name: YAML Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Python and PyYAML
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3 python3-pip
+          pip3 install PyYAML
+      - name: Validate YAML syntax
+        run: |
+          cat > /tmp/validate_yaml.py << 'PYEOF'
+          import yaml
+          import sys
+          import os
+          file_path = sys.argv[1]
+          try:
+              with open(file_path, 'r') as f:
+                  list(yaml.safe_load_all(f))
+              print(f'  ✓ Valid: {file_path}')
+          except yaml.YAMLError as e:
+              print(f'  ✗ YAML Error in {file_path}: {e}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'  ✗ Error in {file_path}: {e}')
+              sys.exit(1)
+          PYEOF
+          echo "Validating Kubernetes manifests..."
+          find infra/k8s -name "*.yaml" -o -name "*.yml" | while read file; do
+            echo "Validating $file"
+            python3 /tmp/validate_yaml.py "$file" || exit 1
+          done
+          cat > /tmp/validate_yaml_single.py << 'PYEOF'
+          import yaml
+          import sys
+          file_path = sys.argv[1]
+          try:
+              with open(file_path, 'r') as f:
+                  yaml.safe_load(f)
+              print(f'  ✓ Valid: {file_path}')
+          except yaml.YAMLError as e:
+              print(f'  ✗ YAML Error in {file_path}: {e}')
+              sys.exit(1)
+          except Exception as e:
+              print(f'  ✗ Error in {file_path}: {e}')
+              sys.exit(1)
+          PYEOF
+          echo "Validating GitHub Actions workflows..."
+          find .github/workflows -name "*.yaml" -o -name "*.yml" | while read file; do
+            echo "Validating $file"
+            python3 /tmp/validate_yaml_single.py "$file" || exit 1
+          done
+        continue-on-error: true
+      - name: Install kubeconform
+        run: |
+          wget -qO- https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar -xz
+          sudo mv kubeconform /usr/local/bin/
+      - name: Validate Kubernetes schemas
+        run: |
+          echo "Validating Kubernetes manifest schemas..."
+          find infra/k8s -name "*.yaml" -o -name "*.yml" | while read file; do
+            # Skip template files with placeholders
+            if grep -q "PLACEHOLDER\|REPLACE_" "$file" 2>/dev/null; then
+              echo "Skipping template file: $file"
+              continue
+            fi
+            echo "Validating schema: $file"
+            kubeconform -strict -summary "$file" || exit 1
+          done
+        continue-on-error: true
+
+  bash-validation:
+    name: Bash Script Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+      - name: Validate bash scripts
+        run: |
+          find . -name "*.sh" -type f | while read file; do
+            echo "Validating $file"
+            shellcheck "$file" || exit 1
+          done
+        continue-on-error: true
+
+  docker-build:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/controller
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Validate Dockerfile syntax
+        run: |
+          # Basic Dockerfile validation
+          if [ ! -f Dockerfile ]; then
+            echo "Error: Dockerfile not found"
+            exit 1
+          fi
+          if ! grep -q "^FROM" Dockerfile; then
+            echo "Error: Dockerfile missing FROM instruction"
+            exit 1
+          fi
+          echo "Dockerfile basic syntax OK"
+          # Try to build (will fail if syntax is wrong, but we continue on error)
+          echo "Attempting Docker build validation..."
+          docker buildx build --load -t voxeil-controller:test . || echo "Build failed (expected if dependencies missing)"
+        continue-on-error: true

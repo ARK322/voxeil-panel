@@ -1,5 +1,8 @@
 import { getClients, LABELS } from "./client.js";
 import { HttpError } from "../http/errors.js";
+import { loadTenantTemplates } from "../templates/load.js";
+import { renderNetworkPolicy } from "../templates/render.js";
+import { upsertResourceQuota, upsertLimitRange, upsertNetworkPolicy } from "./apply.js";
 
 export const USER_PREFIX = "user-";
 export const TENANT_PREFIX = "tenant-";
@@ -76,21 +79,58 @@ export async function allocateTenantNamespace(slug, annotations = {}) {
         }
     };
     
-    try {
-        await core.readNamespace(namespace);
-        // Namespace exists, patch annotations if needed
-        if (annotations && Object.keys(annotations).length > 0) {
-            await patchNamespaceAnnotations(namespace, annotations);
+    const isNewNamespace = await (async () => {
+        try {
+            await core.readNamespace(namespace);
+            // Namespace exists, patch annotations if needed
+            if (annotations && Object.keys(annotations).length > 0) {
+                await patchNamespaceAnnotations(namespace, annotations);
+            }
+            return false;
         }
-    }
-    catch (error) {
-        if (error?.response?.statusCode === 404) {
-            // Create namespace
-            await core.createNamespace(namespaceBody);
+        catch (error) {
+            if (error?.response?.statusCode === 404) {
+                // Create namespace
+                await core.createNamespace(namespaceBody);
+                return true;
+            }
+            else {
+                throw error;
+            }
         }
-        else {
-            throw error;
-        }
+    })();
+    
+    // Apply tenant templates (limitrange, resourcequota, networkpolicies)
+    if (isNewNamespace) {
+        const templates = await loadTenantTemplates();
+        
+        // Apply ResourceQuota
+        const resourceQuota = templates.resourceQuota;
+        resourceQuota.metadata = {
+            ...resourceQuota.metadata,
+            name: resourceQuota.metadata?.name ?? "site-quota",
+            namespace
+        };
+        await upsertResourceQuota(resourceQuota);
+        
+        // Apply LimitRange
+        const limitRange = templates.limitRange;
+        limitRange.metadata = {
+            ...limitRange.metadata,
+            name: limitRange.metadata?.name ?? "site-limits",
+            namespace
+        };
+        await upsertLimitRange(limitRange);
+        
+        // Apply NetworkPolicies
+        const denyAllPolicy = renderNetworkPolicy(templates.networkPolicyDenyAll, namespace);
+        await upsertNetworkPolicy(denyAllPolicy);
+        
+        const allowIngressPolicy = renderNetworkPolicy(templates.networkPolicyAllowIngress, namespace);
+        await upsertNetworkPolicy(allowIngressPolicy);
+        
+        const allowEgressPolicy = renderNetworkPolicy(templates.networkPolicyAllowEgress, namespace);
+        await upsertNetworkPolicy(allowEgressPolicy);
     }
     
     return { slug, namespace };

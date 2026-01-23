@@ -18,14 +18,18 @@ kind: ClusterRole
 metadata:
   name: user-operator
 rules:
-  # Services: patch, get (create/delete gerekli değil, sadece patch)
+  # Namespaces: get, list (for listing and reading namespaces)
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get","list"]
+  # Services: patch, get, create, delete
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get","patch"]
-  # ConfigMaps: create, patch, get (DNS zone yönetimi için)
+    verbs: ["get","create","patch","delete"]
+  # ConfigMaps: create, patch, get, delete (DNS zone yönetimi için)
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get","create","patch"]
+    verbs: ["get","create","patch","delete"]
   # Secrets: create, patch, delete, get (DB credentials, image pull secrets)
   - apiGroups: [""]
     resources: ["secrets"]
@@ -42,14 +46,14 @@ rules:
   - apiGroups: [""]
     resources: ["limitranges"]
     verbs: ["get","create","patch"]
-  # Deployments: patch, get (sadece patch, create/delete gerekli değil)
+  # Deployments: patch, get, create, delete
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get","patch"]
-  # Ingresses: patch, get
+    verbs: ["get","create","patch","delete"]
+  # Ingresses: patch, get, create, delete
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
-    verbs: ["get","patch"]
+    verbs: ["get","create","patch","delete"]
   # NetworkPolicies: create, patch, get
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
