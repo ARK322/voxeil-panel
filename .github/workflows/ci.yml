@@ -20,6 +20,7 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: apps/controller/package-lock.json
+        continue-on-error: true
       - name: Install dependencies
         run: npm ci
         working-directory: apps/controller
@@ -39,6 +40,7 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: apps/controller/package-lock.json
+        continue-on-error: true
       - name: Install dependencies
         run: npm ci
         working-directory: apps/controller
