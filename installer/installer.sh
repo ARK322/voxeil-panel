@@ -8,13 +8,11 @@ STEP_COUNTER=0
 log_step() {
   STEP_COUNTER=$((STEP_COUNTER + 1))
   echo ""
-  echo "=========================================="
-  echo "STEP ${STEP_COUNTER}: $1"
-  echo "=========================================="
+  echo "=== [STEP] ${STEP_COUNTER}: $1 ==="
 }
 
 log_error() {
-  echo "ERROR: $1" >&2
+  echo "=== [ERROR] $1 ===" >&2
 }
 
 # Trap to log failed commands
@@ -25,11 +23,13 @@ trap 'if [ $? -ne 0 ]; then
 fi' ERR
 
 # Configurable timeouts (can be overridden via env)
-K3S_NODE_READY_TIMEOUT="${K3S_NODE_READY_TIMEOUT:-300}"
-CERT_MANAGER_TIMEOUT="${CERT_MANAGER_TIMEOUT:-180}"
-KYVERNO_TIMEOUT="${KYVERNO_TIMEOUT:-300}"
-FLUX_TIMEOUT="${FLUX_TIMEOUT:-300}"
-DEPLOYMENT_ROLLOUT_TIMEOUT="${DEPLOYMENT_ROLLOUT_TIMEOUT:-300}"
+K3S_NODE_READY_TIMEOUT="${K3S_NODE_READY_TIMEOUT:-600}"
+CERT_MANAGER_TIMEOUT="${CERT_MANAGER_TIMEOUT:-300}"
+KYVERNO_TIMEOUT="${KYVERNO_TIMEOUT:-600}"
+FLUX_TIMEOUT="${FLUX_TIMEOUT:-600}"
+DEPLOYMENT_ROLLOUT_TIMEOUT="${DEPLOYMENT_ROLLOUT_TIMEOUT:-600}"
+PVC_BOUND_TIMEOUT="${PVC_BOUND_TIMEOUT:-300}"
+IMAGE_VALIDATION_TIMEOUT="${IMAGE_VALIDATION_TIMEOUT:-60}"
 
 # ========= helpers =========
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
@@ -66,7 +66,7 @@ check_kubectl_context() {
 
 # Wait for k3s API to be ready
 wait_for_k3s_api() {
-  log_step "Waiting for k3s API to be ready..."
+  log_step "Waiting for k3s API to be ready"
   local max_attempts=60
   local attempt=0
   while [ ${attempt} -lt ${max_attempts} ]; do
@@ -75,6 +75,9 @@ wait_for_k3s_api() {
       return 0
     fi
     attempt=$((attempt + 1))
+    if [ $((attempt % 10)) -eq 0 ]; then
+      echo "Still waiting for k3s API... (${attempt}/${max_attempts})"
+    fi
     sleep 2
   done
   log_error "k3s API did not become ready after $((max_attempts * 2)) seconds"
@@ -92,6 +95,101 @@ check_storageclass() {
     echo "Available StorageClasses:"
     kubectl get storageclass || true
     return 1
+  fi
+}
+
+# Wait for PVC to become Bound
+wait_for_pvc_bound() {
+  local namespace="$1"
+  local pvc_name="$2"
+  local timeout="${3:-${PVC_BOUND_TIMEOUT}}"
+  
+  echo "Waiting for PVC ${namespace}/${pvc_name} to become Bound (timeout: ${timeout}s)..."
+  
+  # Poll first to ensure PVC exists
+  local attempt=0
+  local max_poll=30
+  while [ ${attempt} -lt ${max_poll} ]; do
+    if kubectl get pvc "${pvc_name}" -n "${namespace}" >/dev/null 2>&1; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    sleep 1
+  done
+  
+  if ! kubectl wait --for=condition=Bound pvc/"${pvc_name}" -n "${namespace}" --timeout="${timeout}s" 2>/dev/null; then
+    log_error "PVC ${namespace}/${pvc_name} did not become Bound within ${timeout}s"
+    echo "=== PVC Diagnostic ==="
+    kubectl get pvc "${pvc_name}" -n "${namespace}" -o yaml || true
+    echo ""
+    kubectl describe pvc "${pvc_name}" -n "${namespace}" || true
+    echo ""
+    echo "=== StorageClass Status ==="
+    kubectl get storageclass || true
+    echo ""
+    echo "=== Recent Events ==="
+    kubectl get events -n "${namespace}" --sort-by='.lastTimestamp' | tail -20 || true
+    return 1
+  fi
+  
+  echo "PVC ${namespace}/${pvc_name} is Bound"
+  return 0
+}
+
+# Validate container image exists (for public images, check if pull would work)
+validate_image() {
+  local image="$1"
+  local timeout="${2:-${IMAGE_VALIDATION_TIMEOUT}}"
+  
+  echo "Validating image: ${image}"
+  
+  # For local images, check if they exist in docker
+  if [[ "${image}" == *":local" ]] || [[ "${image}" == "backup-"* ]]; then
+    if docker image inspect "${image}" >/dev/null 2>&1; then
+      echo "Image ${image} exists locally"
+      return 0
+    else
+      log_error "Local image ${image} not found"
+      return 1
+    fi
+  fi
+  
+  # For remote images, try to pull (with timeout)
+  # Use docker pull with timeout to validate image exists
+  # Note: This validates the image can be pulled, but we'll let k3s handle the actual pull
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout "${timeout}" docker pull "${image}" >/dev/null 2>&1; then
+      echo "Image ${image} validated (pull successful)"
+      # Remove the pulled image to save space (k3s will pull it when needed)
+      docker rmi "${image}" >/dev/null 2>&1 || true
+      return 0
+    else
+      log_error "Failed to pull image ${image} within ${timeout}s"
+      echo "This may indicate:"
+      echo "  - Image does not exist at ${image}"
+      echo "  - Network connectivity issues"
+      echo "  - Authentication required (set GHCR_USERNAME and GHCR_TOKEN)"
+      echo ""
+      echo "If using private registry, ensure:"
+      echo "  - GHCR_USERNAME and GHCR_TOKEN are set"
+      echo "  - Image pull secret will be created in platform namespace"
+      return 1
+    fi
+  else
+    # Fallback: just try docker pull without timeout
+    if docker pull "${image}" >/dev/null 2>&1; then
+      echo "Image ${image} validated"
+      # Remove the pulled image to save space
+      docker rmi "${image}" >/dev/null 2>&1 || true
+      return 0
+    else
+      log_error "Failed to pull image ${image}"
+      echo "This may indicate:"
+      echo "  - Image does not exist at ${image}"
+      echo "  - Network connectivity issues"
+      echo "  - Authentication required (set GHCR_USERNAME and GHCR_TOKEN)"
+      return 1
+    fi
   fi
 }
 
@@ -176,36 +274,50 @@ diagnose_deployment() {
 }
 
 ensure_docker() {
+  log_step "Ensuring Docker is installed and running"
+  
   # Check if docker command exists and daemon is reachable
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
-    echo "Docker already installed."
+    echo "Docker already installed and running."
     return 0
   fi
 
   # Docker missing or daemon not running
   if ! command -v apt-get >/dev/null 2>&1; then
-    echo "ERROR: Docker is required for backup image build, but automatic install is only supported on apt-get systems."
+    log_error "Docker is required for backup image build, but automatic install is only supported on apt-get systems (Ubuntu/Debian)."
     exit 1
   fi
 
-  echo "Docker not found; installing..."
+  echo "Docker not found or daemon not running; installing..."
   apt-get update -y
   apt-get install -y docker.io
 
   # Start and enable docker
   if command -v systemctl >/dev/null 2>&1; then
     systemctl enable --now docker
+    sleep 3
   else
     service docker start
+    sleep 3
   fi
 
-  # Re-check docker daemon
-  if ! docker info >/dev/null 2>&1; then
-    echo "ERROR: Docker installation failed or daemon is not running."
-    exit 1
-  fi
+  # Re-check docker daemon with retries
+  local max_attempts=10
+  local attempt=0
+  while [ ${attempt} -lt ${max_attempts} ]; do
+    if docker info >/dev/null 2>&1; then
+      echo "Docker daemon is running."
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    echo "Waiting for docker daemon... (attempt ${attempt}/${max_attempts})"
+    sleep 2
+  done
 
-  echo "Docker started."
+  log_error "Docker installation failed or daemon is not running after ${max_attempts} attempts."
+  echo "Attempting to check docker status:"
+  systemctl status docker || service docker status || true
+  exit 1
 }
 
 PROMPT_IN="/dev/stdin"
@@ -461,8 +573,48 @@ echo "  Let's Encrypt Email: ${LETSENCRYPT_EMAIL}"
 echo "  TLS: enabled via cert-manager (site-based; opt-in)"
 echo ""
 
-# ========= ensure docker is installed =========
+# ========= ensure docker is installed FIRST (before k3s) =========
 ensure_docker
+
+# ========= build backup images BEFORE k3s (docker must be ready) =========
+log_step "Building backup images (before k3s)"
+if [[ ! -d infra/docker/images/backup-service || ! -d infra/docker/images/backup-runner ]]; then
+  log_error "infra/docker/images/backup-service or backup-runner is missing."
+  exit 1
+fi
+
+# Use buildx if available, fallback to legacy builder
+BUILD_CMD="docker build"
+if docker buildx version >/dev/null 2>&1; then
+  echo "Using docker buildx"
+  BUILD_CMD="docker buildx build --load"
+else
+  echo "Using legacy docker build (buildx not available)"
+fi
+
+# Build images with explicit tags (no spaces, proper naming)
+echo "Building backup-service:local..."
+${BUILD_CMD} -t backup-service:local infra/docker/images/backup-service || {
+  log_error "Failed to build backup-service image"
+  exit 1
+}
+
+echo "Building backup-runner:local..."
+${BUILD_CMD} -t backup-runner:local infra/docker/images/backup-runner || {
+  log_error "Failed to build backup-runner image"
+  exit 1
+}
+
+# Verify images exist after build
+if ! docker image inspect backup-service:local >/dev/null 2>&1; then
+  log_error "backup-service:local image not found after build"
+  exit 1
+fi
+if ! docker image inspect backup-runner:local >/dev/null 2>&1; then
+  log_error "backup-runner:local image not found after build"
+  exit 1
+fi
+echo "Backup images built successfully"
 
 # ========= install k3s if needed =========
 log_step "Installing k3s (if needed)"
@@ -773,9 +925,15 @@ kubectl wait --for=condition=Available deployment -n kyverno --all --timeout="${
   exit 1
 }
 
-# Apply policies (idempotent)
+# Apply policies (idempotent) - wait a bit for Kyverno to be fully ready
+echo "Waiting for Kyverno to be fully operational..."
+sleep 5
 echo "Applying Kyverno policies..."
 kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
+
+# Wait a moment for policies to be active
+echo "Waiting for policies to be active..."
+sleep 3
 
 log_step "Installing Flux controllers"
 kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
@@ -805,6 +963,11 @@ kubectl wait --for=condition=Available deployment -n flux-system --all --timeout
 log_step "Applying platform base manifests"
 kubectl apply -f "${PLATFORM_DIR}/namespace.yaml"
 kubectl apply -f "${PLATFORM_DIR}/rbac.yaml"
+# Ensure serviceAccount exists before applying deployment (required for Kyverno policies)
+if ! kubectl get serviceaccount controller-sa -n platform >/dev/null 2>&1; then
+  echo "Creating controller-sa serviceAccount..."
+  kubectl apply -f "${PLATFORM_DIR}/rbac.yaml"
+fi
 kubectl apply -f "${PLATFORM_DIR}/pvc.yaml"
 kubectl apply -f "${PLATFORM_DIR}/platform-secrets.yaml"
 kubectl apply -f "${PLATFORM_DIR}/panel-auth.yaml"
@@ -818,6 +981,33 @@ if [[ -n "${GHCR_USERNAME}" && -n "${GHCR_TOKEN}" ]]; then
     --dry-run=client -o yaml | kubectl apply -f -
 else
   echo "Skipping GHCR pull secret (public images)."
+fi
+
+# Wait for PVCs to be Bound before deploying workloads
+echo "Waiting for platform PVCs to be Bound..."
+wait_for_pvc_bound "platform" "controller-backups-pvc"
+wait_for_pvc_bound "platform" "controller-config-pvc"
+
+# Validate controller image before applying deployment
+log_step "Validating controller image"
+if ! validate_image "${CONTROLLER_IMAGE}"; then
+  log_error "Controller image validation failed: ${CONTROLLER_IMAGE}"
+  echo "Please ensure:"
+  echo "  - Image exists and is accessible"
+  echo "  - Network connectivity is available"
+  echo "  - If using private registry, set GHCR_USERNAME and GHCR_TOKEN"
+  exit 1
+fi
+
+# Validate panel image before applying deployment
+log_step "Validating panel image"
+if ! validate_image "${PANEL_IMAGE}"; then
+  log_error "Panel image validation failed: ${PANEL_IMAGE}"
+  echo "Please ensure:"
+  echo "  - Image exists and is accessible"
+  echo "  - Network connectivity is available"
+  echo "  - If using private registry, set GHCR_USERNAME and GHCR_TOKEN"
+  exit 1
 fi
 
 log_step "Applying platform workloads"
@@ -838,11 +1028,17 @@ kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-svc.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml"
 
+# Wait for infra-db PVC to be Bound
+wait_for_pvc_bound "infra-db" "postgres-pvc"
+
 log_step "Applying DNS (bind9) manifests"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/pvc.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/bind9.yaml"
+
+# Wait for dns-zone PVC to be Bound
+wait_for_pvc_bound "dns-zone" "dns-zones-pvc"
 
 log_step "Applying mailcow manifests"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
@@ -851,73 +1047,28 @@ kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/networkpolicy.yaml"
 
-log_step "Building and importing backup images"
-# Docker should have been installed earlier, but verify
-if ! command -v docker >/dev/null 2>&1; then
-  log_error "docker missing (should have been installed earlier)."
-  echo "Attempting to install docker..."
-  ensure_docker
-fi
-if ! docker info >/dev/null 2>&1; then
-  log_error "docker daemon not running. Attempting to start..."
-  if command -v systemctl >/dev/null 2>&1; then
-    systemctl start docker || service docker start
-    sleep 2
-  fi
-  if ! docker info >/dev/null 2>&1; then
-    log_error "docker daemon still not running after start attempt."
-    exit 1
-  fi
-fi
-if [[ ! -d infra/docker/images/backup-service || ! -d infra/docker/images/backup-runner ]]; then
-  log_error "infra/docker/images/backup-service or backup-runner is missing."
-  exit 1
-fi
-
-# Use buildx if available, fallback to legacy builder
-BUILD_CMD="docker build"
-if docker buildx version >/dev/null 2>&1; then
-  echo "Using docker buildx"
-  BUILD_CMD="docker buildx build --load"
+log_step "Importing backup images to k3s"
+# Images were already built before k3s installation
+# Check if images already imported (idempotent)
+if k3s ctr images list | grep -q "backup-service:local"; then
+  echo "backup-service:local already imported, skipping..."
 else
-  echo "Using legacy docker build (buildx not available)"
+  echo "Importing backup-service:local to k3s..."
+  docker save backup-service:local | k3s ctr images import - || {
+    log_error "Failed to import backup-service:local to k3s"
+    exit 1
+  }
 fi
 
-# Build images with explicit tags (no spaces, proper naming)
-echo "Building backup-service:local..."
-${BUILD_CMD} -t backup-service:local infra/docker/images/backup-service || {
-  log_error "Failed to build backup-service image"
-  exit 1
-}
-
-echo "Building backup-runner:local..."
-${BUILD_CMD} -t backup-runner:local infra/docker/images/backup-runner || {
-  log_error "Failed to build backup-runner image"
-  exit 1
-}
-
-# Verify images exist before import
-if ! docker image inspect backup-service:local >/dev/null 2>&1; then
-  log_error "backup-service:local image not found after build"
-  exit 1
+if k3s ctr images list | grep -q "backup-runner:local"; then
+  echo "backup-runner:local already imported, skipping..."
+else
+  echo "Importing backup-runner:local to k3s..."
+  docker save backup-runner:local | k3s ctr images import - || {
+    log_error "Failed to import backup-runner:local to k3s"
+    exit 1
+  }
 fi
-if ! docker image inspect backup-runner:local >/dev/null 2>&1; then
-  log_error "backup-runner:local image not found after build"
-  exit 1
-fi
-
-# Import to k3s with proper naming
-echo "Importing backup-service:local to k3s..."
-docker save backup-service:local | k3s ctr images import - || {
-  log_error "Failed to import backup-service:local to k3s"
-  exit 1
-}
-
-echo "Importing backup-runner:local to k3s..."
-docker save backup-runner:local | k3s ctr images import - || {
-  log_error "Failed to import backup-runner:local to k3s"
-  exit 1
-}
 
 # Verify images in k3s
 echo "Verifying images in k3s..."
@@ -936,6 +1087,9 @@ backup_apply "${BACKUP_SYSTEM_DIR}/backup-job-templates-configmap.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml"
+
+# Wait for backup-system PVC to be Bound
+wait_for_pvc_bound "backup-system" "backups-pvc"
 
 log_step "Applying ingresses"
 kubectl apply -f "${PLATFORM_DIR}/panel-ingress.yaml"
@@ -1078,6 +1232,7 @@ for i in {1..30}; do
   if kubectl get deployment controller -n platform >/dev/null 2>&1; then
     break
   fi
+  echo "Waiting for controller deployment to appear... (${i}/30)"
   sleep 1
 done
 
@@ -1087,12 +1242,39 @@ if ! kubectl wait --for=condition=Available deployment/controller -n platform --
   exit 1
 fi
 
+# Additional pod-level readiness check
+echo "Verifying controller pods are ready..."
+CONTROLLER_PODS="$(kubectl get pods -n platform -l app=controller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+if [ -z "${CONTROLLER_PODS}" ]; then
+  log_error "No controller pods found"
+  kubectl get pods -n platform -l app=controller || true
+  exit 1
+fi
+
+for pod in ${CONTROLLER_PODS}; do
+  echo "Waiting for pod ${pod} to be ready..."
+  if ! kubectl wait --for=condition=Ready pod/"${pod}" -n platform --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
+    log_error "Controller pod ${pod} did not become ready"
+    echo "=== Pod Status ==="
+    kubectl get pod "${pod}" -n platform -o yaml || true
+    echo ""
+    echo "=== Pod Events ==="
+    kubectl describe pod "${pod}" -n platform || true
+    echo ""
+    echo "=== Pod Logs (last 100 lines) ==="
+    kubectl logs "${pod}" -n platform --tail=100 || true
+    exit 1
+  fi
+done
+echo "All controller pods are ready"
+
 # Wait for panel with proper polling
 echo "Waiting for panel deployment..."
 for i in {1..30}; do
   if kubectl get deployment panel -n platform >/dev/null 2>&1; then
     break
   fi
+  echo "Waiting for panel deployment to appear... (${i}/30)"
   sleep 1
 done
 
@@ -1101,6 +1283,32 @@ if ! kubectl wait --for=condition=Available deployment/panel -n platform --timeo
   diagnose_deployment "platform" "panel"
   exit 1
 fi
+
+# Additional pod-level readiness check for panel
+echo "Verifying panel pods are ready..."
+PANEL_PODS="$(kubectl get pods -n platform -l app=panel -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+if [ -z "${PANEL_PODS}" ]; then
+  log_error "No panel pods found"
+  kubectl get pods -n platform -l app=panel || true
+  exit 1
+fi
+
+for pod in ${PANEL_PODS}; do
+  echo "Waiting for pod ${pod} to be ready..."
+  if ! kubectl wait --for=condition=Ready pod/"${pod}" -n platform --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
+    log_error "Panel pod ${pod} did not become ready"
+    echo "=== Pod Status ==="
+    kubectl get pod "${pod}" -n platform -o yaml || true
+    echo ""
+    echo "=== Pod Events ==="
+    kubectl describe pod "${pod}" -n platform || true
+    echo ""
+    echo "=== Pod Logs (last 100 lines) ==="
+    kubectl logs "${pod}" -n platform --tail=100 || true
+    exit 1
+  fi
+done
+echo "All panel pods are ready"
 
 # Health check verification
 log_step "Verifying health endpoints"
