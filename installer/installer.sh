@@ -1,14 +1,149 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ========= error handling and logging =========
+LAST_COMMAND=""
+STEP_COUNTER=0
+
+log_step() {
+  STEP_COUNTER=$((STEP_COUNTER + 1))
+  echo ""
+  echo "=========================================="
+  echo "STEP ${STEP_COUNTER}: $1"
+  echo "=========================================="
+}
+
+log_error() {
+  echo "ERROR: $1" >&2
+}
+
+# Trap to log failed commands
+trap 'LAST_COMMAND="${BASH_COMMAND}"; LAST_LINE="${LINENO}"' DEBUG
+trap 'if [ $? -ne 0 ]; then
+  log_error "Command failed at line ${LAST_LINE}: ${LAST_COMMAND}"
+  exit 1
+fi' ERR
+
+# Configurable timeouts (can be overridden via env)
+K3S_NODE_READY_TIMEOUT="${K3S_NODE_READY_TIMEOUT:-300}"
+CERT_MANAGER_TIMEOUT="${CERT_MANAGER_TIMEOUT:-180}"
+KYVERNO_TIMEOUT="${KYVERNO_TIMEOUT:-300}"
+FLUX_TIMEOUT="${FLUX_TIMEOUT:-300}"
+DEPLOYMENT_ROLLOUT_TIMEOUT="${DEPLOYMENT_ROLLOUT_TIMEOUT:-300}"
+
 # ========= helpers =========
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
 rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 || true; }
 backup_apply() {
   kubectl apply -f "$1" || {
-    echo "Backup manifests failed to apply; aborting (backup is required)."
+    log_error "Backup manifests failed to apply; aborting (backup is required)."
     exit 1
   }
+}
+
+# Idempotent kubectl apply helper
+safe_apply() {
+  local file="$1"
+  local desc="${2:-${file}}"
+  if ! kubectl apply -f "${file}" 2>&1; then
+    log_error "Failed to apply ${desc}"
+    return 1
+  fi
+  return 0
+}
+
+# Check kubectl context
+check_kubectl_context() {
+  if ! kubectl cluster-info >/dev/null 2>&1; then
+    log_error "kubectl cannot reach cluster. Check k3s installation."
+    return 1
+  fi
+  local current_context
+  current_context="$(kubectl config current-context 2>/dev/null || echo "default")"
+  echo "Current kubectl context: ${current_context}"
+  return 0
+}
+
+# Wait for k3s API to be ready
+wait_for_k3s_api() {
+  log_step "Waiting for k3s API to be ready..."
+  local max_attempts=60
+  local attempt=0
+  while [ ${attempt} -lt ${max_attempts} ]; do
+    if kubectl get --raw=/healthz >/dev/null 2>&1; then
+      echo "k3s API is ready"
+      return 0
+    fi
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+  log_error "k3s API did not become ready after $((max_attempts * 2)) seconds"
+  return 1
+}
+
+# Check if StorageClass exists
+check_storageclass() {
+  local sc_name="${1:-local-path}"
+  if kubectl get storageclass "${sc_name}" >/dev/null 2>&1; then
+    echo "StorageClass '${sc_name}' exists"
+    return 0
+  else
+    log_error "StorageClass '${sc_name}' not found. k3s should provide this by default."
+    echo "Available StorageClasses:"
+    kubectl get storageclass || true
+    return 1
+  fi
+}
+
+# Diagnostic function for deployment failures
+diagnose_deployment() {
+  local namespace="$1"
+  local deployment="$2"
+  
+  echo ""
+  echo "=== DIAGNOSTIC REPORT: ${namespace}/${deployment} ==="
+  echo ""
+  
+  echo "--- Pods in namespace ${namespace} ---"
+  kubectl get pods -n "${namespace}" -o wide || true
+  echo ""
+  
+  echo "--- Deployment status ---"
+  kubectl get deployment "${deployment}" -n "${namespace}" -o yaml || true
+  echo ""
+  
+  echo "--- Deployment events ---"
+  kubectl describe deployment "${deployment}" -n "${namespace}" || true
+  echo ""
+  
+  echo "--- Pod events ---"
+  local pods
+  pods="$(kubectl get pods -n "${namespace}" -l app="${deployment}" -o name 2>/dev/null || true)"
+  if [ -n "${pods}" ]; then
+    for pod in ${pods}; do
+      echo "Pod: ${pod}"
+      kubectl describe "${pod}" -n "${namespace}" || true
+      echo ""
+      echo "Pod logs (last 50 lines):"
+      kubectl logs "${pod}" -n "${namespace}" --tail=50 || true
+      echo ""
+    done
+  fi
+  
+  echo "--- PVC status ---"
+  kubectl get pvc -n "${namespace}" || true
+  echo ""
+  
+  echo "--- Image pull issues check ---"
+  kubectl get events -n "${namespace}" --field-selector reason=Failed --sort-by='.lastTimestamp' | tail -20 || true
+  echo ""
+  
+  echo "--- Kyverno admission check ---"
+  kubectl get events -n "${namespace}" --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp' | grep -i "kyverno\|admission\|deny" | tail -10 || true
+  echo ""
+  
+  echo "=== END DIAGNOSTIC REPORT ==="
+  echo ""
 }
 
 ensure_docker() {
@@ -301,6 +436,7 @@ echo ""
 ensure_docker
 
 # ========= install k3s if needed =========
+log_step "Installing k3s (if needed)"
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "Installing k3s..."
   curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
@@ -308,6 +444,13 @@ fi
 
 need_cmd kubectl
 
+# Wait for k3s API
+wait_for_k3s_api
+
+# Check kubectl context
+check_kubectl_context
+
+log_step "Waiting for node to be registered and ready"
 echo "Waiting for node to be registered..."
 for i in {1..60}; do
   if kubectl get nodes >/dev/null 2>&1 && [[ "$(kubectl get nodes --no-headers 2>/dev/null | wc -l)" -gt 0 ]]; then
@@ -317,7 +460,16 @@ for i in {1..60}; do
 done
 
 echo "Waiting for node to be ready..."
-kubectl wait --for=condition=Ready node --all --timeout=300s
+kubectl wait --for=condition=Ready node --all --timeout="${K3S_NODE_READY_TIMEOUT}s" || {
+  log_error "Node did not become ready within ${K3S_NODE_READY_TIMEOUT}s"
+  kubectl get nodes -o wide
+  exit 1
+}
+
+# Verify StorageClass exists
+check_storageclass "local-path" || {
+  log_error "local-path StorageClass missing. This may cause PVC issues."
+}
 
 # ========= render manifests to temp dir =========
 RENDER_DIR="$(mktemp -d)"
@@ -472,40 +624,66 @@ if grep -q "REPLACE_PANEL_BASICAUTH" "${PLATFORM_DIR}/panel-auth.yaml"; then
 fi
 
 # ========= apply =========
-echo "Applying Traefik entrypoints config..."
+log_step "Applying Traefik entrypoints config"
 kubectl apply -f "${SERVICES_DIR}/traefik"
 
-echo "Installing cert-manager (cluster-wide)..."
+log_step "Installing cert-manager (cluster-wide)"
 kubectl apply -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml"
-kubectl wait --for=condition=Established crd/certificates.cert-manager.io --timeout=180s
-kubectl wait --for=condition=Established crd/certificaterequests.cert-manager.io --timeout=180s
-kubectl wait --for=condition=Established crd/challenges.acme.cert-manager.io --timeout=180s
-kubectl wait --for=condition=Established crd/clusterissuers.cert-manager.io --timeout=180s
-kubectl wait --for=condition=Established crd/issuers.cert-manager.io --timeout=180s
-kubectl wait --for=condition=Established crd/orders.acme.cert-manager.io --timeout=180s
-kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout=180s
-kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout=180s
-kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout=180s
+kubectl wait --for=condition=Established crd/certificates.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s" || {
+  log_error "cert-manager CRDs did not become established"
+  exit 1
+}
+kubectl wait --for=condition=Established crd/certificaterequests.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+kubectl wait --for=condition=Established crd/challenges.acme.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+kubectl wait --for=condition=Established crd/clusterissuers.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+kubectl wait --for=condition=Established crd/issuers.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+kubectl wait --for=condition=Established crd/orders.acme.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s"
+kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s"
+kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s"
 echo "Applying ClusterIssuers."
 if [[ -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" ]]; then
   kubectl apply -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
 fi
 
-echo "Installing Kyverno..."
+log_step "Installing Kyverno (idempotent)"
+# Idempotent namespace creation
 kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
-kubectl create -f "${SERVICES_DIR}/kyverno/install.yaml" --save-config=false || \
-kubectl replace -f "${SERVICES_DIR}/kyverno/install.yaml" --force
-kubectl wait --for=condition=Available deployment -n kyverno --all --timeout=300s
+
+# Idempotent Kyverno installation: use apply instead of create/replace
+# This handles AlreadyExists gracefully
+echo "Applying Kyverno manifests (idempotent)..."
+if kubectl apply -f "${SERVICES_DIR}/kyverno/install.yaml" 2>&1 | grep -q "AlreadyExists\|unchanged"; then
+  echo "Kyverno resources already exist, continuing..."
+else
+  echo "Kyverno resources applied successfully"
+fi
+
+# Wait for Kyverno deployments
+echo "Waiting for Kyverno deployments to be available..."
+kubectl wait --for=condition=Available deployment -n kyverno --all --timeout="${KYVERNO_TIMEOUT}s" || {
+  log_error "Kyverno deployments did not become available within ${KYVERNO_TIMEOUT}s"
+  kubectl get pods -n kyverno
+  kubectl get events -n kyverno --sort-by='.lastTimestamp' | tail -20
+  exit 1
+}
+
+# Apply policies (idempotent)
+echo "Applying Kyverno policies..."
 kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
 
-echo "Installing Flux controllers..."
+log_step "Installing Flux controllers"
 kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
 FLUX_INSTALL_URL="https://github.com/fluxcd/flux2/releases/download/v2.3.0/install.yaml"
 curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"
 kubectl apply -f "${SERVICES_DIR}/flux-system/install.yaml"
-kubectl wait --for=condition=Available deployment -n flux-system --all --timeout=300s
+kubectl wait --for=condition=Available deployment -n flux-system --all --timeout="${FLUX_TIMEOUT}s" || {
+  log_error "Flux deployments did not become available within ${FLUX_TIMEOUT}s"
+  kubectl get pods -n flux-system
+  exit 1
+}
 
-echo "Applying platform base manifests..."
+log_step "Applying platform base manifests"
 kubectl apply -f "${PLATFORM_DIR}/namespace.yaml"
 kubectl apply -f "${PLATFORM_DIR}/rbac.yaml"
 kubectl apply -f "${PLATFORM_DIR}/pvc.yaml"
@@ -523,13 +701,13 @@ else
   echo "Skipping GHCR pull secret (public images)."
 fi
 
-echo "Applying platform workloads..."
+log_step "Applying platform workloads"
 kubectl apply -f "${PLATFORM_DIR}/controller-deploy.yaml"
 kubectl apply -f "${PLATFORM_DIR}/controller-svc.yaml"
 kubectl apply -f "${PLATFORM_DIR}/panel-deploy.yaml"
 kubectl apply -f "${PLATFORM_DIR}/panel-svc.yaml"
 
-echo "Applying infra DB manifests..."
+log_step "Applying infra DB manifests"
 kubectl apply -f "${SERVICES_DIR}/infra-db/namespace.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pvc.yaml"
@@ -541,38 +719,86 @@ kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-svc.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml"
 
-echo "Applying DNS (bind9) manifests..."
+log_step "Applying DNS (bind9) manifests"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/pvc.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/bind9.yaml"
 
-echo "Applying mailcow manifests..."
+log_step "Applying mailcow manifests"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-secrets.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/networkpolicy.yaml"
 
-echo "Building and importing backup images..."
+log_step "Building and importing backup images"
 if ! command -v docker >/dev/null 2>&1; then
-  echo "ERROR: docker missing (should have been installed earlier)."
+  log_error "docker missing (should have been installed earlier)."
   exit 1
 fi
 if ! docker info >/dev/null 2>&1; then
-  echo "ERROR: docker daemon not running."
+  log_error "docker daemon not running."
   exit 1
 fi
 if [[ ! -d infra/docker/images/backup-service || ! -d infra/docker/images/backup-runner ]]; then
-  echo "ERROR: infra/docker/images/backup-service or backup-runner is missing."
+  log_error "infra/docker/images/backup-service or backup-runner is missing."
   exit 1
 fi
-docker build -t backup-service:local infra/docker/images/backup-service
-docker build -t backup-runner:local infra/docker/images/backup-runner
-docker save backup-service:local | k3s ctr images import -
-docker save backup-runner:local | k3s ctr images import -
 
-echo "Applying backup-system manifests..."
+# Use buildx if available, fallback to legacy builder
+BUILD_CMD="docker build"
+if docker buildx version >/dev/null 2>&1; then
+  echo "Using docker buildx"
+  BUILD_CMD="docker buildx build --load"
+else
+  echo "Using legacy docker build (buildx not available)"
+fi
+
+# Build images with explicit tags (no spaces, proper naming)
+echo "Building backup-service:local..."
+${BUILD_CMD} -t backup-service:local infra/docker/images/backup-service || {
+  log_error "Failed to build backup-service image"
+  exit 1
+}
+
+echo "Building backup-runner:local..."
+${BUILD_CMD} -t backup-runner:local infra/docker/images/backup-runner || {
+  log_error "Failed to build backup-runner image"
+  exit 1
+}
+
+# Verify images exist before import
+if ! docker image inspect backup-service:local >/dev/null 2>&1; then
+  log_error "backup-service:local image not found after build"
+  exit 1
+fi
+if ! docker image inspect backup-runner:local >/dev/null 2>&1; then
+  log_error "backup-runner:local image not found after build"
+  exit 1
+fi
+
+# Import to k3s with proper naming
+echo "Importing backup-service:local to k3s..."
+docker save backup-service:local | k3s ctr images import - || {
+  log_error "Failed to import backup-service:local to k3s"
+  exit 1
+}
+
+echo "Importing backup-runner:local to k3s..."
+docker save backup-runner:local | k3s ctr images import - || {
+  log_error "Failed to import backup-runner:local to k3s"
+  exit 1
+}
+
+# Verify images in k3s
+echo "Verifying images in k3s..."
+k3s ctr images list | grep -E "(backup-service|backup-runner)" || {
+  log_error "Backup images not found in k3s after import"
+  exit 1
+}
+
+log_step "Applying backup-system manifests"
 backup_apply "${BACKUP_SYSTEM_DIR}/namespace.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/serviceaccount.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/rbac.yaml"
@@ -583,7 +809,7 @@ backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml"
 
-echo "Applying ingresses..."
+log_step "Applying ingresses"
 kubectl apply -f "${PLATFORM_DIR}/panel-ingress.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/traefik-tcp"
@@ -715,9 +941,46 @@ EOF
 fi
 
 # ========= wait for readiness =========
-echo "Waiting for controller and panel to become available..."
-kubectl wait --for=condition=Available deployment/controller -n platform --timeout=180s
-kubectl wait --for=condition=Available deployment/panel -n platform --timeout=180s
+log_step "Waiting for controller and panel to become available"
+
+# Wait for controller with diagnostic on failure
+echo "Waiting for controller deployment..."
+if ! kubectl wait --for=condition=Available deployment/controller -n platform --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
+  log_error "Controller deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
+  diagnose_deployment "platform" "controller"
+  exit 1
+fi
+
+# Wait for panel
+echo "Waiting for panel deployment..."
+if ! kubectl wait --for=condition=Available deployment/panel -n platform --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
+  log_error "Panel deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
+  diagnose_deployment "platform" "panel"
+  exit 1
+fi
+
+# Health check verification
+log_step "Verifying health endpoints"
+echo "Checking controller health endpoint..."
+CONTROLLER_POD="$(kubectl get pod -n platform -l app=controller -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+if [ -n "${CONTROLLER_POD}" ]; then
+  if kubectl exec -n platform "${CONTROLLER_POD}" -- wget -q -O- http://localhost:8080/health >/dev/null 2>&1; then
+    echo "Controller health endpoint is responding"
+  else
+    echo "WARNING: Controller health endpoint check failed (may be starting up)"
+  fi
+fi
+
+# Final status check
+log_step "Final status check"
+echo "All pods in platform namespace:"
+kubectl get pods -n platform -o wide
+echo ""
+echo "All pods in backup-system namespace:"
+kubectl get pods -n backup-system -o wide 2>/dev/null || echo "backup-system namespace not found or no pods"
+echo ""
+echo "PVC status in platform namespace:"
+kubectl get pvc -n platform
 
 echo ""
 echo "Done."
