@@ -28,9 +28,15 @@ ARCHIVE_URL="https://github.com/${OWNER}/${REPO}/archive/${REF}.tar.gz"
 ARCHIVE_PATH="${TMP_DIR}/repo.tar.gz"
 
 echo "Downloading ${OWNER}/${REPO}@${REF}..."
-curl -fsSL "${ARCHIVE_URL}" -o "${ARCHIVE_PATH}"
+if ! curl -fsSL "${ARCHIVE_URL}" -o "${ARCHIVE_PATH}"; then
+  echo "ERROR: Failed to download archive from ${ARCHIVE_URL}"
+  exit 1
+fi
 
-tar -xzf "${ARCHIVE_PATH}" -C "${TMP_DIR}"
+if ! tar -xzf "${ARCHIVE_PATH}" -C "${TMP_DIR}"; then
+  echo "ERROR: Failed to extract archive"
+  exit 1
+fi
 
 EXTRACTED_DIR="${TMP_DIR}/${REPO}-${REF}"
 if [[ ! -d "${EXTRACTED_DIR}" ]]; then
@@ -43,8 +49,20 @@ if [[ -z "${EXTRACTED_DIR}" || ! -d "${EXTRACTED_DIR}" ]]; then
   exit 1
 fi
 
-cd "${EXTRACTED_DIR}"
-chmod +x installer/installer.sh
+if ! cd "${EXTRACTED_DIR}"; then
+  echo "ERROR: Failed to change directory to ${EXTRACTED_DIR}"
+  exit 1
+fi
+
+if [[ ! -f installer/installer.sh ]]; then
+  echo "ERROR: installer/installer.sh not found in extracted archive."
+  exit 1
+fi
+
+if ! chmod +x installer/installer.sh; then
+  echo "ERROR: Failed to make installer/installer.sh executable"
+  exit 1
+fi
 
 echo "Starting installer..."
 exec ${SUDO} bash installer/installer.sh "$@"

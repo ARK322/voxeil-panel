@@ -33,6 +33,10 @@ IMAGE_VALIDATION_TIMEOUT="${IMAGE_VALIDATION_TIMEOUT:-60}"
 # ========= helpers =========
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
 rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 || true; }
+# Escape special characters for sed replacement string (| delimiter used, so only & needs escaping)
+sed_escape() {
+  echo "$1" | sed 's/&/\\&/g'
+}
 backup_apply() {
   kubectl apply -f "$1" || {
     log_error "Backup manifests failed to apply; aborting (backup is required)."
@@ -505,10 +509,10 @@ if [[ -z "${MAILCOW_DOMAIN}" ]]; then
 fi
 
 CONTROLLER_API_KEY="$(rand)"
-PANEL_ADMIN_PASSWORD="${PANEL_ADMIN_PASSWORD:-$(rand)}"
+# PANEL_ADMIN_PASSWORD already set from user input above (line 461-468)
 POSTGRES_ADMIN_PASSWORD="${POSTGRES_ADMIN_PASSWORD:-${POSTGRES_PASSWORD:-$(rand)}}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-${POSTGRES_ADMIN_PASSWORD}}"
-POSTGRES_HOST="${POSTGRES_HOST:-postgres.infra.svc.cluster.local}"
+POSTGRES_HOST="${POSTGRES_HOST:-postgres.infra-db.svc.cluster.local}"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
 POSTGRES_ADMIN_USER="${POSTGRES_ADMIN_USER:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-postgres}"
@@ -550,6 +554,16 @@ ensure_docker
 log_step "Building backup images (before k3s)"
 if [[ ! -d infra/docker/images/backup-service || ! -d infra/docker/images/backup-runner ]]; then
   log_error "infra/docker/images/backup-service or backup-runner is missing."
+  exit 1
+fi
+
+# Check Dockerfile existence
+if [[ ! -f infra/docker/images/backup-service/Dockerfile ]]; then
+  log_error "infra/docker/images/backup-service/Dockerfile is missing."
+  exit 1
+fi
+if [[ ! -f infra/docker/images/backup-runner/Dockerfile ]]; then
+  log_error "infra/docker/images/backup-runner/Dockerfile is missing."
   exit 1
 fi
 
@@ -645,6 +659,18 @@ fi
 
 # ========= render manifests to temp dir =========
 RENDER_DIR="$(mktemp -d)"
+if [[ ! -d "${RENDER_DIR}" ]]; then
+  log_error "Failed to create temporary directory"
+  exit 1
+fi
+# Cleanup temp dir on exit
+cleanup_render_dir() {
+  if [[ -n "${RENDER_DIR:-}" && -d "${RENDER_DIR}" ]]; then
+    rm -rf "${RENDER_DIR}" || true
+  fi
+}
+trap cleanup_render_dir EXIT
+
 BACKUP_SYSTEM_NAME="backup-system"
 SERVICES_DIR="${RENDER_DIR}/services"
 TEMPLATES_DIR="${RENDER_DIR}/templates"
@@ -691,9 +717,18 @@ if [[ ! -d infra/k8s/templates ]]; then
   echo "infra/k8s/templates is missing; run from the repository root or download the full archive."
   exit 1
 fi
-mkdir -p "${SERVICES_DIR}"
-cp -r infra/k8s/services/* "${SERVICES_DIR}/"
-cp -r infra/k8s/templates "${TEMPLATES_DIR}"
+if ! mkdir -p "${SERVICES_DIR}"; then
+  log_error "Failed to create services directory: ${SERVICES_DIR}"
+  exit 1
+fi
+if ! cp -r infra/k8s/services/* "${SERVICES_DIR}/"; then
+  log_error "Failed to copy services directory"
+  exit 1
+fi
+if ! cp -r infra/k8s/templates "${TEMPLATES_DIR}"; then
+  log_error "Failed to copy templates directory"
+  exit 1
+fi
 
 if command -v htpasswd >/dev/null 2>&1; then
   bcrypt_line() {
@@ -764,28 +799,75 @@ stringData:
 EOF
 
 echo "Templating manifests..."
+# Check critical manifest files exist before templating
+REQUIRED_MANIFESTS=(
+  "${PLATFORM_DIR}/controller-deploy.yaml"
+  "${PLATFORM_DIR}/panel-deploy.yaml"
+  "${PLATFORM_DIR}/panel-ingress.yaml"
+  "${PLATFORM_DIR}/panel-auth.yaml"
+  "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
+  "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
+  "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
+  "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
+  "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
+  "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
+  "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+  "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
+  "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
+  "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
+)
+
+for manifest in "${REQUIRED_MANIFESTS[@]}"; do
+  if [[ ! -f "${manifest}" ]]; then
+    log_error "Required manifest file missing: ${manifest}"
+    exit 1
+  fi
+done
+
 IMAGE_BASE="ghcr.io/${GHCR_OWNER}/${GHCR_REPO}"
-if grep -rl "REPLACE_IMAGE_BASE" "${BACKUP_SYSTEM_DIR}" >/dev/null 2>&1; then
-  grep -rl "REPLACE_IMAGE_BASE" "${BACKUP_SYSTEM_DIR}" | xargs sed -i "s|REPLACE_IMAGE_BASE|${IMAGE_BASE}|g"
+# Escape values for sed (only & needs escaping with | delimiter)
+IMAGE_BASE_ESC="$(sed_escape "${IMAGE_BASE}")"
+CONTROLLER_IMAGE_ESC="$(sed_escape "${CONTROLLER_IMAGE}")"
+PANEL_IMAGE_ESC="$(sed_escape "${PANEL_IMAGE}")"
+PANEL_DOMAIN_ESC="$(sed_escape "${PANEL_DOMAIN}")"
+PANEL_TLS_ISSUER_ESC="$(sed_escape "${PANEL_TLS_ISSUER}")"
+PANEL_BASICAUTH_B64_ESC="$(sed_escape "${PANEL_BASICAUTH_B64}")"
+LETSENCRYPT_EMAIL_ESC="$(sed_escape "${LETSENCRYPT_EMAIL}")"
+POSTGRES_PASSWORD_ESC="$(sed_escape "${POSTGRES_PASSWORD}")"
+PGADMIN_EMAIL_ESC="$(sed_escape "${PGADMIN_EMAIL}")"
+PGADMIN_PASSWORD_ESC="$(sed_escape "${PGADMIN_PASSWORD}")"
+PGADMIN_DOMAIN_ESC="$(sed_escape "${PGADMIN_DOMAIN}")"
+PGADMIN_BASICAUTH_ESC="$(sed_escape "${PGADMIN_BASICAUTH}")"
+MAILCOW_DOMAIN_ESC="$(sed_escape "${MAILCOW_DOMAIN}")"
+MAILCOW_TLS_ISSUER_ESC="$(sed_escape "${MAILCOW_TLS_ISSUER}")"
+MAILCOW_BASICAUTH_ESC="$(sed_escape "${MAILCOW_BASICAUTH}")"
+TSIG_SECRET_ESC="$(sed_escape "${TSIG_SECRET}")"
+BACKUP_TOKEN_ESC="$(sed_escape "${BACKUP_TOKEN}")"
+
+# Use find + xargs with proper handling for empty results (compatible with both GNU and BSD xargs)
+FILES_WITH_PLACEHOLDER="$(find "${BACKUP_SYSTEM_DIR}" -type f -exec grep -l "REPLACE_IMAGE_BASE" {} + 2>/dev/null || true)"
+if [[ -n "${FILES_WITH_PLACEHOLDER}" ]]; then
+  echo "${FILES_WITH_PLACEHOLDER}" | xargs sed -i "s|REPLACE_IMAGE_BASE|${IMAGE_BASE_ESC}|g"
 fi
-sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE}|g" "${PLATFORM_DIR}/controller-deploy.yaml"
-sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE}|g" "${PLATFORM_DIR}/panel-deploy.yaml"
-sed -i "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
-sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
-sed -i "s|REPLACE_PANEL_BASICAUTH|${PANEL_BASICAUTH_B64}|g" "${PLATFORM_DIR}/panel-auth.yaml"
-sed -i "s|REPLACE_LETSENCRYPT_EMAIL|${LETSENCRYPT_EMAIL}|g" "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
-sed -i "s|REPLACE_POSTGRES_PASSWORD|${POSTGRES_PASSWORD}|g" "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
-sed -i "s|REPLACE_PGADMIN_EMAIL|${PGADMIN_EMAIL}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
-sed -i "s|REPLACE_PGADMIN_PASSWORD|${PGADMIN_PASSWORD}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
-sed -i "s|REPLACE_PGADMIN_DOMAIN|${PGADMIN_DOMAIN}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
-sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
-sed -i "s|REPLACE_PGADMIN_BASICAUTH|${PGADMIN_BASICAUTH}|g" "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
-sed -i "s|REPLACE_MAILCOW_HOSTNAME|${MAILCOW_DOMAIN}|g" "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
-sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
-sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
-sed -i "s|REPLACE_MAILCOW_BASICAUTH|${MAILCOW_BASICAUTH}|g" "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
-sed -i "s|REPLACE_ME_BASE64LIKE|${TSIG_SECRET}|g" "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
-sed -i "s|REPLACE_BACKUP_TOKEN|${BACKUP_TOKEN}|g" "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
+
+sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE_ESC}|g" "${PLATFORM_DIR}/controller-deploy.yaml"
+sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE_ESC}|g" "${PLATFORM_DIR}/panel-deploy.yaml"
+sed -i "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN_ESC}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
+sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER_ESC}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
+sed -i "s|REPLACE_PANEL_BASICAUTH|${PANEL_BASICAUTH_B64_ESC}|g" "${PLATFORM_DIR}/panel-auth.yaml"
+sed -i "s|REPLACE_LETSENCRYPT_EMAIL|${LETSENCRYPT_EMAIL_ESC}|g" "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
+sed -i "s|REPLACE_POSTGRES_PASSWORD|${POSTGRES_PASSWORD_ESC}|g" "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
+sed -i "s|REPLACE_PGADMIN_EMAIL|${PGADMIN_EMAIL_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
+sed -i "s|REPLACE_PGADMIN_PASSWORD|${PGADMIN_PASSWORD_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
+sed -i "s|REPLACE_PGADMIN_DOMAIN|${PGADMIN_DOMAIN_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
+sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
+sed -i "s|REPLACE_PGADMIN_BASICAUTH|${PGADMIN_BASICAUTH_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
+sed -i "s|REPLACE_MAILCOW_HOSTNAME|${MAILCOW_DOMAIN_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
+sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+sed -i "s|REPLACE_MAILCOW_BASICAUTH|${MAILCOW_BASICAUTH_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
+sed -i "s|REPLACE_ME_BASE64LIKE|${TSIG_SECRET_ESC}|g" "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
+sed -i "s|REPLACE_BACKUP_TOKEN|${BACKUP_TOKEN_ESC}|g" "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 if grep -rl "REPLACE_IMAGE_BASE" "${BACKUP_SYSTEM_DIR}" >/dev/null 2>&1; then
   echo "ERROR: REPLACE_IMAGE_BASE placeholder not fully replaced in backup-system manifests."
   exit 1
@@ -797,9 +879,17 @@ fi
 
 # ========= apply =========
 log_step "Applying Traefik entrypoints config"
+if [[ ! -d "${SERVICES_DIR}/traefik" ]]; then
+  log_error "Traefik directory missing: ${SERVICES_DIR}/traefik"
+  exit 1
+fi
 kubectl apply -f "${SERVICES_DIR}/traefik"
 
 log_step "Installing cert-manager (cluster-wide)"
+if [[ ! -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml" ]]; then
+  log_error "cert-manager.yaml missing: ${SERVICES_DIR}/cert-manager/cert-manager.yaml"
+  exit 1
+fi
 kubectl apply -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml" || {
   log_error "Failed to apply cert-manager manifests"
   exit 1
@@ -901,7 +991,14 @@ sleep 3
 log_step "Installing Flux controllers"
 kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
 FLUX_INSTALL_URL="https://github.com/fluxcd/flux2/releases/download/v2.3.0/install.yaml"
-curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"
+if ! curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"; then
+  log_error "Failed to download Flux install.yaml from ${FLUX_INSTALL_URL}"
+  exit 1
+fi
+if [[ ! -f "${SERVICES_DIR}/flux-system/install.yaml" ]] || [[ ! -s "${SERVICES_DIR}/flux-system/install.yaml" ]]; then
+  log_error "Flux install.yaml is missing or empty after download"
+  exit 1
+fi
 kubectl apply -f "${SERVICES_DIR}/flux-system/install.yaml" || {
   log_error "Failed to apply Flux manifests"
   exit 1
@@ -1096,6 +1193,22 @@ echo "mailcow-mysql StatefulSet is ready"
 
 log_step "Importing backup images to k3s"
 # Images were already built before k3s installation
+# Verify images exist before import
+if ! docker image inspect backup-service:local >/dev/null 2>&1; then
+  log_error "backup-service:local image not found. Cannot import to k3s."
+  exit 1
+fi
+if ! docker image inspect backup-runner:local >/dev/null 2>&1; then
+  log_error "backup-runner:local image not found. Cannot import to k3s."
+  exit 1
+fi
+
+# Check k3s command exists
+if ! command -v k3s >/dev/null 2>&1; then
+  log_error "k3s command not found. Cannot import images."
+  exit 1
+fi
+
 # Check if images already imported (idempotent)
 if k3s ctr images list | grep -q "backup-service:local"; then
   echo "backup-service:local already imported, skipping..."
@@ -1409,10 +1522,11 @@ log_step "Verifying health endpoints"
 echo "Checking controller health endpoint..."
 CONTROLLER_POD="$(kubectl get pod -n platform -l app=controller -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 if [ -n "${CONTROLLER_POD}" ]; then
-  if kubectl exec -n platform "${CONTROLLER_POD}" -- wget -q -O- http://localhost:8080/health >/dev/null 2>&1; then
+  # Try wget first, fallback to curl if wget not available
+  if kubectl exec -n platform "${CONTROLLER_POD}" -- sh -c "command -v wget >/dev/null 2>&1 && wget -q -O- http://localhost:8080/health || (command -v curl >/dev/null 2>&1 && curl -sf http://localhost:8080/health || exit 1)" >/dev/null 2>&1; then
     echo "Controller health endpoint is responding"
   else
-    echo "WARNING: Controller health endpoint check failed (may be starting up)"
+    echo "WARNING: Controller health endpoint check failed (may be starting up or wget/curl not available)"
   fi
 fi
 

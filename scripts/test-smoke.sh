@@ -103,11 +103,11 @@ echo "5. Checking NetworkPolicy configuration..."
 if kubectl get networkpolicy postgres-ingress -n infra-db >/dev/null 2>&1; then
     test_pass "infra-db NetworkPolicy exists"
     
-    # Check if it allows tenant namespaces
-    if kubectl get networkpolicy postgres-ingress -n infra-db -o yaml | grep -q "voxeil.io/tenant"; then
-        test_pass "infra-db NetworkPolicy allows tenant namespaces"
+    # Check if it allows user namespaces
+    if kubectl get networkpolicy postgres-ingress -n infra-db -o yaml | grep -q "voxeil.io/user"; then
+        test_pass "infra-db NetworkPolicy allows user namespaces"
     else
-        test_warn "infra-db NetworkPolicy may not allow tenant namespaces (check manually)"
+        test_warn "infra-db NetworkPolicy may not allow user namespaces (check manually)"
     fi
 else
     test_fail "infra-db NetworkPolicy not found"
@@ -226,11 +226,15 @@ else
     TEST_PASSWORD="Test123!Smoke"
     TEST_EMAIL="smoketest@example.com"
     
-    USER_RESPONSE="$(kubectl run -it --rm --restart=Never curl-test --image=curlimages/curl:latest -n platform -- \
+    # Cleanup any existing pod first
+    kubectl delete pod curl-test -n platform --ignore-not-found=true >/dev/null 2>&1 || true
+    USER_RESPONSE="$(kubectl run --rm --restart=Never curl-test --image=curlimages/curl:latest -n platform -- \
         curl -s -X POST "http://${CONTROLLER_SVC}/admin/users" \
         -H "Authorization: Bearer ${CONTROLLER_TOKEN}" \
         -H "Content-Type: application/json" \
         -d "{\"username\":\"${TEST_USERNAME}\",\"password\":\"${TEST_PASSWORD}\",\"email\":\"${TEST_EMAIL}\",\"role\":\"user\"}" 2>/dev/null || echo '{"ok":false}')"
+    # Ensure pod is cleaned up even if command fails
+    kubectl delete pod curl-test -n platform --ignore-not-found=true >/dev/null 2>&1 || true
     
     if echo "${USER_RESPONSE}" | grep -q '"ok":true'; then
         test_pass "User created successfully"
@@ -274,11 +278,15 @@ else
             
             # Create first site
             SITE1_DOMAIN="test1-${TEST_USERNAME}.example.com"
-            SITE1_RESPONSE="$(kubectl run -it --rm --restart=Never curl-test1 --image=curlimages/curl:latest -n platform -- \
+            # Cleanup any existing pod first
+            kubectl delete pod curl-test1 -n platform --ignore-not-found=true >/dev/null 2>&1 || true
+            SITE1_RESPONSE="$(kubectl run --rm --restart=Never curl-test1 --image=curlimages/curl:latest -n platform -- \
                 curl -s -X POST "http://${CONTROLLER_SVC}/sites" \
                 -H "Authorization: Bearer ${CONTROLLER_TOKEN}" \
                 -H "Content-Type: application/json" \
                 -d "{\"domain\":\"${SITE1_DOMAIN}\",\"cpu\":1,\"ramGi\":1,\"diskGi\":5}" 2>/dev/null || echo '{"ok":false}')"
+            # Ensure pod is cleaned up
+            kubectl delete pod curl-test1 -n platform --ignore-not-found=true >/dev/null 2>&1 || true
             
             if echo "${SITE1_RESPONSE}" | grep -q '"slug"'; then
                 test_pass "First site created successfully"
@@ -308,11 +316,15 @@ else
             
             # Create second site
             SITE2_DOMAIN="test2-${TEST_USERNAME}.example.com"
-            SITE2_RESPONSE="$(kubectl run -it --rm --restart=Never curl-test2 --image=curlimages/curl:latest -n platform -- \
+            # Cleanup any existing pod first
+            kubectl delete pod curl-test2 -n platform --ignore-not-found=true >/dev/null 2>&1 || true
+            SITE2_RESPONSE="$(kubectl run --rm --restart=Never curl-test2 --image=curlimages/curl:latest -n platform -- \
                 curl -s -X POST "http://${CONTROLLER_SVC}/sites" \
                 -H "Authorization: Bearer ${CONTROLLER_TOKEN}" \
                 -H "Content-Type: application/json" \
                 -d "{\"domain\":\"${SITE2_DOMAIN}\",\"cpu\":1,\"ramGi\":1,\"diskGi\":5}" 2>/dev/null || echo '{"ok":false}')"
+            # Ensure pod is cleaned up
+            kubectl delete pod curl-test2 -n platform --ignore-not-found=true >/dev/null 2>&1 || true
             
             if echo "${SITE2_RESPONSE}" | grep -q '"slug"'; then
                 test_pass "Second site created successfully"
