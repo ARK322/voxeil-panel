@@ -101,48 +101,77 @@ diagnose_deployment() {
   local deployment="$2"
   
   echo ""
-  echo "=== DIAGNOSTIC REPORT: ${namespace}/${deployment} ==="
+  echo "=========================================="
+  echo "DIAGNOSTIC REPORT: ${namespace}/${deployment}"
+  echo "=========================================="
   echo ""
   
-  echo "--- Pods in namespace ${namespace} ---"
+  echo "--- All pods in namespace ${namespace} ---"
   kubectl get pods -n "${namespace}" -o wide || true
   echo ""
   
   echo "--- Deployment status ---"
-  kubectl get deployment "${deployment}" -n "${namespace}" -o yaml || true
+  kubectl get deployment "${deployment}" -n "${namespace}" || true
   echo ""
   
-  echo "--- Deployment events ---"
+  echo "--- Deployment describe (full) ---"
   kubectl describe deployment "${deployment}" -n "${namespace}" || true
   echo ""
   
-  echo "--- Pod events ---"
+  echo "--- Deployment YAML (for inspection) ---"
+  kubectl get deployment "${deployment}" -n "${namespace}" -o yaml || true
+  echo ""
+  
+  echo "--- Pod details ---"
   local pods
   pods="$(kubectl get pods -n "${namespace}" -l app="${deployment}" -o name 2>/dev/null || true)"
   if [ -n "${pods}" ]; then
     for pod in ${pods}; do
-      echo "Pod: ${pod}"
+      echo "--- Pod: ${pod} ---"
       kubectl describe "${pod}" -n "${namespace}" || true
       echo ""
-      echo "Pod logs (last 50 lines):"
-      kubectl logs "${pod}" -n "${namespace}" --tail=50 || true
+      echo "--- Pod logs (last 200 lines) ---"
+      kubectl logs "${pod}" -n "${namespace}" --tail=200 || true
       echo ""
     done
+  else
+    echo "No pods found with label app=${deployment}"
+    echo "All pods in namespace:"
+    kubectl get pods -n "${namespace}" || true
   fi
+  echo ""
   
   echo "--- PVC status ---"
   kubectl get pvc -n "${namespace}" || true
   echo ""
   
-  echo "--- Image pull issues check ---"
+  echo "--- StorageClass check ---"
+  kubectl get storageclass || true
+  echo ""
+  
+  echo "--- Recent events in namespace (last 50) ---"
+  kubectl get events -n "${namespace}" --sort-by='.lastTimestamp' | tail -50 || true
+  echo ""
+  
+  echo "--- Image pull errors ---"
   kubectl get events -n "${namespace}" --field-selector reason=Failed --sort-by='.lastTimestamp' | tail -20 || true
   echo ""
   
-  echo "--- Kyverno admission check ---"
-  kubectl get events -n "${namespace}" --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp' | grep -i "kyverno\|admission\|deny" | tail -10 || true
+  echo "--- Kyverno admission denials ---"
+  kubectl get events -n "${namespace}" --sort-by='.lastTimestamp' | grep -iE "kyverno|admission|deny|forbidden" | tail -20 || true
   echo ""
   
-  echo "=== END DIAGNOSTIC REPORT ==="
+  echo "--- ServiceAccount and RBAC check ---"
+  kubectl get serviceaccount -n "${namespace}" || true
+  echo ""
+  
+  echo "--- Secrets check (platform-secrets must exist) ---"
+  kubectl get secrets -n "${namespace}" || true
+  echo ""
+  
+  echo "=========================================="
+  echo "END DIAGNOSTIC REPORT"
+  echo "=========================================="
   echo ""
 }
 
@@ -452,17 +481,36 @@ check_kubectl_context
 
 log_step "Waiting for node to be registered and ready"
 echo "Waiting for node to be registered..."
+NODE_REGISTERED=false
 for i in {1..60}; do
   if kubectl get nodes >/dev/null 2>&1 && [[ "$(kubectl get nodes --no-headers 2>/dev/null | wc -l)" -gt 0 ]]; then
+    NODE_REGISTERED=true
     break
   fi
   sleep 2
 done
 
-echo "Waiting for node to be ready..."
+if [[ "${NODE_REGISTERED}" != "true" ]]; then
+  log_error "Node was not registered after 120 seconds"
+  kubectl get nodes -o wide || true
+  exit 1
+fi
+
+echo "Node registered, waiting for Ready condition..."
+# Poll first to ensure node resource exists before wait
+for i in {1..30}; do
+  if kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
+    break
+  fi
+  sleep 1
+done
+
 kubectl wait --for=condition=Ready node --all --timeout="${K3S_NODE_READY_TIMEOUT}s" || {
   log_error "Node did not become ready within ${K3S_NODE_READY_TIMEOUT}s"
+  echo "Node status:"
   kubectl get nodes -o wide
+  echo "Node describe:"
+  kubectl describe nodes || true
   exit 1
 }
 
@@ -628,9 +676,23 @@ log_step "Applying Traefik entrypoints config"
 kubectl apply -f "${SERVICES_DIR}/traefik"
 
 log_step "Installing cert-manager (cluster-wide)"
-kubectl apply -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml"
+kubectl apply -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml" || {
+  log_error "Failed to apply cert-manager manifests"
+  exit 1
+}
+
+# Wait for CRDs with polling
+echo "Waiting for cert-manager CRDs..."
+for i in {1..30}; do
+  if kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
 kubectl wait --for=condition=Established crd/certificates.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s" || {
   log_error "cert-manager CRDs did not become established"
+  kubectl get crd | grep cert-manager || true
   exit 1
 }
 kubectl wait --for=condition=Established crd/certificaterequests.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
@@ -638,9 +700,31 @@ kubectl wait --for=condition=Established crd/challenges.acme.cert-manager.io --t
 kubectl wait --for=condition=Established crd/clusterissuers.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
 kubectl wait --for=condition=Established crd/issuers.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
 kubectl wait --for=condition=Established crd/orders.acme.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
-kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s"
-kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s"
-kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s"
+
+# Wait for deployments with polling
+echo "Waiting for cert-manager deployments..."
+for i in {1..30}; do
+  if kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
+kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s" || {
+  log_error "cert-manager deployment did not become available"
+  kubectl get pods -n cert-manager
+  exit 1
+}
+kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s" || {
+  log_error "cert-manager-webhook deployment did not become available"
+  kubectl get pods -n cert-manager
+  exit 1
+}
+kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s" || {
+  log_error "cert-manager-cainjector deployment did not become available"
+  kubectl get pods -n cert-manager
+  exit 1
+}
 echo "Applying ClusterIssuers."
 if [[ -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" ]]; then
   kubectl apply -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
@@ -650,21 +734,42 @@ log_step "Installing Kyverno (idempotent)"
 # Idempotent namespace creation
 kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
 
-# Idempotent Kyverno installation: use apply instead of create/replace
-# This handles AlreadyExists gracefully
+# Idempotent Kyverno installation: use apply only, tolerate AlreadyExists
 echo "Applying Kyverno manifests (idempotent)..."
-if kubectl apply -f "${SERVICES_DIR}/kyverno/install.yaml" 2>&1 | grep -q "AlreadyExists\|unchanged"; then
-  echo "Kyverno resources already exist, continuing..."
-else
+KYVERNO_APPLY_OUTPUT="$(kubectl apply -f "${SERVICES_DIR}/kyverno/install.yaml" 2>&1)" || {
+  KYVERNO_APPLY_EXIT=$?
+  # Check if error is AlreadyExists (acceptable for idempotent install)
+  if echo "${KYVERNO_APPLY_OUTPUT}" | grep -q "AlreadyExists"; then
+    echo "Kyverno resources already exist (idempotent), continuing..."
+  else
+    log_error "Failed to apply Kyverno manifests:"
+    echo "${KYVERNO_APPLY_OUTPUT}" >&2
+    exit ${KYVERNO_APPLY_EXIT}
+  fi
+}
+# If apply succeeded, show status
+if echo "${KYVERNO_APPLY_OUTPUT}" | grep -qE "(created|configured|unchanged)"; then
   echo "Kyverno resources applied successfully"
 fi
 
-# Wait for Kyverno deployments
+# Wait for Kyverno deployments with proper polling
 echo "Waiting for Kyverno deployments to be available..."
+# Poll first to ensure deployments exist
+for i in {1..30}; do
+  if kubectl get deployments -n kyverno --no-headers 2>/dev/null | grep -q .; then
+    break
+  fi
+  sleep 1
+done
+
 kubectl wait --for=condition=Available deployment -n kyverno --all --timeout="${KYVERNO_TIMEOUT}s" || {
   log_error "Kyverno deployments did not become available within ${KYVERNO_TIMEOUT}s"
-  kubectl get pods -n kyverno
-  kubectl get events -n kyverno --sort-by='.lastTimestamp' | tail -20
+  echo "=== Kyverno Diagnostic ==="
+  kubectl get pods -n kyverno -o wide
+  echo ""
+  kubectl get deployments -n kyverno
+  echo ""
+  kubectl get events -n kyverno --sort-by='.lastTimestamp' | tail -30
   exit 1
 }
 
@@ -676,10 +781,24 @@ log_step "Installing Flux controllers"
 kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
 FLUX_INSTALL_URL="https://github.com/fluxcd/flux2/releases/download/v2.3.0/install.yaml"
 curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"
-kubectl apply -f "${SERVICES_DIR}/flux-system/install.yaml"
+kubectl apply -f "${SERVICES_DIR}/flux-system/install.yaml" || {
+  log_error "Failed to apply Flux manifests"
+  exit 1
+}
+
+# Poll for deployments before wait
+echo "Waiting for Flux deployments..."
+for i in {1..30}; do
+  if kubectl get deployments -n flux-system --no-headers 2>/dev/null | grep -q .; then
+    break
+  fi
+  sleep 1
+done
+
 kubectl wait --for=condition=Available deployment -n flux-system --all --timeout="${FLUX_TIMEOUT}s" || {
   log_error "Flux deployments did not become available within ${FLUX_TIMEOUT}s"
-  kubectl get pods -n flux-system
+  kubectl get pods -n flux-system -o wide
+  kubectl get events -n flux-system --sort-by='.lastTimestamp' | tail -20
   exit 1
 }
 
@@ -733,13 +852,22 @@ kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/networkpolicy.yaml"
 
 log_step "Building and importing backup images"
+# Docker should have been installed earlier, but verify
 if ! command -v docker >/dev/null 2>&1; then
   log_error "docker missing (should have been installed earlier)."
-  exit 1
+  echo "Attempting to install docker..."
+  ensure_docker
 fi
 if ! docker info >/dev/null 2>&1; then
-  log_error "docker daemon not running."
-  exit 1
+  log_error "docker daemon not running. Attempting to start..."
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl start docker || service docker start
+    sleep 2
+  fi
+  if ! docker info >/dev/null 2>&1; then
+    log_error "docker daemon still not running after start attempt."
+    exit 1
+  fi
 fi
 if [[ ! -d infra/docker/images/backup-service || ! -d infra/docker/images/backup-runner ]]; then
   log_error "infra/docker/images/backup-service or backup-runner is missing."
@@ -943,16 +1071,31 @@ fi
 # ========= wait for readiness =========
 log_step "Waiting for controller and panel to become available"
 
-# Wait for controller with diagnostic on failure
+# Wait for controller with proper polling and diagnostic on failure
 echo "Waiting for controller deployment..."
+# Poll first to ensure deployment exists
+for i in {1..30}; do
+  if kubectl get deployment controller -n platform >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
 if ! kubectl wait --for=condition=Available deployment/controller -n platform --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
   log_error "Controller deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
   diagnose_deployment "platform" "controller"
   exit 1
 fi
 
-# Wait for panel
+# Wait for panel with proper polling
 echo "Waiting for panel deployment..."
+for i in {1..30}; do
+  if kubectl get deployment panel -n platform >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
 if ! kubectl wait --for=condition=Available deployment/panel -n platform --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
   log_error "Panel deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
   diagnose_deployment "platform" "panel"
