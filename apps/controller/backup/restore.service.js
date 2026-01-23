@@ -41,6 +41,7 @@ async function resolveBackupName(dir, backupFile, latest) {
 async function waitForPodCompletion(namespace, name) {
     const { core } = getClients();
     const started = Date.now();
+    // eslint-disable-next-line no-constant-condition
     while (true) {
         const result = await core.readNamespacedPod(name, namespace);
         const phase = result.body.status?.phase;

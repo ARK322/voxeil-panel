@@ -1,5 +1,3 @@
-import k8s from "@kubernetes/client-node";
-
 function clone(value) {
     return JSON.parse(JSON.stringify(value));
 }

@@ -81,7 +81,6 @@ app.setErrorHandler((error, _req, reply) => {
 app.get("/health", async () => {
     const { Client } = await import("pg");
     const { getClients } = await import("./k8s/client.js");
-    const { HttpError } = await import("./http/errors.js");
     
     const checks = {
         db: false,

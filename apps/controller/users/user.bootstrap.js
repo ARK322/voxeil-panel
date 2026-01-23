@@ -7,12 +7,11 @@ import {
     renderUserNetworkPolicy,
     renderUserControllerRoleBinding
 } from "../templates/render.js";
-import { getClients } from "../k8s/client.js";
+import { getClients, LABELS } from "../k8s/client.js";
 import { HttpError } from "../http/errors.js";
 import { ensureUserHomePvc } from "../k8s/pvc.js";
 import { ensureDatabase, ensureRole, generateDbPassword, normalizeDbName, normalizeDbUser } from "../postgres/admin.js";
 import { upsertSecret } from "../k8s/apply.js";
-import { LABELS } from "../k8s/client.js";
 
 const FIELD_MANAGER = "voxeil-controller";
 const APPLY_OPTIONS = { headers: { "Content-Type": "application/apply-patch+json" } };

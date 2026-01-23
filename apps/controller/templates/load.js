@@ -1,7 +1,6 @@
 import { promises as fs, existsSync } from "node:fs";
-import path from "node:path";
+import path, { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { dirname } from "node:path";
 import k8s from "@kubernetes/client-node";
 
 const __filename = fileURLToPath(import.meta.url);

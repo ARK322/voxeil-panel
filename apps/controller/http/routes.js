@@ -211,8 +211,6 @@ export function registerRoutes(app) {
         try {
             const { deleteUserNamespace } = await import("../k8s/namespace.js");
             const { dropDatabase, dropRole, revokeAndTerminate, normalizeDbName, normalizeDbUser } = await import("../postgres/admin.js");
-            const { deleteSecret } = await import("../k8s/secrets.js");
-            
             const namespace = `user-${id}`;
             const dbNamePrefix = process.env.DB_NAME_PREFIX?.trim() || "db_";
             const dbUserPrefix = process.env.DB_USER_PREFIX?.trim() || "u_";
@@ -417,7 +415,7 @@ export function registerRoutes(app) {
     });
 
     app.patch("/sites/:slug/limits", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req); // User authenticated but not used in this handler
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");

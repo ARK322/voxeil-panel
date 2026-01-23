@@ -32,7 +32,8 @@ export function buildDeployment(spec) {
     const imagePullSecrets = spec.imagePullSecretName
         ? [{ name: spec.imagePullSecretName }]
         : undefined;
-    const uploadDirs = resolveUploadDirs(spec.uploadDirs);
+    // uploadDirs resolved but not currently used
+    resolveUploadDirs(spec.uploadDirs);
     const deploymentName = getDeploymentName(spec.slug);
     const labels = {
         [LABELS.managedBy]: LABELS.managedBy,

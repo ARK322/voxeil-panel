@@ -1,16 +1,12 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { HttpError } from "../http/errors.js";
-import { loadUserTemplates } from "../templates/load.js";
-import { upsertDeployment, upsertIngress, upsertLimitRange, upsertNetworkPolicy, upsertResourceQuota, upsertService } from "../k8s/apply.js";
-import { patchNamespaceAnnotations, requireNamespace, resolveUserNamespaceForSite, readUserNamespaceSite, extractUserIdFromNamespace, deleteNamespace, readSiteMetadata } from "../k8s/namespace.js";
+import { upsertDeployment, upsertIngress, upsertService } from "../k8s/apply.js";
+import { patchNamespaceAnnotations, requireNamespace, resolveUserNamespaceForSite, readUserNamespaceSite, extractUserIdFromNamespace, readSiteMetadata } from "../k8s/namespace.js";
 import { patchIngress, resolveIngressIssuer } from "../k8s/ingress.js";
-import { ensurePvc, expandPvcIfNeeded, getPvcSizeGi } from "../k8s/pvc.js";
-import { readQuotaStatus, updateQuotaLimits } from "../k8s/quota.js";
-import { buildDeployment, buildIngress, buildService } from "../k8s/publish.js";
+import { buildDeployment, buildIngress, buildService, getDeploymentName, getServiceName, getIngressName } from "../k8s/publish.js";
 import { deleteSecret, ensureGhcrPullSecret, readSecret, upsertSecret, GHCR_PULL_SECRET_NAME } from "../k8s/secrets.js";
 import { getClients, LABELS } from "../k8s/client.js";
-import { getDeploymentName, getServiceName, getIngressName } from "../k8s/publish.js";
 import { SITE_ANNOTATIONS } from "../k8s/annotations.js";
 import { ensureDatabase, ensureRole, revokeAndTerminate, dropDatabase, dropRole, generateDbPassword, normalizeDbName, normalizeDbUser, resolveDbName, resolveDbUser } from "../postgres/admin.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
@@ -1677,7 +1673,6 @@ export async function purgeSite(slug) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
     const namespaceEntry = await readSiteMetadata(normalized);
-    const namespace = namespaceEntry.name;
     const annotations = namespaceEntry.annotations;
     // Delete site resources first (deployment, service, ingress, etc.)
     await deleteSite(normalized);
