@@ -14,39 +14,6 @@ spec:
       labels:
         app: postgres
     spec:
-      initContainers:
-        - name: init-permissions
-          image: busybox:1.36
-          command:
-            - /bin/sh
-            - -c
-            - |
-              set -e
-              DATA_DIR="/var/lib/postgresql/data"
-              
-              # Check if directory exists
-              if [ ! -d "$DATA_DIR" ]; then
-                echo "Data directory does not exist, creating it..."
-                mkdir -p "$DATA_DIR"
-              fi
-              
-              # Check if directory is empty or uninitialized (no PG_VERSION file)
-              # Only fix permissions if directory is empty or not yet initialized by postgres
-              if [ ! -f "$DATA_DIR/PG_VERSION" ]; then
-                echo "Data directory is empty or uninitialized, fixing permissions..."
-                chown -R 999:999 "$DATA_DIR"
-                chmod 700 "$DATA_DIR"
-                echo "Permissions fixed for postgres user (UID 999)"
-              else
-                echo "Postgres data directory already initialized, skipping permission fix"
-                # Just ensure the directory is accessible (but don't change ownership of existing data)
-                # Postgres will handle its own permissions for initialized databases
-              fi
-          securityContext:
-            runAsUser: 0
-          volumeMounts:
-            - name: data
-              mountPath: /var/lib/postgresql/data
       containers:
         - name: postgres
           image: postgres:16-alpine
