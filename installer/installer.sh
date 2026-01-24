@@ -465,7 +465,60 @@ if [[ ! -t 0 && -r /dev/tty ]]; then
   PROMPT_IN="/dev/tty"
 fi
 
+# ===== VOXEIL logo (centered inside frame, V orange) =====
+ORANGE="\033[38;5;208m"
+GRAY="\033[38;5;252m"
+NC="\033[0m"
+
+INNER=68  # frame iç genişliği (║ ... ║ arası)
+
+strip_ansi() {
+  # ANSI escape kodlarını sil (uzunluk doğru ölçülsün diye)
+  echo -e "$1" | sed -r 's/\x1B\[[0-9;]*[mK]//g'
+}
+
+box_line_center() {
+  local line="$1"
+  local plain len pad_left pad_right
+  plain="$(strip_ansi "$line")"
+  len=${#plain}
+
+  # taşarsa kırpma (güvenlik)
+  if (( len > INNER )); then
+    plain="${plain:0:INNER}"
+    line="$plain"
+    len=$INNER
+  fi
+
+  pad_left=$(( (INNER - len) / 2 ))
+  pad_right=$(( INNER - len - pad_left ))
+
+  # printf ile boşlukları garanti bas
+  printf "║%*s%b%*s║\n" "$pad_left" "" "$line" "$pad_right" ""
+}
+
+echo
+echo "╔════════════════════════════════════════════════════════════════════╗"
+printf "║%*s║\n" "$INNER" ""
+printf "║%*s║\n" "$INNER" ""
+
+box_line_center "${ORANGE}██╗   ██╗${GRAY} ██████╗ ██╗  ██╗███████╗██╗██╗${NC}"
+box_line_center "${ORANGE}██║   ██║${GRAY}██╔═══██╗╚██╗██╔╝██╔════╝██║██║${NC}"
+box_line_center "${ORANGE}██║   ██║${GRAY}██║   ██║ ╚███╔╝ █████╗  ██║██║${NC}"
+box_line_center "${ORANGE}╚██╗ ██╔╝${GRAY}██║   ██║ ██╔██╗ ██╔══╝  ██║██║${NC}"
+box_line_center "${ORANGE} ╚████╔╝ ${GRAY}╚██████╔╝██╔╝ ██╗███████╗██║███████╗${NC}"
+box_line_center "${ORANGE}  ╚═══╝  ${GRAY} ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝╚══════╝${NC}"
+
+printf "║%*s║\n" "$INNER" ""
+box_line_center "VOXEIL PANEL"
+box_line_center "Kubernetes Hosting Control Panel"
+printf "║%*s║\n" "$INNER" ""
+box_line_center "Secure • Isolated • Production-Grade Infrastructure"
+printf "║%*s║\n" "$INNER" ""
+echo "╚════════════════════════════════════════════════════════════════════╝"
+echo
 echo "== Voxeil Panel Installer =="
+echo ""
 
 need_cmd curl
 need_cmd sed
