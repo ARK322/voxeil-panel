@@ -32,6 +32,21 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
    The installer will ask only for:
    - Panel domain (TLS enabled via cert-manager)
    - Let's Encrypt email
+
+### Uninstall
+To remove all Voxeil Panel components from the cluster:
+```bash
+curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/uninstaller/uninstaller.sh | bash
+```
+Or if you have cloned the repository:
+```bash
+bash uninstaller/uninstaller.sh
+```
+The uninstaller will:
+- Delete all Voxeil Panel namespaces (platform, infra-db, dns-zone, mail-zone, backup-system)
+- Delete all user and tenant namespaces
+- Optionally remove Kyverno, Flux, and cert-manager (with confirmation prompts)
+- Clean up CRDs and remaining problematic resources
 3) Outputs:
   - Panel admin username + password + email (stored in `platform-secrets`)
    - Controller API key (stored in `platform-secrets`)
