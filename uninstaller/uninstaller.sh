@@ -10,22 +10,8 @@ echo "WARNING: This will delete all Voxeil Panel components including:"
 echo "  - All application namespaces (platform, infra-db, dns-zone, mail-zone, backup-system)"
 echo "  - All user and tenant namespaces"
 echo "  - All data in PVCs (this cannot be undone!)"
-echo "  - Kyverno policies and resources"
-echo "  - Flux resources"
 echo ""
-
-# Support non-interactive mode via environment variable
-if [[ "${UNINSTALL_CONFIRM:-}" == "yes" ]]; then
-  echo "Non-interactive mode: UNINSTALL_CONFIRM=yes detected, proceeding..."
-  confirm="yes"
-else
-  read -p "Are you sure you want to continue? (type 'yes' to confirm): " confirm
-fi
-
-if [[ "${confirm}" != "yes" ]]; then
-  echo "Uninstall cancelled."
-  exit 0
-fi
+echo "Starting uninstall process..."
 
 # Check if kubectl is available
 if ! command -v kubectl >/dev/null 2>&1; then
@@ -102,69 +88,45 @@ else
   echo "No tenant namespaces found"
 fi
 
-# Delete Kyverno (optional - ask user)
+# Delete Kyverno (automatic)
 echo ""
-if [[ "${UNINSTALL_CONFIRM:-}" == "yes" ]]; then
-  # Non-interactive: default to not deleting (safer)
-  delete_kyverno="N"
-else
-  read -p "Delete Kyverno? (y/N): " delete_kyverno
-fi
-if [[ "${delete_kyverno}" =~ ^[Yy]$ ]]; then
-  echo "Deleting Kyverno..."
-  delete_namespace "kyverno"
-  
-  # Delete Kyverno CRDs
-  echo "Deleting Kyverno CRDs..."
-  kubectl delete crd -l app.kubernetes.io/name=kyverno --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd policies.kyverno.io --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd clusterpolicies.kyverno.io --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd policyreports.wgpolicyk8s.io --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd clusterpolicyreports.wgpolicyk8s.io --ignore-not-found=true >/dev/null 2>&1 || true
-  echo "  ✓ Kyverno CRDs deleted"
-fi
+echo "Deleting Kyverno..."
+delete_namespace "kyverno"
 
-# Delete Flux (optional - ask user)
-echo ""
-if [[ "${UNINSTALL_CONFIRM:-}" == "yes" ]]; then
-  # Non-interactive: default to not deleting (safer)
-  delete_flux="N"
-else
-  read -p "Delete Flux? (y/N): " delete_flux
-fi
-if [[ "${delete_flux}" =~ ^[Yy]$ ]]; then
-  echo "Deleting Flux..."
-  delete_namespace "flux-system"
-  
-  # Delete Flux CRDs
-  echo "Deleting Flux CRDs..."
-  kubectl delete crd -l app.kubernetes.io/name=flux --ignore-not-found=true >/dev/null 2>&1 || true
-  echo "  ✓ Flux CRDs deleted"
-fi
+# Delete Kyverno CRDs
+echo "Deleting Kyverno CRDs..."
+kubectl delete crd -l app.kubernetes.io/name=kyverno --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd policies.kyverno.io --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd clusterpolicies.kyverno.io --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd policyreports.wgpolicyk8s.io --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd clusterpolicyreports.wgpolicyk8s.io --ignore-not-found=true >/dev/null 2>&1 || true
+echo "  ✓ Kyverno CRDs deleted"
 
-# Delete cert-manager (optional - ask user)
+# Delete Flux (automatic)
 echo ""
-if [[ "${UNINSTALL_CONFIRM:-}" == "yes" ]]; then
-  # Non-interactive: default to not deleting (safer)
-  delete_cert_manager="N"
-else
-  read -p "Delete cert-manager? (y/N): " delete_cert_manager
-fi
-if [[ "${delete_cert_manager}" =~ ^[Yy]$ ]]; then
-  echo "Deleting cert-manager..."
-  delete_namespace "cert-manager"
-  
-  # Delete cert-manager CRDs
-  echo "Deleting cert-manager CRDs..."
-  kubectl delete crd -l app.kubernetes.io/name=cert-manager --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd certificates.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd certificaterequests.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd challenges.acme.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd clusterissuers.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd issuers.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
-  kubectl delete crd orders.acme.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
-  echo "  ✓ cert-manager CRDs deleted"
-fi
+echo "Deleting Flux..."
+delete_namespace "flux-system"
+
+# Delete Flux CRDs
+echo "Deleting Flux CRDs..."
+kubectl delete crd -l app.kubernetes.io/name=flux --ignore-not-found=true >/dev/null 2>&1 || true
+echo "  ✓ Flux CRDs deleted"
+
+# Delete cert-manager (automatic)
+echo ""
+echo "Deleting cert-manager..."
+delete_namespace "cert-manager"
+
+# Delete cert-manager CRDs
+echo "Deleting cert-manager CRDs..."
+kubectl delete crd -l app.kubernetes.io/name=cert-manager --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd certificates.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd certificaterequests.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd challenges.acme.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd clusterissuers.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd issuers.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
+kubectl delete crd orders.acme.cert-manager.io --ignore-not-found=true >/dev/null 2>&1 || true
+echo "  ✓ cert-manager CRDs deleted"
 
 # Clean up any remaining problematic resources
 echo ""
