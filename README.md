@@ -19,6 +19,22 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
    - Controller: `apps/controller`
    - Panel: `apps/panel`
    - Maintenance page: `voxeil-maintenance` (served from GHCR)
+   
+   To build images locally:
+   ```bash
+   # Build images (local tags)
+   ./scripts/build-images.sh --tag local
+   
+   # Build and push to GHCR
+   ./scripts/build-images.sh --push --tag latest
+   
+   # Or build manually:
+   cd apps/controller && docker build -t ghcr.io/ark322/voxeil-controller:latest .
+   cd apps/panel && docker build -t ghcr.io/ark322/voxeil-panel:latest .
+   docker push ghcr.io/ark322/voxeil-controller:latest
+   docker push ghcr.io/ark322/voxeil-panel:latest
+   ```
+   
 2) One-liner install (no git clone required):
    ```bash
    curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash

@@ -272,15 +272,17 @@ validate_image() {
   
   echo "Validating image: ${image}"
   
-  # For local images, check if they exist in docker
+  # First, check if image exists locally (even for remote tags)
+  if docker image inspect "${image}" >/dev/null 2>&1; then
+    echo "Image ${image} exists locally"
+    return 0
+  fi
+  
+  # For local images (with :local tag) or backup images, only check locally
   if [[ "${image}" == *":local" ]] || [[ "${image}" == "backup-"* ]]; then
-    if docker image inspect "${image}" >/dev/null 2>&1; then
-      echo "Image ${image} exists locally"
-      return 0
-    else
-      log_error "Local image ${image} not found"
-      return 1
-    fi
+    log_error "Local image ${image} not found"
+    echo "Build the image locally or use a different image tag."
+    return 1
   fi
   
   # For remote images, try to pull (with timeout)
@@ -298,6 +300,12 @@ validate_image() {
       echo "  - Image does not exist at ${image}"
       echo "  - Network connectivity issues"
       echo "  - Authentication required (set GHCR_USERNAME and GHCR_TOKEN)"
+      echo ""
+      echo "To build images locally, run:"
+      echo "  ./scripts/build-images.sh --tag local"
+      echo ""
+      echo "Or build and push to GHCR:"
+      echo "  ./scripts/build-images.sh --push --tag latest"
       echo ""
       echo "If using private registry, ensure:"
       echo "  - GHCR_USERNAME and GHCR_TOKEN are set"
@@ -317,6 +325,9 @@ validate_image() {
       echo "  - Image does not exist at ${image}"
       echo "  - Network connectivity issues"
       echo "  - Authentication required (set GHCR_USERNAME and GHCR_TOKEN)"
+      echo ""
+      echo "To build images locally, run:"
+      echo "  ./scripts/build-images.sh --tag local"
       return 1
     fi
   fi
@@ -1349,9 +1360,12 @@ log_step "Validating controller image"
 if ! validate_image "${CONTROLLER_IMAGE}"; then
   echo "WARNING: Controller image validation failed: ${CONTROLLER_IMAGE}"
   echo "Continuing anyway - k3s will attempt to pull the image during deployment."
-  echo "If the image doesn't exist, the deployment will fail and you'll need to:"
-  echo "  - Build and push the image to ${CONTROLLER_IMAGE}"
-  echo "  - Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
+  echo ""
+  echo "If the image doesn't exist, the deployment will fail. To fix this:"
+  echo "  1. Build images locally: ./scripts/build-images.sh --tag local"
+  echo "     Then set: export CONTROLLER_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-controller:local"
+  echo "  2. Or build and push to GHCR: ./scripts/build-images.sh --push"
+  echo "  3. Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
   echo ""
 fi
 
@@ -1360,9 +1374,12 @@ log_step "Validating panel image"
 if ! validate_image "${PANEL_IMAGE}"; then
   echo "WARNING: Panel image validation failed: ${PANEL_IMAGE}"
   echo "Continuing anyway - k3s will attempt to pull the image during deployment."
-  echo "If the image doesn't exist, the deployment will fail and you'll need to:"
-  echo "  - Build and push the image to ${PANEL_IMAGE}"
-  echo "  - Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
+  echo ""
+  echo "If the image doesn't exist, the deployment will fail. To fix this:"
+  echo "  1. Build images locally: ./scripts/build-images.sh --tag local"
+  echo "     Then set: export PANEL_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-panel:local"
+  echo "  2. Or build and push to GHCR: ./scripts/build-images.sh --push"
+  echo "  3. Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
   echo ""
 fi
 
