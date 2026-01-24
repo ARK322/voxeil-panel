@@ -13,7 +13,14 @@ echo "  - All data in PVCs (this cannot be undone!)"
 echo "  - Kyverno policies and resources"
 echo "  - Flux resources"
 echo ""
-read -p "Are you sure you want to continue? (type 'yes' to confirm): " confirm
+
+# Support non-interactive mode via environment variable
+if [[ "${UNINSTALL_CONFIRM:-}" == "yes" ]]; then
+  echo "Non-interactive mode: UNINSTALL_CONFIRM=yes detected, proceeding..."
+  confirm="yes"
+else
+  read -p "Are you sure you want to continue? (type 'yes' to confirm): " confirm
+fi
 
 if [[ "${confirm}" != "yes" ]]; then
   echo "Uninstall cancelled."
@@ -97,7 +104,12 @@ fi
 
 # Delete Kyverno (optional - ask user)
 echo ""
-read -p "Delete Kyverno? (y/N): " delete_kyverno
+if [[ "${UNINSTALL_CONFIRM:-}" == "yes" ]]; then
+  # Non-interactive: default to not deleting (safer)
+  delete_kyverno="N"
+else
+  read -p "Delete Kyverno? (y/N): " delete_kyverno
+fi
 if [[ "${delete_kyverno}" =~ ^[Yy]$ ]]; then
   echo "Deleting Kyverno..."
   delete_namespace "kyverno"
@@ -114,7 +126,12 @@ fi
 
 # Delete Flux (optional - ask user)
 echo ""
-read -p "Delete Flux? (y/N): " delete_flux
+if [[ "${UNINSTALL_CONFIRM:-}" == "yes" ]]; then
+  # Non-interactive: default to not deleting (safer)
+  delete_flux="N"
+else
+  read -p "Delete Flux? (y/N): " delete_flux
+fi
 if [[ "${delete_flux}" =~ ^[Yy]$ ]]; then
   echo "Deleting Flux..."
   delete_namespace "flux-system"
@@ -127,7 +144,12 @@ fi
 
 # Delete cert-manager (optional - ask user)
 echo ""
-read -p "Delete cert-manager? (y/N): " delete_cert_manager
+if [[ "${UNINSTALL_CONFIRM:-}" == "yes" ]]; then
+  # Non-interactive: default to not deleting (safer)
+  delete_cert_manager="N"
+else
+  read -p "Delete cert-manager? (y/N): " delete_cert_manager
+fi
 if [[ "${delete_cert_manager}" =~ ^[Yy]$ ]]; then
   echo "Deleting cert-manager..."
   delete_namespace "cert-manager"
