@@ -677,6 +677,7 @@ MAILCOW_DB_NAME="${MAILCOW_DB_NAME:-mailcow}"
 MAILCOW_DB_USER="${MAILCOW_DB_USER:-mailcow}"
 MAILCOW_DB_PASSWORD="${MAILCOW_DB_PASSWORD:-$(rand)}"
 MAILCOW_DB_ROOT_PASSWORD="${MAILCOW_DB_ROOT_PASSWORD:-$(rand)}"
+BACKUP_TOKEN="${BACKUP_TOKEN:-$(rand)}"
 
 echo ""
 echo "Config:"
@@ -1053,6 +1054,7 @@ MAILCOW_DOMAIN_ESC="$(sed_escape "${MAILCOW_DOMAIN}")"
 MAILCOW_TLS_ISSUER_ESC="$(sed_escape "${MAILCOW_TLS_ISSUER}")"
 MAILCOW_BASICAUTH_ESC="$(sed_escape "${MAILCOW_BASICAUTH}")"
 TSIG_SECRET_ESC="$(sed_escape "${TSIG_SECRET}")"
+BACKUP_TOKEN_ESC="$(sed_escape "${BACKUP_TOKEN}")"
 
 # Use find + xargs with proper handling for empty results (compatible with both GNU and BSD xargs)
 FILES_WITH_PLACEHOLDER="$(find "${BACKUP_SYSTEM_DIR}" -type f -exec grep -l "REPLACE_IMAGE_BASE" {} + 2>/dev/null || true)"
@@ -1077,6 +1079,7 @@ sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN_ESC}|g" "${SERVICES_DIR}/mail-
 sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
 sed -i "s|REPLACE_MAILCOW_BASICAUTH|${MAILCOW_BASICAUTH_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
 sed -i "s|REPLACE_ME_BASE64LIKE|${TSIG_SECRET_ESC}|g" "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
+sed -i "s|REPLACE_BACKUP_TOKEN|${BACKUP_TOKEN_ESC}|g" "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 if grep -rl "REPLACE_IMAGE_BASE" "${BACKUP_SYSTEM_DIR}" >/dev/null 2>&1; then
   echo "ERROR: REPLACE_IMAGE_BASE placeholder not fully replaced in backup-system manifests."
   exit 1
@@ -1530,6 +1533,7 @@ k3s ctr images list | grep -E "backup-runner" || {
 log_step "Applying backup-system manifests"
 backup_apply "${BACKUP_SYSTEM_DIR}/namespace.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-scripts-configmap.yaml"
+backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 
 log_step "Applying ingresses"
 kubectl apply -f "${PLATFORM_DIR}/panel-ingress.yaml"
