@@ -108,6 +108,55 @@ retry_apply() {
   return 1
 }
 
+# Fix Kyverno cleanup jobs if they have image pull errors
+fix_kyverno_cleanup_jobs() {
+  local namespace="kyverno"
+  
+  # Check if kyverno namespace exists
+  if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+    return 0  # Kyverno not installed yet, nothing to fix
+  fi
+  
+  echo "Checking Kyverno cleanup jobs for issues..."
+  
+  # Find pods with ImagePullBackOff or ErrImagePull errors
+  local failed_pods
+  failed_pods="$(kubectl get pods -n "${namespace}" -l app.kubernetes.io/part-of=kyverno \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' 2>/dev/null | \
+    grep -E "(ImagePullBackOff|ErrImagePull)" | cut -f1 || true)"
+  
+  local fixed_count=0
+  
+  # Get job names from failed pods and delete them
+  if [ -n "${failed_pods}" ]; then
+    for pod in ${failed_pods}; do
+      local job_name
+      job_name="$(kubectl get pod "${pod}" -n "${namespace}" -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Job")].name}' 2>/dev/null || true)"
+      if [ -n "${job_name}" ]; then
+        echo "  Found failed cleanup job: ${job_name} (pod: ${pod})"
+        if kubectl delete job "${job_name}" -n "${namespace}" --ignore-not-found=true >/dev/null 2>&1; then
+          fixed_count=$((fixed_count + 1))
+        fi
+      fi
+    done
+    
+    if [ ${fixed_count} -gt 0 ]; then
+      echo "Cleaned up ${fixed_count} failed cleanup job(s). New jobs will be created by CronJob with correct image."
+    fi
+  fi
+  
+  # Ensure CronJobs are using the correct image by reapplying the manifest
+  # This is idempotent and will update the CronJob specs if needed
+  if [ -f "${SERVICES_DIR}/kyverno/install.yaml" ]; then
+    echo "Ensuring CronJobs are up to date..."
+    kubectl apply --server-side --force-conflicts -f "${SERVICES_DIR}/kyverno/install.yaml" >/dev/null 2>&1 || true
+  fi
+  
+  if [ ${fixed_count} -eq 0 ] && [ -z "${failed_pods}" ]; then
+    echo "No failed cleanup jobs found."
+  fi
+}
+
 # Check kubectl context
 check_kubectl_context() {
   if ! kubectl cluster-info >/dev/null 2>&1; then
@@ -1085,6 +1134,9 @@ kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
 # Wait a moment for policies to be active
 echo "Waiting for policies to be active..."
 sleep 3
+
+# Fix any failed cleanup jobs (e.g., ImagePullBackOff from old bitnami/kubectl images)
+fix_kyverno_cleanup_jobs
 
 log_step "Installing Flux controllers"
 kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
