@@ -144,20 +144,30 @@ fix_kyverno_cleanup_jobs() {
   
   local fixed_count=0
   
-  # Delete all problematic jobs
+  # Delete all problematic jobs and pods
   if [ -n "${all_problem_pods}" ]; then
     for pod in ${all_problem_pods}; do
       local job_name
       job_name="$(kubectl get pod "${pod}" -n "${namespace}" -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Job")].name}' 2>/dev/null || true)"
       if [ -n "${job_name}" ]; then
         echo "  Cleaning up job: ${job_name} (pod: ${pod})"
-        kubectl delete job "${job_name}" -n "${namespace}" --ignore-not-found=true >/dev/null 2>&1 && \
+        # Delete job first (this will also delete the pod)
+        kubectl delete job "${job_name}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+          fixed_count=$((fixed_count + 1)) || true
+        # Also delete pod directly as fallback (in case job deletion doesn't work)
+        kubectl delete pod "${pod}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+      else
+        # If no job owner, delete pod directly
+        echo "  Cleaning up pod directly: ${pod}"
+        kubectl delete pod "${pod}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
           fixed_count=$((fixed_count + 1)) || true
       fi
     done
     
     if [ ${fixed_count} -gt 0 ]; then
-      echo "Cleaned up ${fixed_count} cleanup job(s). New jobs will be created by CronJob with correct image."
+      echo "Cleaned up ${fixed_count} cleanup job(s)/pod(s). New jobs will be created by CronJob with correct image."
+      # Wait a moment for resources to be cleaned up
+      sleep 2
     fi
   fi
   
