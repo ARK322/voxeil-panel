@@ -22,9 +22,19 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
+              set -e
+              echo "Initializing pgadmin data directory..."
               mkdir -p /var/lib/pgadmin
+              # Ensure directory exists and has correct permissions
+              chown -R 5050:5050 /var/lib/pgadmin || true
+              chmod -R 755 /var/lib/pgadmin || true
+              # Create subdirectories that pgadmin4 expects
+              mkdir -p /var/lib/pgadmin/storage
+              mkdir -p /var/lib/pgadmin/sessions
               chown -R 5050:5050 /var/lib/pgadmin
               chmod -R 700 /var/lib/pgadmin
+              echo "Permissions set successfully"
+              ls -la /var/lib/pgadmin || true
           securityContext:
             runAsUser: 0
           volumeMounts:
@@ -52,15 +62,19 @@ spec:
               value: "True"
             - name: PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED
               value: "False"
+            - name: PGADMIN_CONFIG_WTF_CSRF_ENABLED
+              value: "True"
+            - name: PGADMIN_CONFIG_WTF_CSRF_TIME_LIMIT
+              value: "None"
           volumeMounts:
             - name: pgadmin-data
               mountPath: /var/lib/pgadmin
           resources:
             requests:
-              memory: "128Mi"
+              memory: "256Mi"
               cpu: "100m"
             limits:
-              memory: "512Mi"
+              memory: "1Gi"
               cpu: "500m"
           startupProbe:
             httpGet:

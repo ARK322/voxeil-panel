@@ -28,7 +28,7 @@ CERT_MANAGER_TIMEOUT="${CERT_MANAGER_TIMEOUT:-300}"
 KYVERNO_TIMEOUT="${KYVERNO_TIMEOUT:-600}"
 FLUX_TIMEOUT="${FLUX_TIMEOUT:-600}"
 DEPLOYMENT_ROLLOUT_TIMEOUT="${DEPLOYMENT_ROLLOUT_TIMEOUT:-600}"
-IMAGE_VALIDATION_TIMEOUT="${IMAGE_VALIDATION_TIMEOUT:-60}"
+IMAGE_VALIDATION_TIMEOUT="${IMAGE_VALIDATION_TIMEOUT:-120}"
 
 # ========= helpers =========
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
@@ -265,16 +265,35 @@ check_storageclass() {
   return 0
 }
 
+# Check network connectivity to a host
+check_network_connectivity() {
+  local host="$1"
+  if command -v curl >/dev/null 2>&1; then
+    if curl -fsSL --max-time 5 --connect-timeout 5 "https://${host}" >/dev/null 2>&1 || \
+       curl -fsSL --max-time 5 --connect-timeout 5 "http://${host}" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  if command -v ping >/dev/null 2>&1; then
+    if ping -c 1 -W 2 "${host}" >/dev/null 2>&1; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
 # Validate container image exists (for public images, check if pull would work)
 validate_image() {
   local image="$1"
   local timeout="${2:-${IMAGE_VALIDATION_TIMEOUT}}"
+  local registry=""
+  local image_name=""
   
   echo "Validating image: ${image}"
   
   # First, check if image exists locally (even for remote tags)
   if docker image inspect "${image}" >/dev/null 2>&1; then
-    echo "Image ${image} exists locally"
+    echo "✓ Image ${image} exists locally"
     return 0
   fi
   
@@ -285,52 +304,97 @@ validate_image() {
     return 1
   fi
   
-  # For remote images, try to pull (with timeout)
-  # Use docker pull with timeout to validate image exists
-  # Note: This validates the image can be pulled, but we'll let k3s handle the actual pull
-  if command -v timeout >/dev/null 2>&1; then
-    if timeout "${timeout}" docker pull "${image}" >/dev/null 2>&1; then
-      echo "Image ${image} validated (pull successful)"
+  # Extract registry from image name for connectivity check
+  if [[ "${image}" =~ ^([^/]+)/(.+)$ ]]; then
+    registry="${BASH_REMATCH[1]}"
+    image_name="${BASH_REMATCH[2]}"
+  fi
+  
+  # Check network connectivity to registry
+  if [[ -n "${registry}" ]] && [[ "${registry}" != "localhost" ]] && [[ "${registry}" != "127.0.0.1" ]]; then
+    echo "Checking network connectivity to ${registry}..."
+    if ! check_network_connectivity "${registry}"; then
+      log_error "Cannot reach registry ${registry}"
+      echo "Network connectivity test failed. This may indicate:"
+      echo "  - No internet connection"
+      echo "  - Firewall blocking access to ${registry}"
+      echo "  - DNS resolution issues"
+      echo ""
+      echo "Attempting to pull anyway (may work if connectivity test is too strict)..."
+    else
+      echo "✓ Network connectivity to ${registry} OK"
+    fi
+  fi
+  
+  # For remote images, try to pull (with timeout and retry)
+  local pull_success=false
+  local pull_output=""
+  local max_retries=2
+  
+  for attempt in $(seq 1 ${max_retries}); do
+    if [ ${attempt} -gt 1 ]; then
+      echo "Retry attempt ${attempt}/${max_retries}..."
+      sleep 2
+    fi
+    
+    if command -v timeout >/dev/null 2>&1; then
+      # Capture stderr for better error messages
+      pull_output="$(timeout "${timeout}" docker pull "${image}" 2>&1)" && pull_success=true || pull_success=false
+    else
+      # Fallback: just try docker pull without timeout
+      pull_output="$(docker pull "${image}" 2>&1)" && pull_success=true || pull_success=false
+    fi
+    
+    if [ "${pull_success}" = true ]; then
+      echo "✓ Image ${image} validated (pull successful)"
       # Remove the pulled image to save space (k3s will pull it when needed)
       docker rmi "${image}" >/dev/null 2>&1 || true
       return 0
-    else
-      log_error "Failed to pull image ${image} within ${timeout}s"
-      echo "This may indicate:"
-      echo "  - Image does not exist at ${image}"
-      echo "  - Network connectivity issues"
-      echo "  - Authentication required (set GHCR_USERNAME and GHCR_TOKEN)"
-      echo ""
-      echo "To build images locally, run:"
-      echo "  ./scripts/build-images.sh --tag local"
-      echo ""
-      echo "Or build and push to GHCR:"
-      echo "  ./scripts/build-images.sh --push --tag latest"
-      echo ""
-      echo "If using private registry, ensure:"
-      echo "  - GHCR_USERNAME and GHCR_TOKEN are set"
-      echo "  - Image pull secret will be created in platform namespace"
-      return 1
     fi
+  done
+  
+  # If we get here, pull failed
+  log_error "Failed to pull image ${image} after ${max_retries} attempts"
+  
+  # Analyze the error output for common issues
+  if echo "${pull_output}" | grep -qi "unauthorized\|authentication required\|401"; then
+    echo "Authentication error detected. This image may be private."
+    echo "  - Set GHCR_USERNAME and GHCR_TOKEN environment variables"
+    echo "  - Or use public images"
+  elif echo "${pull_output}" | grep -qi "not found\|404\|manifest unknown"; then
+    echo "Image not found at ${image}"
+    echo "  - The image may not exist at this registry/tag"
+    echo "  - Check if the image was built and pushed"
+  elif echo "${pull_output}" | grep -qi "timeout\|connection.*refused\|no route to host"; then
+    echo "Network/connection error detected"
+    echo "  - Check internet connectivity"
+    echo "  - Check firewall rules"
+    echo "  - Check DNS resolution"
   else
-    # Fallback: just try docker pull without timeout
-    if docker pull "${image}" >/dev/null 2>&1; then
-      echo "Image ${image} validated"
-      # Remove the pulled image to save space
-      docker rmi "${image}" >/dev/null 2>&1 || true
-      return 0
-    else
-      log_error "Failed to pull image ${image}"
-      echo "This may indicate:"
-      echo "  - Image does not exist at ${image}"
-      echo "  - Network connectivity issues"
-      echo "  - Authentication required (set GHCR_USERNAME and GHCR_TOKEN)"
-      echo ""
-      echo "To build images locally, run:"
-      echo "  ./scripts/build-images.sh --tag local"
-      return 1
-    fi
+    echo "Pull failed. Error details:"
+    echo "${pull_output}" | tail -5 | sed 's/^/  /'
   fi
+  
+  echo ""
+  echo "This may indicate:"
+  echo "  - Image does not exist at ${image}"
+  echo "  - Network connectivity issues"
+  echo "  - Authentication required (set GHCR_USERNAME and GHCR_TOKEN)"
+  echo ""
+  echo "To build images locally, run:"
+  echo "  ./scripts/build-images.sh --tag local"
+  echo ""
+  echo "Or build and push to GHCR:"
+  echo "  ./scripts/build-images.sh --push --tag latest"
+  echo ""
+  echo "If using private registry, ensure:"
+  echo "  - GHCR_USERNAME and GHCR_TOKEN are set"
+  echo "  - Image pull secret will be created in platform namespace"
+  echo ""
+  echo "You can also skip validation by setting:"
+  echo "  export SKIP_IMAGE_VALIDATION=true"
+  
+  return 1
 }
 
 # Diagnostic function for deployment failures
@@ -1409,31 +1473,41 @@ fi
 # (WaitForFirstConsumer: PVC binds when pod is scheduled, not before)
 
 # Validate controller image before applying deployment (non-blocking)
-log_step "Validating controller image"
-if ! validate_image "${CONTROLLER_IMAGE}"; then
-  echo "WARNING: Controller image validation failed: ${CONTROLLER_IMAGE}"
-  echo "Continuing anyway - k3s will attempt to pull the image during deployment."
-  echo ""
-  echo "If the image doesn't exist, the deployment will fail. To fix this:"
-  echo "  1. Build images locally: ./scripts/build-images.sh --tag local"
-  echo "     Then set: export CONTROLLER_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-controller:local"
-  echo "  2. Or build and push to GHCR: ./scripts/build-images.sh --push"
-  echo "  3. Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
-  echo ""
+if [[ "${SKIP_IMAGE_VALIDATION:-false}" != "true" ]]; then
+  log_step "Validating controller image"
+  if ! validate_image "${CONTROLLER_IMAGE}"; then
+    echo "WARNING: Controller image validation failed: ${CONTROLLER_IMAGE}"
+    echo "Continuing anyway - k3s will attempt to pull the image during deployment."
+    echo ""
+    echo "If the image doesn't exist, the deployment will fail. To fix this:"
+    echo "  1. Build images locally: ./scripts/build-images.sh --tag local"
+    echo "     Then set: export CONTROLLER_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-controller:local"
+    echo "  2. Or build and push to GHCR: ./scripts/build-images.sh --push"
+    echo "  3. Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
+    echo "  4. Or skip validation: export SKIP_IMAGE_VALIDATION=true"
+    echo ""
+  fi
+else
+  echo "Skipping controller image validation (SKIP_IMAGE_VALIDATION=true)"
 fi
 
 # Validate panel image before applying deployment (non-blocking)
-log_step "Validating panel image"
-if ! validate_image "${PANEL_IMAGE}"; then
-  echo "WARNING: Panel image validation failed: ${PANEL_IMAGE}"
-  echo "Continuing anyway - k3s will attempt to pull the image during deployment."
-  echo ""
-  echo "If the image doesn't exist, the deployment will fail. To fix this:"
-  echo "  1. Build images locally: ./scripts/build-images.sh --tag local"
-  echo "     Then set: export PANEL_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-panel:local"
-  echo "  2. Or build and push to GHCR: ./scripts/build-images.sh --push"
-  echo "  3. Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
-  echo ""
+if [[ "${SKIP_IMAGE_VALIDATION:-false}" != "true" ]]; then
+  log_step "Validating panel image"
+  if ! validate_image "${PANEL_IMAGE}"; then
+    echo "WARNING: Panel image validation failed: ${PANEL_IMAGE}"
+    echo "Continuing anyway - k3s will attempt to pull the image during deployment."
+    echo ""
+    echo "If the image doesn't exist, the deployment will fail. To fix this:"
+    echo "  1. Build images locally: ./scripts/build-images.sh --tag local"
+    echo "     Then set: export PANEL_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-panel:local"
+    echo "  2. Or build and push to GHCR: ./scripts/build-images.sh --push"
+    echo "  3. Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
+    echo "  4. Or skip validation: export SKIP_IMAGE_VALIDATION=true"
+    echo ""
+  fi
+else
+  echo "Skipping panel image validation (SKIP_IMAGE_VALIDATION=true)"
 fi
 
 log_step "Applying infra DB manifests"
@@ -1497,6 +1571,24 @@ if ! kubectl wait --for=condition=Available deployment/pgadmin -n infra-db --tim
   kubectl get pods -n infra-db -l app=pgadmin || true
   echo ""
   kubectl describe deployment pgadmin -n infra-db || true
+  echo ""
+  echo "=== pgadmin Pod Logs (last 100 lines) ==="
+  pgadmin_pod="$(kubectl get pod -n infra-db -l app=pgadmin -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
+  if [ -n "${pgadmin_pod}" ]; then
+    kubectl logs "${pgadmin_pod}" -n infra-db --tail=100 || true
+    echo ""
+    echo "=== Init Container Logs (if any) ==="
+    kubectl logs "${pgadmin_pod}" -n infra-db -c init-permissions --tail=100 2>/dev/null || true
+    echo ""
+    echo "=== Pod Describe (full) ==="
+    kubectl describe pod "${pgadmin_pod}" -n infra-db || true
+  fi
+  echo ""
+  echo "=== PVC Status ==="
+  kubectl get pvc -n infra-db || true
+  echo ""
+  echo "=== Events (last 20) ==="
+  kubectl get events -n infra-db --sort-by='.lastTimestamp' | tail -20 || true
   exit 1
 fi
 echo "pgadmin Deployment is ready"
