@@ -55,6 +55,59 @@ safe_apply() {
   return 0
 }
 
+# Retry kubectl apply with exponential backoff (handles webhook timeouts)
+retry_apply() {
+  local file="$1"
+  local desc="${2:-${file}}"
+  local max_attempts="${3:-5}"
+  local attempt=1
+  local delay=2
+  local output=""
+  
+  while [ ${attempt} -le ${max_attempts} ]; do
+    # Try server-side apply first (bypasses some webhook issues)
+    output="$(kubectl apply --server-side --force-conflicts -f "${file}" 2>&1)"
+    if [ $? -eq 0 ]; then
+      return 0
+    fi
+    
+    # Check if server-side apply failed due to webhook timeout
+    if echo "${output}" | grep -q "webhook.*timeout\|context deadline exceeded"; then
+      if [ ${attempt} -lt ${max_attempts} ]; then
+        echo "Webhook timeout detected (server-side), retrying in ${delay}s (attempt ${attempt}/${max_attempts})..."
+        sleep ${delay}
+        delay=$((delay * 2))  # Exponential backoff
+        attempt=$((attempt + 1))
+        continue
+      fi
+    fi
+    
+    # If server-side fails for other reasons, try regular apply
+    output="$(kubectl apply -f "${file}" 2>&1)"
+    if [ $? -eq 0 ]; then
+      return 0
+    fi
+    
+    # Check if regular apply also failed due to webhook timeout
+    if echo "${output}" | grep -q "webhook.*timeout\|context deadline exceeded"; then
+      if [ ${attempt} -lt ${max_attempts} ]; then
+        echo "Webhook timeout detected, retrying in ${delay}s (attempt ${attempt}/${max_attempts})..."
+        sleep ${delay}
+        delay=$((delay * 2))  # Exponential backoff
+        attempt=$((attempt + 1))
+        continue
+      fi
+    fi
+    
+    # If not a webhook timeout or max attempts reached, fail
+    log_error "Failed to apply ${desc} after ${attempt} attempts"
+    echo "${output}" >&2
+    return 1
+  done
+  
+  return 1
+}
+
 # Check kubectl context
 check_kubectl_context() {
   if ! kubectl cluster-info >/dev/null 2>&1; then
@@ -914,8 +967,26 @@ if [[ ! -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml" ]]; then
   log_error "cert-manager.yaml missing: ${SERVICES_DIR}/cert-manager/cert-manager.yaml"
   exit 1
 fi
-kubectl apply -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml" || {
-  log_error "Failed to apply cert-manager manifests"
+
+# Check if Kyverno is installed and might cause webhook timeouts
+if kubectl get namespace kyverno >/dev/null 2>&1; then
+  echo "Kyverno namespace detected, checking webhook readiness..."
+  # Wait a moment for Kyverno webhooks to be responsive
+  sleep 2
+  # Check if Kyverno admission controller is ready
+  if kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
+    if ! kubectl wait --for=condition=Available deployment/kyverno-admission-controller -n kyverno --timeout=30s >/dev/null 2>&1; then
+      echo "Warning: Kyverno admission controller may not be fully ready, but proceeding..."
+    fi
+  fi
+fi
+
+# Use retry_apply to handle webhook timeouts
+retry_apply "${SERVICES_DIR}/cert-manager/cert-manager.yaml" "cert-manager manifests" 5 || {
+  log_error "Failed to apply cert-manager manifests after retries"
+  echo "This may be due to Kyverno webhook timeouts. You can try:"
+  echo "  1. Wait for Kyverno to be fully ready: kubectl wait --for=condition=Available deployment -n kyverno --all"
+  echo "  2. Or temporarily scale down Kyverno: kubectl scale deployment -n kyverno --replicas=0 --all"
   exit 1
 }
 
@@ -965,7 +1036,10 @@ kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cer
 }
 echo "Applying ClusterIssuers."
 if [[ -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" ]]; then
-  kubectl apply -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
+  retry_apply "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" "ClusterIssuers" 3 || {
+    log_error "Failed to apply ClusterIssuers after retries"
+    echo "Continuing anyway - ClusterIssuers can be applied later"
+  }
 fi
 
 log_step "Installing Kyverno (idempotent)"
