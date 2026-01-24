@@ -19,8 +19,9 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             - |
-              chown -R 5050:5050 /var/lib/pgadmin || true
-              chmod -R 700 /var/lib/pgadmin || true
+              mkdir -p /var/lib/pgadmin
+              chown -R 5050:5050 /var/lib/pgadmin
+              chmod -R 700 /var/lib/pgadmin
           securityContext:
             runAsUser: 0
           volumeMounts:
@@ -44,6 +45,10 @@ spec:
                   key: PGADMIN_PASSWORD
             - name: PGADMIN_LISTEN_PORT
               value: "80"
+            - name: PGADMIN_CONFIG_SERVER_MODE
+              value: "True"
+            - name: PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED
+              value: "False"
           volumeMounts:
             - name: pgadmin-data
               mountPath: /var/lib/pgadmin
@@ -58,15 +63,15 @@ spec:
             httpGet:
               path: /misc/ping
               port: 80
-            initialDelaySeconds: 10
+            initialDelaySeconds: 30
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 3
+            failureThreshold: 5
           livenessProbe:
             httpGet:
               path: /misc/ping
               port: 80
-            initialDelaySeconds: 30
+            initialDelaySeconds: 60
             periodSeconds: 20
             timeoutSeconds: 5
             failureThreshold: 3
