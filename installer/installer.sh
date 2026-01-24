@@ -109,6 +109,7 @@ retry_apply() {
 }
 
 # Fix Kyverno cleanup jobs if they have image pull errors
+# This ensures CronJobs use correct images and cleans up any failed jobs
 fix_kyverno_cleanup_jobs() {
   local namespace="kyverno"
   
@@ -117,43 +118,70 @@ fix_kyverno_cleanup_jobs() {
     return 0  # Kyverno not installed yet, nothing to fix
   fi
   
-  echo "Checking Kyverno cleanup jobs for issues..."
+  echo "Ensuring Kyverno cleanup CronJobs are properly configured..."
   
-  # Find pods with ImagePullBackOff or ErrImagePull errors
+  # First, ensure CronJobs are updated with correct image from manifest
+  if [ -f "${SERVICES_DIR}/kyverno/install.yaml" ]; then
+    echo "Updating CronJobs with correct image configuration..."
+    kubectl apply --server-side --force-conflicts -f "${SERVICES_DIR}/kyverno/install.yaml" >/dev/null 2>&1 || true
+  fi
+  
+  # Find all cleanup job pods (both failed and running) that use old bitnami/kubectl images
+  local cleanup_pods
+  cleanup_pods="$(kubectl get pods -n "${namespace}" -l app.kubernetes.io/part-of=kyverno \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[0].image}{"\n"}{end}' 2>/dev/null | \
+    grep -E "cleanup.*reports" | grep -v "alpine/k8s" | cut -f1 || true)"
+  
+  # Also find pods with ImagePullBackOff or ErrImagePull errors
   local failed_pods
   failed_pods="$(kubectl get pods -n "${namespace}" -l app.kubernetes.io/part-of=kyverno \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' 2>/dev/null | \
     grep -E "(ImagePullBackOff|ErrImagePull)" | cut -f1 || true)"
   
+  # Combine both lists and get unique job names
+  local all_problem_pods
+  all_problem_pods="$(echo -e "${cleanup_pods}\n${failed_pods}" | sort -u || true)"
+  
   local fixed_count=0
   
-  # Get job names from failed pods and delete them
-  if [ -n "${failed_pods}" ]; then
-    for pod in ${failed_pods}; do
+  # Delete all problematic jobs
+  if [ -n "${all_problem_pods}" ]; then
+    for pod in ${all_problem_pods}; do
       local job_name
       job_name="$(kubectl get pod "${pod}" -n "${namespace}" -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Job")].name}' 2>/dev/null || true)"
       if [ -n "${job_name}" ]; then
-        echo "  Found failed cleanup job: ${job_name} (pod: ${pod})"
-        if kubectl delete job "${job_name}" -n "${namespace}" --ignore-not-found=true >/dev/null 2>&1; then
-          fixed_count=$((fixed_count + 1))
-        fi
+        echo "  Cleaning up job: ${job_name} (pod: ${pod})"
+        kubectl delete job "${job_name}" -n "${namespace}" --ignore-not-found=true >/dev/null 2>&1 && \
+          fixed_count=$((fixed_count + 1)) || true
       fi
     done
     
     if [ ${fixed_count} -gt 0 ]; then
-      echo "Cleaned up ${fixed_count} failed cleanup job(s). New jobs will be created by CronJob with correct image."
+      echo "Cleaned up ${fixed_count} cleanup job(s). New jobs will be created by CronJob with correct image."
     fi
   fi
   
-  # Ensure CronJobs are using the correct image by reapplying the manifest
-  # This is idempotent and will update the CronJob specs if needed
-  if [ -f "${SERVICES_DIR}/kyverno/install.yaml" ]; then
-    echo "Ensuring CronJobs are up to date..."
+  # Verify CronJobs are using correct image
+  echo "Verifying CronJob image configuration..."
+  local cronjobs_ok=true
+  for cronjob in kyverno-cleanup-admission-reports kyverno-cleanup-cluster-admission-reports; do
+    local current_image
+    current_image="$(kubectl get cronjob "${cronjob}" -n "${namespace}" -o jsonpath='{.spec.jobTemplate.spec.template.spec.containers[0].image}' 2>/dev/null || true)"
+    if [ -n "${current_image}" ] && echo "${current_image}" | grep -q "bitnami/kubectl"; then
+      echo "  Warning: ${cronjob} still using old image: ${current_image}"
+      cronjobs_ok=false
+    fi
+  done
+  
+  if [ "${cronjobs_ok}" = "true" ]; then
+    echo "✓ All CronJobs are using correct images."
+  else
+    echo "Re-applying manifest to force CronJob update..."
     kubectl apply --server-side --force-conflicts -f "${SERVICES_DIR}/kyverno/install.yaml" >/dev/null 2>&1 || true
   fi
   
-  if [ ${fixed_count} -eq 0 ] && [ -z "${failed_pods}" ]; then
-    echo "No failed cleanup jobs found."
+  if [ ${fixed_count} -eq 0 ] && [ -z "${all_problem_pods}" ]; then
+    echo "✓ No cleanup job issues found."
   fi
 }
 
@@ -1104,6 +1132,10 @@ kubectl apply --server-side --force-conflicts -f "${KYVERNO_MANIFEST}" || {
 }
 echo "Kyverno resources applied successfully"
 
+# Immediately fix cleanup jobs to ensure they use correct images
+# This prevents old bitnami/kubectl images from being used
+fix_kyverno_cleanup_jobs
+
 # Wait for Kyverno deployments with proper polling
 echo "Waiting for Kyverno deployments to be available..."
 # Poll first to ensure deployments exist
@@ -1720,5 +1752,6 @@ echo "- Deploy a site image via POST /sites/:slug/deploy."
 echo "- Point DNS to this server and enable TLS per site via PATCH /sites/:slug/tls."
 echo "- Configure Mailcow DNS (MX/SPF/DKIM) before enabling mail."
 echo "- Verify backups in the backup-system PVC (mounted at /backups)."
+echo ""
 echo ""
 echo ""
