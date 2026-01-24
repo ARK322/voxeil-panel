@@ -812,6 +812,81 @@ if ! check_storageclass "local-path"; then
   exit 1
 fi
 
+# ========= Clean up any leftover resources from previous installations =========
+log_step "Cleaning up leftover resources from previous installations"
+echo "Checking for and cleaning up orphaned resources..."
+
+# Clean up orphaned Kyverno webhooks (if namespace deleted but webhooks remain)
+orphaned_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
+orphaned_mutating="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
+
+if [ -n "${orphaned_webhooks}" ] || [ -n "${orphaned_mutating}" ]; then
+  echo "  Found orphaned Kyverno webhooks, cleaning up..."
+  for webhook in ${orphaned_webhooks}; do
+    kubectl delete validatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
+  done
+  for webhook in ${orphaned_mutating}; do
+    kubectl delete mutatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
+  done
+  echo "  ✓ Orphaned webhooks cleaned up"
+fi
+
+# Clean up stuck PVCs in Voxeil Panel namespaces (if they exist but namespace is being recreated)
+for ns in platform infra-db dns-zone mail-zone backup-system; do
+  if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
+    # Namespace doesn't exist, but check for finalizers on PVCs (if any were left behind)
+    pvcs="$(kubectl get pvc -A -o jsonpath="{range .items[?(@.metadata.namespace==\"${ns}\")]}{.metadata.name}{'\n'}{end}" 2>/dev/null || true)"
+    if [ -n "${pvcs}" ]; then
+      echo "  Found leftover PVCs for namespace ${ns}, cleaning up..."
+      for pvc in ${pvcs}; do
+        kubectl delete pvc "${pvc}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+      done
+    fi
+  fi
+done
+
+# Clean up any stuck pods/jobs with image pull errors
+echo "  Checking for stuck pods with image pull errors..."
+cleaned_pods=0
+for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
+  if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+    failed_pods="$(kubectl get pods -n "${ns}" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' 2>/dev/null | \
+      grep -E "(ImagePullBackOff|ErrImagePull)" | cut -f1 || true)"
+    
+    if [ -n "${failed_pods}" ]; then
+      for pod in ${failed_pods}; do
+        job_name="$(kubectl get pod "${pod}" -n "${ns}" -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Job")].name}' 2>/dev/null || true)"
+        if [ -n "${job_name}" ]; then
+          kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+            cleaned_pods=$((cleaned_pods + 1)) || true
+        else
+          kubectl delete pod "${pod}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+            cleaned_pods=$((cleaned_pods + 1)) || true
+        fi
+      done
+    fi
+  fi
+done
+
+if [ ${cleaned_pods} -gt 0 ]; then
+  echo "  ✓ Cleaned up ${cleaned_pods} stuck pod(s)/job(s)"
+else
+  echo "  ✓ No stuck pods found"
+fi
+
+# Clean up any finalizers on namespaces that are stuck
+echo "  Checking for namespaces stuck in Terminating state..."
+for ns in platform infra-db dns-zone mail-zone backup-system; do
+  if kubectl get namespace "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Terminating"; then
+    echo "  Found namespace ${ns} stuck in Terminating, attempting to fix..."
+    # Use patch instead of jq (more compatible)
+    kubectl patch namespace "${ns}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+  fi
+done
+
+echo "Cleanup completed. Proceeding with installation..."
+
 # ========= render manifests to temp dir =========
 RENDER_DIR="$(mktemp -d)"
 if [[ ! -d "${RENDER_DIR}" ]]; then

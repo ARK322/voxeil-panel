@@ -133,6 +133,34 @@ echo ""
 echo "=== Cleaning up any remaining problematic resources ==="
 cleaned_count=0
 
+# Clean up orphaned webhooks
+echo "Cleaning up orphaned webhooks..."
+orphaned_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|flux|cert-manager)' || true)"
+orphaned_mutating="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|flux|cert-manager)' || true)"
+
+for webhook in ${orphaned_webhooks}; do
+  kubectl delete validatingwebhookconfiguration "${webhook}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+    cleaned_count=$((cleaned_count + 1)) || true
+done
+
+for webhook in ${orphaned_mutating}; do
+  kubectl delete mutatingwebhookconfiguration "${webhook}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+    cleaned_count=$((cleaned_count + 1)) || true
+done
+
+# Clean up stuck PVCs with finalizers
+echo "Cleaning up stuck PVCs..."
+for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
+  if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+    pvcs="$(kubectl get pvc -n "${ns}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+    for pvc in ${pvcs}; do
+      kubectl patch pvc "${pvc}" -n "${ns}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      kubectl delete pvc "${pvc}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+        cleaned_count=$((cleaned_count + 1)) || true
+    done
+  fi
+done
+
 # Get all remaining namespaces (excluding system namespaces)
 remaining_namespaces="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -vE '^(kube-system|kube-public|kube-node-lease|default)$' || true)"
 
@@ -157,6 +185,22 @@ if [ -n "${remaining_namespaces}" ]; then
     fi
   done
 fi
+
+# Clean up namespaces stuck in Terminating state
+echo "Cleaning up namespaces stuck in Terminating state..."
+for ns in ${remaining_namespaces}; do
+  if kubectl get namespace "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Terminating"; then
+    echo "  Fixing namespace ${ns} stuck in Terminating..."
+    # Remove finalizers
+    if command -v jq >/dev/null 2>&1; then
+      kubectl get namespace "${ns}" -o json | jq '.spec.finalizers = []' | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+    else
+      # Fallback: patch finalizers
+      kubectl patch namespace "${ns}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+    fi
+    cleaned_count=$((cleaned_count + 1))
+  fi
+done
 
 if [ ${cleaned_count} -gt 0 ]; then
   echo "Cleaned up ${cleaned_count} problematic resource(s)"

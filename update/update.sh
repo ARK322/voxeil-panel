@@ -25,6 +25,28 @@ CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-ghcr.io/ark322/voxeil-controller:latest}"
 PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/ark322/voxeil-panel:latest}"
 BACKUP_SERVICE_IMAGE="${BACKUP_SERVICE_IMAGE:-backup-service:local}"
 
+echo "Pre-update cleanup: Checking for stuck resources..."
+# Clean up stuck pods with image pull errors (non-destructive)
+for ns in platform backup-system; do
+  if "${KUBECTL[@]}" get namespace "${ns}" >/dev/null 2>&1; then
+    failed_pods="$("${KUBECTL[@]}" get pods -n "${ns}" \
+      -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' 2>/dev/null | \
+      grep -E "(ImagePullBackOff|ErrImagePull)" | cut -f1 || true)"
+    
+    if [ -n "${failed_pods}" ]; then
+      echo "  Found stuck pods in ${ns}, cleaning up..."
+      for pod in ${failed_pods}; do
+        job_name="$("${KUBECTL[@]}" get pod "${pod}" -n "${ns}" -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Job")].name}' 2>/dev/null || true)"
+        if [ -n "${job_name}" ]; then
+          "${KUBECTL[@]}" delete job "${job_name}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        else
+          "${KUBECTL[@]}" delete pod "${pod}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        fi
+      done
+    fi
+  fi
+done
+
 echo "Updating platform images..."
 # Check namespace exists
 if ! "${KUBECTL[@]}" get namespace platform >/dev/null 2>&1; then
