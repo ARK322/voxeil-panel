@@ -42,10 +42,16 @@ Or if you have cloned the repository:
 ```bash
 bash uninstaller/uninstaller.sh
 ```
+
+**Non-interactive mode** (for automation):
+```bash
+UNINSTALL_CONFIRM=yes bash uninstaller/uninstaller.sh
+```
+
 The uninstaller will:
 - Delete all Voxeil Panel namespaces (platform, infra-db, dns-zone, mail-zone, backup-system)
 - Delete all user and tenant namespaces
-- Optionally remove Kyverno, Flux, and cert-manager (with confirmation prompts)
+- Optionally remove Kyverno, Flux, and cert-manager (with confirmation prompts, or defaults to "no" in non-interactive mode)
 - Clean up CRDs and remaining problematic resources
 3) Outputs:
   - Panel admin username + password + email (stored in `platform-secrets`)
