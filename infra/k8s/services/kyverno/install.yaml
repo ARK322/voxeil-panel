@@ -45804,8 +45804,8 @@ spec:
           serviceAccountName: kyverno-cleanup-jobs
           containers:
           - name: cleanup
-            image: "bitnami/kubectl:1.26.10"
-            imagePullPolicy: 
+            image: "alpine/k8s:1.30.0"
+            imagePullPolicy: IfNotPresent 
             command:
             - /bin/sh
             - -c
@@ -45852,8 +45852,8 @@ spec:
           serviceAccountName: kyverno-cleanup-jobs
           containers:
           - name: cleanup
-            image: "bitnami/kubectl:1.26.4"
-            imagePullPolicy: 
+            image: "alpine/k8s:1.30.0"
+            imagePullPolicy: IfNotPresent 
             command:
             - /bin/sh
             - -c
