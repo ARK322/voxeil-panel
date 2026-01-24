@@ -1,16 +1,52 @@
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { HttpError } from "../http/errors.js";
-import { upsertDeployment, upsertIngress, upsertService } from "../k8s/apply.js";
+import { upsertDeployment, upsertIngress, upsertService, upsertConfigMap } from "../k8s/apply.js";
 import { patchNamespaceAnnotations, requireNamespace, resolveUserNamespaceForSite, readUserNamespaceSite, extractUserIdFromNamespace, readSiteMetadata } from "../k8s/namespace.js";
 import { patchIngress, resolveIngressIssuer } from "../k8s/ingress.js";
 import { buildDeployment, buildIngress, buildService, getDeploymentName, getServiceName, getIngressName } from "../k8s/publish.js";
 import { deleteSecret, ensureGhcrPullSecret, readSecret, upsertSecret, GHCR_PULL_SECRET_NAME } from "../k8s/secrets.js";
 import { getClients, LABELS } from "../k8s/client.js";
+import { USER_BACKUP_PVC_NAME } from "../k8s/pvc.js";
 import { SITE_ANNOTATIONS } from "../k8s/annotations.js";
 import { ensureDatabase, ensureRole, revokeAndTerminate, dropDatabase, dropRole, generateDbPassword, normalizeDbName, normalizeDbUser, resolveDbName, resolveDbUser } from "../postgres/admin.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
 import { restoreSiteDb, restoreSiteFiles } from "../backup/restore.service.js";
+
+// Helper functions for pod operations
+const POD_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
+const POD_POLL_INTERVAL_MS = 2000;
+
+async function waitForPodCompletion(namespace, name) {
+    const { core } = getClients();
+    const started = Date.now();
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+        const result = await core.readNamespacedPod(name, namespace);
+        const phase = result.body.status?.phase;
+        if (phase === "Succeeded")
+            return;
+        if (phase === "Failed") {
+            throw new HttpError(500, "Pod failed.");
+        }
+        if (Date.now() - started > POD_WAIT_TIMEOUT_MS) {
+            throw new HttpError(504, "Pod timed out.");
+        }
+        await new Promise((resolve) => setTimeout(resolve, POD_POLL_INTERVAL_MS));
+    }
+}
+
+async function deletePodSafely(namespace, name) {
+    const { core } = getClients();
+    try {
+        await core.deleteNamespacedPod(name, namespace);
+    }
+    catch (error) {
+        if (error?.response?.statusCode === 404)
+            return;
+        throw error;
+    }
+}
 import { ensureDnsZone, removeDnsZone } from "../dns/bind9.js";
 import { dispatchWorkflow, parseRepo, resolveWorkflow } from "../github/client.js";
 import { createMailcowMailbox, createMailcowAlias, deleteMailcowMailbox, deleteMailcowAlias, ensureMailcowDomain, getMailcowDomainActive, listMailcowAliases, listMailcowMailboxes, purgeMailcowDomain, setMailcowDomainActive } from "../mailcow/client.js";
@@ -19,7 +55,6 @@ const DEFAULT_MAINTENANCE_PORT = 3000;
 const DEFAULT_TLS_ISSUER = "letsencrypt-staging";
 const SITE_DB_SECRET_NAME = "db-conn";
 const LEGACY_DB_SECRET_NAME = "site-db";
-const BACKUP_ROOT = "/backups/sites";
 const BACKUP_NAMESPACE = "backup-system";
 const DEFAULT_BACKUP_RETENTION_DAYS = 14;
 const DEFAULT_BACKUP_SCHEDULE = "0 3 * * *";
@@ -132,9 +167,8 @@ function buildBackupRunnerPodSpec(options) {
             volumes: [
                 {
                     name: "backups",
-                    hostPath: {
-                        path: "/backups",
-                        type: "DirectoryOrCreate"
+                    persistentVolumeClaim: {
+                        claimName: USER_BACKUP_PVC_NAME
                     }
                 },
                 {
@@ -179,7 +213,7 @@ async function upsertBackupCronJob(options) {
         kind: "CronJob",
         metadata: {
             name,
-            namespace: BACKUP_NAMESPACE,
+            namespace: options.namespace,
             labels: {
                 [LABELS.managedBy]: LABELS.managedBy,
                 [LABELS.siteSlug]: options.slug
@@ -207,12 +241,12 @@ async function upsertBackupCronJob(options) {
         }
     };
     try {
-        await batch.readNamespacedCronJob(name, BACKUP_NAMESPACE);
-        await batch.replaceNamespacedCronJob(name, BACKUP_NAMESPACE, body);
+        await batch.readNamespacedCronJob(name, options.namespace);
+        await batch.replaceNamespacedCronJob(name, options.namespace, body);
     }
     catch (error) {
         if (error?.response?.statusCode === 404) {
-            await batch.createNamespacedCronJob(BACKUP_NAMESPACE, body);
+            await batch.createNamespacedCronJob(options.namespace, body);
             return;
         }
         throw error;
@@ -221,8 +255,9 @@ async function upsertBackupCronJob(options) {
 async function deleteBackupCronJob(slug) {
     const { batch } = getClients();
     const name = `backup-${slug}`;
+    const namespace = await resolveUserNamespaceForSite(slug);
     try {
-        await batch.deleteNamespacedCronJob(name, BACKUP_NAMESPACE);
+        await batch.deleteNamespacedCronJob(name, namespace);
     }
     catch (error) {
         if (error?.response?.statusCode === 404)
@@ -239,7 +274,7 @@ async function createBackupJob(options) {
         kind: "Job",
         metadata: {
             name,
-            namespace: BACKUP_NAMESPACE,
+            namespace: options.namespace,
             labels: {
                 [LABELS.managedBy]: LABELS.managedBy,
                 [LABELS.siteSlug]: options.slug
@@ -258,7 +293,7 @@ async function createBackupJob(options) {
             }
         }
     };
-    await batch.createNamespacedJob(BACKUP_NAMESPACE, body);
+    await batch.createNamespacedJob(options.namespace, body);
 }
 function normalizeMailDomain(value) {
     const normalized = value.trim().toLowerCase().replace(/\.$/, "");
@@ -1402,27 +1437,62 @@ export async function getSiteGithubStatus(slug) {
     };
 }
 async function purgeSiteBackups(slug) {
-    const filesDir = path.join(BACKUP_ROOT, slug, "files");
-    const dbDir = path.join(BACKUP_ROOT, slug, "db");
-    const removeMatching = async (dir, matcher) => {
-        try {
-            const entries = await fs.readdir(dir, { withFileTypes: true });
-            await Promise.all(entries.map(async (entry) => {
-                if (!entry.isFile())
-                    return;
-                if (!matcher(entry.name))
-                    return;
-                await fs.unlink(path.join(dir, entry.name));
-            }));
-        }
-        catch (error) {
-            if (error?.code === "ENOENT")
-                return;
-            throw error;
+    const normalized = validateSlug(slug);
+    const namespace = await resolveUserNamespaceForSite(normalized);
+    await requireNamespace(namespace);
+    
+    // Create a pod to purge backups from backup PVC
+    const podName = `purge-backups-${normalized}-${Date.now()}`;
+    const { core } = getClients();
+    
+    const pod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: {
+            name: podName,
+            namespace,
+            labels: {
+                [LABELS.managedBy]: LABELS.managedBy,
+                [LABELS.siteSlug]: normalized,
+                "app.kubernetes.io/name": "purge-backups"
+            }
+        },
+        spec: {
+            restartPolicy: "Never",
+            containers: [
+                {
+                    name: "purge",
+                    image: "alpine:3.19",
+                    command: ["/bin/sh", "-c"],
+                    args: [
+                        `find /backups/${normalized}/files -type f \\( -name "*.tar.gz" -o -name "*.tar.zst" \\) -delete || true && find /backups/${normalized}/db -type f -name "*.sql.gz" -delete || true`
+                    ],
+                    volumeMounts: [
+                        {
+                            name: "backups",
+                            mountPath: "/backups"
+                        }
+                    ]
+                }
+            ],
+            volumes: [
+                {
+                    name: "backups",
+                    persistentVolumeClaim: {
+                        claimName: USER_BACKUP_PVC_NAME
+                    }
+                }
+            ]
         }
     };
-    await removeMatching(filesDir, (name) => name.endsWith(".tar.gz") || name.endsWith(".tar.zst"));
-    await removeMatching(dbDir, (name) => name.endsWith(".sql.gz"));
+    
+    await core.createNamespacedPod(namespace, pod);
+    try {
+        await waitForPodCompletion(namespace, podName);
+    }
+    finally {
+        await deletePodSafely(namespace, podName);
+    }
 }
 export async function enableSiteBackup(slug, input) {
     let normalized;
@@ -1442,6 +1512,31 @@ export async function enableSiteBackup(slug, input) {
         schedule: existingSchedule
     });
     const dbEnabled = parseBooleanAnnotation(annotations[SITE_ANNOTATIONS.dbEnabled]) ?? false;
+    
+    // Copy backup script ConfigMap to user namespace
+    const { core } = getClients();
+    try {
+        const sourceConfigMap = await core.readNamespacedConfigMap("backup-scripts", BACKUP_NAMESPACE);
+        await upsertConfigMap({
+            apiVersion: "v1",
+            kind: "ConfigMap",
+            metadata: {
+                name: "backup-runner-script",
+                namespace,
+                labels: {
+                    [LABELS.managedBy]: LABELS.managedBy,
+                    [LABELS.siteSlug]: normalized
+                }
+            },
+            data: sourceConfigMap.body.data
+        });
+    }
+    catch (error) {
+        if (error?.response?.statusCode !== 404) {
+            throw new HttpError(500, `Failed to copy backup script ConfigMap: ${error?.message ?? String(error)}`);
+        }
+    }
+    
     await upsertBackupCronJob({
         slug: normalized,
         namespace,
@@ -1543,57 +1638,185 @@ export async function listSiteBackupSnapshots(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-    const filesDir = path.join(BACKUP_ROOT, normalized, "files");
-    const dbDir = path.join(BACKUP_ROOT, normalized, "db");
-    const items = new Map();
-    const addItem = (id, partial) => {
-        const existing = items.get(id) ?? { id, hasFiles: false, hasDb: false, sizeBytes: 0 };
-        items.set(id, {
-            id,
-            hasFiles: existing.hasFiles || Boolean(partial.hasFiles),
-            hasDb: existing.hasDb || Boolean(partial.hasDb),
-            sizeBytes: existing.sizeBytes + (partial.sizeBytes ?? 0)
-        });
+    const namespace = await resolveUserNamespaceForSite(normalized);
+    await requireNamespace(namespace);
+    
+    // Create a pod to list backups from backup PVC
+    const podName = `list-backups-${normalized}-${Date.now()}`;
+    const { core } = getClients();
+    
+    const pod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: {
+            name: podName,
+            namespace,
+            labels: {
+                [LABELS.managedBy]: LABELS.managedBy,
+                [LABELS.siteSlug]: normalized,
+                "app.kubernetes.io/name": "list-backups"
+            }
+        },
+        spec: {
+            restartPolicy: "Never",
+            containers: [
+                {
+                    name: "list",
+                    image: "alpine:3.19",
+                    command: ["/bin/sh", "-c"],
+                    args: [
+                        `cd /backups/${normalized} && find files -type f \\( -name "*.tar.gz" -o -name "*.tar.zst" \\) -exec basename {} \\; | sed 's/\\.tar\\.gz$//; s/\\.tar\\.zst$//' | sort -u > /tmp/files.txt && find db -type f -name "*.sql.gz" -exec basename {} \\; | sed 's/\\.sql\\.gz$//' | sort -u > /tmp/db.txt && cat /tmp/files.txt /tmp/db.txt | sort -u`
+                    ],
+                    volumeMounts: [
+                        {
+                            name: "backups",
+                            mountPath: "/backups",
+                            readOnly: true
+                        }
+                    ]
+                }
+            ],
+            volumes: [
+                {
+                    name: "backups",
+                    persistentVolumeClaim: {
+                        claimName: USER_BACKUP_PVC_NAME
+                    }
+                }
+            ]
+        }
     };
-    const readDirSafe = async (dir) => {
-        try {
-            return await fs.readdir(dir, { withFileTypes: true });
+    
+    await core.createNamespacedPod(namespace, pod);
+    try {
+        await waitForPodCompletion(namespace, podName);
+        const logs = await core.readNamespacedPodLog(podName, namespace);
+        const snapshotIds = logs.body.split("\n").filter((id) => id.trim()).map((id) => id.trim());
+        
+        // Get file sizes for each snapshot
+        const items = [];
+        for (const snapshotId of snapshotIds) {
+            const sizePodName = `get-size-${normalized}-${snapshotId}-${Date.now()}`;
+            const sizePod = {
+                apiVersion: "v1",
+                kind: "Pod",
+                metadata: {
+                    name: sizePodName,
+                    namespace,
+                    labels: {
+                        [LABELS.managedBy]: LABELS.managedBy,
+                        [LABELS.siteSlug]: normalized
+                    }
+                },
+                spec: {
+                    restartPolicy: "Never",
+                    containers: [
+                        {
+                            name: "size",
+                            image: "alpine:3.19",
+                            command: ["/bin/sh", "-c"],
+                            args: [
+                                `size=0; [ -f "/backups/${normalized}/files/${snapshotId}.tar.gz" ] && size=$((size + $(stat -c%s "/backups/${normalized}/files/${snapshotId}.tar.gz"))); [ -f "/backups/${normalized}/files/${snapshotId}.tar.zst" ] && size=$((size + $(stat -c%s "/backups/${normalized}/files/${snapshotId}.tar.zst"))); [ -f "/backups/${normalized}/db/${snapshotId}.sql.gz" ] && size=$((size + $(stat -c%s "/backups/${normalized}/db/${snapshotId}.sql.gz"))); echo $size`
+                            ],
+                            volumeMounts: [
+                                {
+                                    name: "backups",
+                                    mountPath: "/backups",
+                                    readOnly: true
+                                }
+                            ]
+                        }
+                    ],
+                    volumes: [
+                        {
+                            name: "backups",
+                            persistentVolumeClaim: {
+                                claimName: USER_BACKUP_PVC_NAME
+                            }
+                        }
+                    ]
+                }
+            };
+            
+            await core.createNamespacedPod(namespace, sizePod);
+            try {
+                await waitForPodCompletion(namespace, sizePodName);
+                const sizeLogs = await core.readNamespacedPodLog(sizePodName, namespace);
+                const sizeBytes = parseInt(sizeLogs.body.trim(), 10) || 0;
+                
+                // Check which files exist
+                const checkPodName = `check-files-${normalized}-${snapshotId}-${Date.now()}`;
+                const checkPod = {
+                    apiVersion: "v1",
+                    kind: "Pod",
+                    metadata: {
+                        name: checkPodName,
+                        namespace,
+                        labels: {
+                            [LABELS.managedBy]: LABELS.managedBy,
+                            [LABELS.siteSlug]: normalized
+                        }
+                    },
+                    spec: {
+                        restartPolicy: "Never",
+                        containers: [
+                            {
+                                name: "check",
+                                image: "alpine:3.19",
+                                command: ["/bin/sh", "-c"],
+                                args: [
+                                    `hasFiles=0; hasDb=0; [ -f "/backups/${normalized}/files/${snapshotId}.tar.gz" ] && hasFiles=1; [ -f "/backups/${normalized}/files/${snapshotId}.tar.zst" ] && hasFiles=1; [ -f "/backups/${normalized}/db/${snapshotId}.sql.gz" ] && hasDb=1; echo "$hasFiles $hasDb"`
+                                ],
+                                volumeMounts: [
+                                    {
+                                        name: "backups",
+                                        mountPath: "/backups",
+                                        readOnly: true
+                                    }
+                                ]
+                            }
+                        ],
+                        volumes: [
+                            {
+                                name: "backups",
+                                persistentVolumeClaim: {
+                                    claimName: USER_BACKUP_PVC_NAME
+                                }
+                            }
+                        ]
+                    }
+                };
+                
+                await core.createNamespacedPod(namespace, checkPod);
+                try {
+                    await waitForPodCompletion(namespace, checkPodName);
+                    const checkLogs = await core.readNamespacedPodLog(checkPodName, namespace);
+                    const [hasFilesStr, hasDbStr] = checkLogs.body.trim().split(" ");
+                    const hasFiles = hasFilesStr === "1";
+                    const hasDb = hasDbStr === "1";
+                    
+                    items.push({
+                        id: snapshotId,
+                        hasFiles,
+                        hasDb,
+                        sizeBytes
+                    });
+                }
+                finally {
+                    await deletePodSafely(namespace, checkPodName);
+                }
+            }
+            finally {
+                await deletePodSafely(namespace, sizePodName);
+            }
         }
-        catch (error) {
-            if (error?.code === "ENOENT")
-                return [];
-            throw error;
-        }
-    };
-    const fileEntries = await readDirSafe(filesDir);
-    for (const entry of fileEntries) {
-        if (!entry.isFile())
-            continue;
-        const name = entry.name;
-        if (name.endsWith(".tar.gz")) {
-            const id = name.slice(0, -".tar.gz".length);
-            const stat = await fs.stat(path.join(filesDir, name));
-            addItem(id, { hasFiles: true, sizeBytes: stat.size });
-        }
-        else if (name.endsWith(".tar.zst")) {
-            const id = name.slice(0, -".tar.zst".length);
-            const stat = await fs.stat(path.join(filesDir, name));
-            addItem(id, { hasFiles: true, sizeBytes: stat.size });
-        }
+        
+        const list = items.sort((a, b) => b.id.localeCompare(a.id));
+        return { ok: true, slug: normalized, items: list };
     }
-    const dbEntries = await readDirSafe(dbDir);
-    for (const entry of dbEntries) {
-        if (!entry.isFile())
-            continue;
-        const name = entry.name;
-        if (!name.endsWith(".sql.gz"))
-            continue;
-        const id = name.slice(0, -".sql.gz".length);
-        const stat = await fs.stat(path.join(dbDir, name));
-        addItem(id, { hasDb: true, sizeBytes: stat.size });
+    finally {
+        await deletePodSafely(namespace, podName);
     }
-    const list = Array.from(items.values()).sort((a, b) => b.id.localeCompare(a.id));
-    return { ok: true, slug: normalized, items: list };
 }
 export async function restoreSiteBackup(slug, input) {
     let normalized;
@@ -1621,27 +1844,22 @@ export async function restoreSiteBackup(slug, input) {
         }
     }
     if (restoreFiles) {
-        const filesDir = path.join(BACKUP_ROOT, normalized, "files");
-        const tarGz = path.join(filesDir, `${snapshotId}.tar.gz`);
-        const tarZst = path.join(filesDir, `${snapshotId}.tar.zst`);
+        // Try tar.gz first, then tar.zst
         let archive = `${snapshotId}.tar.gz`;
         try {
-            await fs.access(tarGz);
+            await restoreSiteFiles(normalized, { backupFile: archive });
         }
-        catch {
-            await fs.access(tarZst).catch(() => {
-                throw new HttpError(404, "Files backup archive not found.");
-            });
-            archive = `${snapshotId}.tar.zst`;
+        catch (error) {
+            if (error?.statusCode === 404) {
+                archive = `${snapshotId}.tar.zst`;
+                await restoreSiteFiles(normalized, { backupFile: archive });
+            }
+            else {
+                throw error;
+            }
         }
-        await restoreSiteFiles(normalized, { backupFile: archive });
     }
     if (restoreDb) {
-        const dbDir = path.join(BACKUP_ROOT, normalized, "db");
-        const archivePath = path.join(dbDir, `${snapshotId}.sql.gz`);
-        await fs.access(archivePath).catch(() => {
-            throw new HttpError(404, "Database backup archive not found.");
-        });
         await restoreSiteDb(normalized, { backupFile: `${snapshotId}.sql.gz` });
     }
     return { ok: true, slug: normalized, restored: true, snapshotId };

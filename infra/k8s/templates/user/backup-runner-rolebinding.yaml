@@ -1,0 +1,13 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: backup-runner-binding
+  namespace: PLACEHOLDER_NAMESPACE
+subjects:
+  - kind: ServiceAccount
+    name: backup-runner
+    namespace: PLACEHOLDER_NAMESPACE
+roleRef:
+  kind: Role
+  name: backup-runner-role
+  apiGroup: rbac.authorization.k8s.io

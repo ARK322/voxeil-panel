@@ -1,12 +1,9 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
-import { spawn } from "node:child_process";
 import { HttpError } from "../http/errors.js";
 import { requireNamespace, resolveUserNamespaceForSite } from "../k8s/namespace.js";
-import { getClients } from "../k8s/client.js";
+import { getClients, LABELS } from "../k8s/client.js";
 import { validateSlug } from "../sites/site.slug.js";
-import { buildRestorePod, listLatestBackup } from "./helpers.js";
-const BACKUP_ROOT = "/backups/sites";
+import { buildRestorePod } from "./helpers.js";
+import { USER_BACKUP_PVC_NAME } from "../k8s/pvc.js";
 const POD_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
 const POD_POLL_INTERVAL_MS = 2000;
 function normalizeSlug(slug) {
@@ -16,27 +13,6 @@ function normalizeSlug(slug) {
     catch (error) {
         throw new HttpError(400, error?.message ?? "Invalid slug.");
     }
-}
-function ensureFilename(value) {
-    const trimmed = value.trim();
-    const base = path.basename(trimmed);
-    if (!base || base !== trimmed) {
-        throw new HttpError(400, "backupFile must be a filename.");
-    }
-    return base;
-}
-async function resolveBackupName(dir, backupFile, latest) {
-    if (backupFile) {
-        return ensureFilename(backupFile);
-    }
-    if (latest) {
-        const found = await listLatestBackup(dir);
-        if (!found) {
-            throw new HttpError(404, "No backup archives found.");
-        }
-        return found;
-    }
-    throw new HttpError(400, "backupFile or latest=true required");
 }
 async function waitForPodCompletion(namespace, name) {
     const { core } = getClients();
@@ -77,62 +53,22 @@ function requireDbConfig() {
     const port = process.env.DB_PORT?.trim() || "5432";
     return { host, user, password, port };
 }
-async function runDbRestore(archivePath, dbName) {
-    const { host, user, password, port } = requireDbConfig();
-    await fs.access(archivePath).catch((error) => {
-        if (error?.code === "ENOENT") {
-            throw new HttpError(404, "Backup archive not found.");
-        }
-        throw error;
-    });
-    await new Promise((resolve, reject) => {
-        const gunzip = spawn("gunzip", ["-c", archivePath]);
-        const psql = spawn("psql", ["-h", host, "-p", port, "-U", user, dbName], {
-            env: { ...process.env, PGPASSWORD: password }
-        });
-        let gunzipExit = null;
-        let psqlExit = null;
-        gunzip.stdout.pipe(psql.stdin);
-        const handleExit = () => {
-            if (gunzipExit == null || psqlExit == null)
-                return;
-            if (gunzipExit !== 0 || psqlExit !== 0) {
-                reject(new HttpError(500, "DB restore failed."));
-            }
-            else {
-                resolve();
-            }
-        };
-        gunzip.on("error", (error) => reject(error));
-        psql.on("error", (error) => reject(error));
-        gunzip.on("close", (code) => {
-            gunzipExit = code ?? 1;
-            handleExit();
-        });
-        psql.on("close", (code) => {
-            psqlExit = code ?? 1;
-            handleExit();
-        });
-    });
-}
+// runDbRestore function removed - now handled in pod
 export async function restoreSiteFiles(slug, input) {
     const normalized = normalizeSlug(slug);
     const namespace = await resolveUserNamespaceForSite(normalized);
     await requireNamespace(namespace);
-    const dir = path.join(BACKUP_ROOT, normalized, "files");
-    const archive = await resolveBackupName(dir, input.backupFile, input.latest);
-    await fs.access(path.join(dir, archive)).catch((error) => {
-        if (error?.code === "ENOENT") {
-            throw new HttpError(404, "Backup archive not found.");
-        }
-        throw error;
-    });
+    // Archive name will be validated in the pod
+    const archive = input.backupFile || (input.latest ? "latest" : null);
+    if (!archive) {
+        throw new HttpError(400, "backupFile or latest=true required");
+    }
     const podName = `restore-${normalized}-${Date.now()}`;
     const pod = buildRestorePod({
         name: podName,
         namespace,
         slug: normalized,
-        archivePath: `/backups/sites/${normalized}/files/${archive}`
+        archivePath: `/backups/${normalized}/files/${archive}`
     });
     const { core } = getClients();
     await core.createNamespacedPod(namespace, pod);
@@ -146,10 +82,78 @@ export async function restoreSiteFiles(slug, input) {
 }
 export async function restoreSiteDb(slug, input) {
     const normalized = normalizeSlug(slug);
-    const dir = path.join(BACKUP_ROOT, normalized, "db");
-    const archive = await resolveBackupName(dir, input.backupFile, input.latest);
-    const archivePath = path.join(dir, archive);
+    const namespace = await resolveUserNamespaceForSite(normalized);
+    await requireNamespace(namespace);
+    // Archive name will be validated in the pod
+    const archive = input.backupFile || (input.latest ? "latest" : null);
+    if (!archive) {
+        throw new HttpError(400, "backupFile or latest=true required");
+    }
     const dbName = `db_${normalized}`;
-    await runDbRestore(archivePath, dbName);
+    
+    // Create a pod to restore DB from backup PVC
+    const podName = `restore-db-${normalized}-${Date.now()}`;
+    const { host, user, password, port } = requireDbConfig();
+    const { core } = getClients();
+    
+    // Handle "latest" by finding the most recent backup file
+    const isLatest = archive === "latest";
+    const dbDir = `/backups/${normalized}/db`;
+    const findLatestCmd = isLatest
+        ? `latest_file=$(find "${dbDir}" -type f -name "*.sql.gz" -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-); if [ -z "$latest_file" ]; then echo "No backup found" >&2; exit 1; fi; archive_path="$latest_file"`
+        : `archive_path="${dbDir}/${archive}"`;
+    
+    const pod = {
+        apiVersion: "v1",
+        kind: "Pod",
+        metadata: {
+            name: podName,
+            namespace,
+            labels: {
+                [LABELS.managedBy]: LABELS.managedBy,
+                [LABELS.siteSlug]: normalized,
+                "app.kubernetes.io/name": "restore-db"
+            }
+        },
+        spec: {
+            restartPolicy: "Never",
+            containers: [
+                {
+                    name: "restore",
+                    image: "postgres:16-alpine",
+                    command: ["/bin/sh", "-c"],
+                    args: [
+                        `${findLatestCmd} && if [ ! -f "$archive_path" ]; then echo "Archive not found: $archive_path" >&2; exit 1; fi && PGPASSWORD='${password.replace(/'/g, "'\"'\"'")}' gunzip -c "$archive_path" | psql -h ${host} -p ${port} -U ${user} ${dbName}`
+                    ],
+                    env: [
+                        { name: "PGPASSWORD", value: password }
+                    ],
+                    volumeMounts: [
+                        {
+                            name: "backups",
+                            mountPath: "/backups",
+                            readOnly: true
+                        }
+                    ]
+                }
+            ],
+            volumes: [
+                {
+                    name: "backups",
+                    persistentVolumeClaim: {
+                        claimName: USER_BACKUP_PVC_NAME
+                    }
+                }
+            ]
+        }
+    };
+    
+    await core.createNamespacedPod(namespace, pod);
+    try {
+        await waitForPodCompletion(namespace, podName);
+    }
+    finally {
+        await deletePodSafely(namespace, podName);
+    }
     return { ok: true, slug: normalized, restored: "db", archive };
 }

@@ -13,6 +13,19 @@ spec:
       labels:
         app: pgadmin
     spec:
+      initContainers:
+        - name: init-permissions
+          image: alpine:3.19
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              chown -R 5050:5050 /var/lib/pgadmin || true
+              chmod -R 700 /var/lib/pgadmin || true
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: pgadmin-data
+              mountPath: /var/lib/pgadmin
       containers:
         - name: pgadmin
           image: dpage/pgadmin4:8.11

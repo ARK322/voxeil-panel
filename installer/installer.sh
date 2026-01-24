@@ -1107,9 +1107,9 @@ if grep -q "REPLACE_PANEL_BASICAUTH" "${PLATFORM_DIR}/panel-auth.yaml"; then
   exit 1
 fi
 
-# Validate that all REPLACE_* placeholders (except those in backup-job-templates-configmap.yaml which are runtime templates) are replaced
+# Validate that all REPLACE_* placeholders are replaced
 log_step "Validating all REPLACE_* placeholders are replaced"
-REMAINING_PLACEHOLDERS=$(find "${SERVICES_DIR}" "${PLATFORM_DIR}" -type f \( -name "*.yaml" -o -name "*.yml" \) ! -name "backup-job-templates-configmap.yaml" -exec grep -l "REPLACE_" {} + 2>/dev/null | xargs grep -h "REPLACE_" 2>/dev/null | grep -v "REPLACE_SITE_SLUG\|REPLACE_TENANT_NAMESPACE\|REPLACE_DB_" | sort -u || true)
+REMAINING_PLACEHOLDERS=$(find "${SERVICES_DIR}" "${PLATFORM_DIR}" -type f \( -name "*.yaml" -o -name "*.yml" \) -exec grep -l "REPLACE_" {} + 2>/dev/null | xargs grep -h "REPLACE_" 2>/dev/null | grep -v "REPLACE_SITE_SLUG\|REPLACE_TENANT_NAMESPACE\|REPLACE_DB_" | sort -u || true)
 if [[ -n "${REMAINING_PLACEHOLDERS}" ]]; then
   echo "ERROR: The following REPLACE_* placeholders were not replaced:"
   echo "${REMAINING_PLACEHOLDERS}"
@@ -1566,9 +1566,7 @@ log_step "Applying backup-system manifests"
 backup_apply "${BACKUP_SYSTEM_DIR}/namespace.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/serviceaccount.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/rbac.yaml"
-backup_apply "${BACKUP_SYSTEM_DIR}/pvc.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-scripts-configmap.yaml"
-backup_apply "${BACKUP_SYSTEM_DIR}/backup-job-templates-configmap.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml"
@@ -1884,7 +1882,7 @@ echo "- Log in to the panel and create your first site."
 echo "- Deploy a site image via POST /sites/:slug/deploy."
 echo "- Point DNS to this server and enable TLS per site via PATCH /sites/:slug/tls."
 echo "- Configure Mailcow DNS (MX/SPF/DKIM) before enabling mail."
-echo "- Verify backups in the backup-system PVC (mounted at /backups)."
+echo "- Verify backups in user namespace PVCs (pvc-user-backup)."
 echo ""
 echo ""
 echo ""

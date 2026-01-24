@@ -20,7 +20,7 @@ data:
         return
       fi
       if [[ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]]; then
-        cat > /tmp/kubeconfig <<'EOF'
+        cat > /tmp/kubeconfig <<EOF
     apiVersion: v1
     kind: Config
     clusters:
@@ -37,7 +37,7 @@ data:
       context:
         cluster: in-cluster
         user: sa
-        namespace: backup-system
+        namespace: ${USER_NAMESPACE}
     current-context: in-cluster
     EOF
         export KUBECONFIG=/tmp/kubeconfig
@@ -59,9 +59,8 @@ data:
     fi
 
     timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
-    site_dir="${BACKUP_ROOT}/${SITE_SLUG}/${timestamp}"
-    files_dir="${site_dir}/files"
-    db_dir="${site_dir}/db"
+    files_dir="${BACKUP_ROOT}/${SITE_SLUG}/files"
+    db_dir="${BACKUP_ROOT}/${SITE_SLUG}/db"
     mkdir -p "${files_dir}" "${db_dir}"
 
     files_status="skipped"
@@ -134,7 +133,7 @@ data:
       db_status="skipped"
     fi
 
-    cat > "${site_dir}/meta.json" <<EOF
+    cat > "${files_dir}/${timestamp}.meta.json" <<EOF
     {
       "timestamp": "${timestamp}",
       "namespace": "${USER_NAMESPACE}",
@@ -154,5 +153,5 @@ data:
       "voxeil.io/site-${SITE_SLUG}-backupLastRunAt=${timestamp}" \
       --overwrite >/dev/null 2>&1 || true
 
-    find "${files_dir}" -type f -name "*.tar.gz" -mtime +"${RETENTION_DAYS}" -delete || true
+    find "${files_dir}" -type f \( -name "*.tar.gz" -o -name "*.tar.zst" \) -mtime +"${RETENTION_DAYS}" -delete || true
     find "${db_dir}" -type f -name "*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete || true

@@ -5,11 +5,14 @@ import {
     renderUserResourceQuota,
     renderUserLimitRange,
     renderUserNetworkPolicy,
-    renderUserControllerRoleBinding
+    renderUserControllerRoleBinding,
+    renderUserServiceAccount,
+    renderUserRole,
+    renderUserRoleBinding
 } from "../templates/render.js";
 import { getClients, LABELS } from "../k8s/client.js";
 import { HttpError } from "../http/errors.js";
-import { ensureUserHomePvc } from "../k8s/pvc.js";
+import { ensureUserHomePvc, ensureUserBackupPvc } from "../k8s/pvc.js";
 import { ensureDatabase, ensureRole, generateDbPassword, normalizeDbName, normalizeDbUser } from "../postgres/admin.js";
 import { upsertSecret } from "../k8s/apply.js";
 
@@ -59,6 +62,12 @@ async function applyResource(resource) {
         } else if (kind === "RoleBinding") {
             const patch = rbac.patchNamespacedRoleBinding;
             await patch(name, namespace, resource, undefined, undefined, FIELD_MANAGER, undefined, true, APPLY_OPTIONS);
+        } else if (kind === "ServiceAccount") {
+            const patch = core.patchNamespacedServiceAccount;
+            await patch(name, namespace, resource, undefined, undefined, FIELD_MANAGER, undefined, true, APPLY_OPTIONS);
+        } else if (kind === "Role") {
+            const patch = rbac.patchNamespacedRole;
+            await patch(name, namespace, resource, undefined, undefined, FIELD_MANAGER, undefined, true, APPLY_OPTIONS);
         } else {
             throw new Error(`Unsupported resource kind: ${kind}`);
         }
@@ -72,6 +81,10 @@ async function applyResource(resource) {
                 await net.createNamespacedNetworkPolicy(namespace, resource);
             } else if (kind === "RoleBinding") {
                 await rbac.createNamespacedRoleBinding(namespace, resource);
+            } else if (kind === "ServiceAccount") {
+                await core.createNamespacedServiceAccount(namespace, resource);
+            } else if (kind === "Role") {
+                await rbac.createNamespacedRole(namespace, resource);
             }
         } else {
             throw error;
@@ -127,8 +140,21 @@ export async function bootstrapUserNamespace(userId) {
         const roleBinding = renderUserControllerRoleBinding(templates.controllerRoleBinding, namespace);
         await applyResource(roleBinding);
 
+        // Create backup-runner service account and RBAC
+        const backupRunnerServiceAccount = renderUserServiceAccount(templates.backupRunnerServiceAccount, namespace);
+        await applyResource(backupRunnerServiceAccount);
+        
+        const backupRunnerRole = renderUserRole(templates.backupRunnerRole, namespace);
+        await applyResource(backupRunnerRole);
+        
+        const backupRunnerRoleBinding = renderUserRoleBinding(templates.backupRunnerRoleBinding, namespace);
+        await applyResource(backupRunnerRoleBinding);
+
         // Create user home PVC
         await ensureUserHomePvc(namespace);
+
+        // Create user backup PVC
+        await ensureUserBackupPvc(namespace);
 
         // Create user database and role
         const dbNamePrefix = process.env.DB_NAME_PREFIX?.trim() || "db_";

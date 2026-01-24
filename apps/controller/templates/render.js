@@ -148,3 +148,36 @@ export function renderUserControllerRoleBinding(template, namespace) {
     };
     return roleBinding;
 }
+
+export function renderUserServiceAccount(template, namespace) {
+    const serviceAccount = clone(template);
+    serviceAccount.metadata = {
+        ...serviceAccount.metadata,
+        namespace
+    };
+    return serviceAccount;
+}
+
+export function renderUserRole(template, namespace) {
+    const role = clone(template);
+    role.metadata = {
+        ...role.metadata,
+        namespace
+    };
+    return role;
+}
+
+export function renderUserRoleBinding(template, namespace) {
+    const roleBinding = clone(template);
+    roleBinding.metadata = {
+        ...roleBinding.metadata,
+        namespace
+    };
+    if (roleBinding.subjects) {
+        roleBinding.subjects = roleBinding.subjects.map((subject) => ({
+            ...subject,
+            namespace: subject.namespace === "PLACEHOLDER_NAMESPACE" ? namespace : subject.namespace
+        }));
+    }
+    return roleBinding;
+}

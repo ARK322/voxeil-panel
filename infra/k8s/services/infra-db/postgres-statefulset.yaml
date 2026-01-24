@@ -17,6 +17,19 @@ spec:
       securityContext:
         fsGroup: 999
         fsGroupChangePolicy: "Always"
+      initContainers:
+        - name: init-permissions
+          image: alpine:3.19
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              chown -R 999:999 /var/lib/postgresql/data || true
+              chmod -R 700 /var/lib/postgresql/data || true
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
       containers:
         - name: postgres
           image: postgres:16-alpine

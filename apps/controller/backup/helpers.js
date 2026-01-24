@@ -1,32 +1,14 @@
-import { promises as fs } from "node:fs";
-import path from "node:path";
 import { LABELS } from "../k8s/client.js";
-import { USER_HOME_PVC_NAME } from "../k8s/pvc.js";
-export async function listLatestBackup(dir) {
-    try {
-        const entries = await fs.readdir(dir, { withFileTypes: true });
-        const candidates = await Promise.all(entries
-            .filter((entry) => entry.isFile() && entry.name !== "SKIPPED.txt" && !entry.name.endsWith(".txt"))
-            .map(async (entry) => {
-            const fullPath = path.join(dir, entry.name);
-            const stat = await fs.stat(fullPath);
-            return { name: entry.name, mtimeMs: stat.mtimeMs };
-        }));
-        if (candidates.length === 0)
-            return null;
-        candidates.sort((a, b) => b.mtimeMs - a.mtimeMs);
-        return candidates[0]?.name ?? null;
-    }
-    catch (error) {
-        if (error?.code === "ENOENT")
-            return null;
-        throw error;
-    }
-}
+import { USER_HOME_PVC_NAME, USER_BACKUP_PVC_NAME } from "../k8s/pvc.js";
 export function buildRestorePod(spec) {
-    const command = spec.archivePath.endsWith(".tar.zst")
-        ? `apk add --no-cache zstd >/dev/null && rm -rf /home/* /home/.[!.]* /home/..?* && tar --use-compress-program=zstd -xf ${spec.archivePath} -C /home`
-        : `apk add --no-cache gzip >/dev/null && rm -rf /home/* /home/.[!.]* /home/..?* && tar -xzf ${spec.archivePath} -C /home`;
+    // Handle "latest" by finding the most recent backup file
+    const isLatest = spec.archivePath.includes("/latest");
+    const dir = spec.archivePath.substring(0, spec.archivePath.lastIndexOf("/"));
+    const findLatestCmd = isLatest 
+        ? `latest_file=$(find "${dir}" -type f \\( -name "*.tar.gz" -o -name "*.tar.zst" \\) -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-); if [ -z "$latest_file" ]; then echo "No backup found" >&2; exit 1; fi; archive_path="$latest_file"`
+        : `archive_path="${spec.archivePath}"`;
+    
+    const command = `apk add --no-cache gzip zstd >/dev/null 2>&1 && ${findLatestCmd} && if [ -z "$archive_path" ]; then echo "Archive not found" >&2; exit 1; fi && rm -rf /home/* /home/.[!.]* /home/..?* && if echo "$archive_path" | grep -q "\\.tar\\.zst$"; then tar --use-compress-program=zstd -xf "$archive_path" -C /home; else tar -xzf "$archive_path" -C /home; fi`;
     return {
         apiVersion: "v1",
         kind: "Pod",
@@ -73,9 +55,8 @@ export function buildRestorePod(spec) {
                 },
                 {
                     name: "backups",
-                    hostPath: {
-                        path: "/backups",
-                        type: "DirectoryOrCreate"
+                    persistentVolumeClaim: {
+                        claimName: USER_BACKUP_PVC_NAME
                     }
                 }
             ]

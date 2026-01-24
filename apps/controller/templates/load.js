@@ -54,6 +54,9 @@ export async function loadUserTemplates() {
     const networkPolicyAllowIngress = await readYaml(path.join(dir, "networkpolicy-allow-ingress.yaml"));
     const networkPolicyAllowEgress = await readYaml(path.join(dir, "networkpolicy-allow-egress.yaml"));
     const controllerRoleBinding = await readYaml(path.join(dir, "controller-rolebinding.yaml"));
+    const backupRunnerServiceAccount = await readYaml(path.join(dir, "backup-runner-serviceaccount.yaml"));
+    const backupRunnerRole = await readYaml(path.join(dir, "backup-runner-role.yaml"));
+    const backupRunnerRoleBinding = await readYaml(path.join(dir, "backup-runner-rolebinding.yaml"));
     userTemplatesCached = {
         namespace,
         resourceQuota,
@@ -61,7 +64,10 @@ export async function loadUserTemplates() {
         networkPolicyBase,
         networkPolicyAllowIngress,
         networkPolicyAllowEgress,
-        controllerRoleBinding
+        controllerRoleBinding,
+        backupRunnerServiceAccount,
+        backupRunnerRole,
+        backupRunnerRoleBinding
     };
     return userTemplatesCached;
 }

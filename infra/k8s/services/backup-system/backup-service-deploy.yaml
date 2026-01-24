@@ -30,8 +30,6 @@ spec:
             - name: BACKUPS_ROOT
               value: /backups
           volumeMounts:
-            - name: backups
-              mountPath: /backups
             - name: scripts
               mountPath: /scripts
               readOnly: true
@@ -67,9 +65,6 @@ spec:
               drop:
                 - ALL
       volumes:
-        - name: backups
-          persistentVolumeClaim:
-            claimName: backups-pvc
         - name: scripts
           configMap:
             name: backup-scripts

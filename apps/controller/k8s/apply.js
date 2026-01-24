@@ -106,3 +106,18 @@ export async function upsertSecret(secret) {
         }
     }
 }
+export async function upsertConfigMap(configMap) {
+    const { core } = getClients();
+    const name = configMap.metadata?.name ?? "config";
+    const namespace = configMap.metadata?.namespace ?? "default";
+    try {
+        const patch = core.patchNamespacedConfigMap;
+        await patch(name, namespace, configMap, undefined, undefined, FIELD_MANAGER, undefined, true, APPLY_OPTIONS);
+    } catch (error) {
+        if (error?.response?.statusCode === 404) {
+            await core.createNamespacedConfigMap(namespace, configMap);
+        } else {
+            throw error;
+        }
+    }
+}
