@@ -21,10 +21,27 @@ spec:
             - /bin/sh
             - -c
             - |
-              # Fix permissions for postgres data directory
-              # Postgres runs as UID 999, so we need to ensure the directory is owned by that user
-              chown -R 999:999 /var/lib/postgresql/data
-              chmod 700 /var/lib/postgresql/data
+              set -e
+              DATA_DIR="/var/lib/postgresql/data"
+              
+              # Check if directory exists
+              if [ ! -d "$DATA_DIR" ]; then
+                echo "Data directory does not exist, creating it..."
+                mkdir -p "$DATA_DIR"
+              fi
+              
+              # Check if directory is empty or uninitialized (no PG_VERSION file)
+              # Only fix permissions if directory is empty or not yet initialized by postgres
+              if [ ! -f "$DATA_DIR/PG_VERSION" ]; then
+                echo "Data directory is empty or uninitialized, fixing permissions..."
+                chown -R 999:999 "$DATA_DIR"
+                chmod 700 "$DATA_DIR"
+                echo "Permissions fixed for postgres user (UID 999)"
+              else
+                echo "Postgres data directory already initialized, skipping permission fix"
+                # Just ensure the directory is accessible (but don't change ownership of existing data)
+                # Postgres will handle its own permissions for initialized databases
+              fi
           securityContext:
             runAsUser: 0
           volumeMounts:
