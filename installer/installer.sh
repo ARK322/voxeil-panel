@@ -1056,6 +1056,7 @@ if [[ ! -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml" ]]; then
 fi
 
 # Check if Kyverno is installed and might cause webhook timeouts
+# Also check for orphaned Kyverno webhooks (namespace deleted but webhooks remain)
 if kubectl get namespace kyverno >/dev/null 2>&1; then
   echo "Kyverno namespace detected, checking webhook readiness..."
   # Wait a moment for Kyverno webhooks to be responsive
@@ -1090,6 +1091,30 @@ if kubectl get namespace kyverno >/dev/null 2>&1; then
   echo "Proceeding with cert-manager installation..."
 else
   echo "Kyverno namespace not found (will be installed later)"
+  # Check for orphaned Kyverno webhooks (namespace deleted but webhooks remain)
+  echo "Checking for orphaned Kyverno webhooks..."
+  orphaned_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
+  orphaned_mutating="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
+  
+  if [ -n "${orphaned_webhooks}" ] || [ -n "${orphaned_mutating}" ]; then
+    echo "⚠ Found orphaned Kyverno webhooks (namespace deleted but webhooks remain)"
+    echo "  Cleaning up orphaned webhooks to prevent cert-manager installation issues..."
+    
+    for webhook in ${orphaned_webhooks}; do
+      echo "  Deleting validating webhook: ${webhook}"
+      kubectl delete validatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
+    done
+    
+    for webhook in ${orphaned_mutating}; do
+      echo "  Deleting mutating webhook: ${webhook}"
+      kubectl delete mutatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
+    done
+    
+    echo "  ✓ Orphaned webhooks cleaned up"
+    sleep 2
+  else
+    echo "  No orphaned webhooks found"
+  fi
 fi
 
 # Use retry_apply to handle webhook timeouts
