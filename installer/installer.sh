@@ -1122,6 +1122,16 @@ if ! kubectl wait --for=condition=Ready pod -l app=postgres -n infra-db --timeou
   echo ""
   kubectl describe pod -l app=postgres -n infra-db || true
   echo ""
+  echo "=== Postgres Pod Logs (last 100 lines) ==="
+  local postgres_pod
+  postgres_pod="$(kubectl get pod -n infra-db -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
+  if [ -n "${postgres_pod}" ]; then
+    kubectl logs "${postgres_pod}" -n infra-db --tail=100 || true
+    echo ""
+    echo "=== Init Container Logs (if any) ==="
+    kubectl logs "${postgres_pod}" -n infra-db -c init-permissions --tail=100 2>/dev/null || true
+  fi
+  echo ""
   echo "=== PVC Status ==="
   kubectl get pvc -n infra-db || true
   exit 1

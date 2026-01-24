@@ -14,6 +14,22 @@ spec:
       labels:
         app: postgres
     spec:
+      initContainers:
+        - name: init-permissions
+          image: busybox:1.36
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Fix permissions for postgres data directory
+              # Postgres runs as UID 999, so we need to ensure the directory is owned by that user
+              chown -R 999:999 /var/lib/postgresql/data
+              chmod 700 /var/lib/postgresql/data
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
       containers:
         - name: postgres
           image: postgres:16-alpine
