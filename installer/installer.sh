@@ -1070,26 +1070,26 @@ fi
 # Note: Platform PVCs will be bound automatically when controller/panel pods are scheduled
 # (WaitForFirstConsumer: PVC binds when pod is scheduled, not before)
 
-# Validate controller image before applying deployment
+# Validate controller image before applying deployment (non-blocking)
 log_step "Validating controller image"
 if ! validate_image "${CONTROLLER_IMAGE}"; then
-  log_error "Controller image validation failed: ${CONTROLLER_IMAGE}"
-  echo "Please ensure:"
-  echo "  - Image exists and is accessible"
-  echo "  - Network connectivity is available"
-  echo "  - If using private registry, set GHCR_USERNAME and GHCR_TOKEN"
-  exit 1
+  echo "WARNING: Controller image validation failed: ${CONTROLLER_IMAGE}"
+  echo "Continuing anyway - k3s will attempt to pull the image during deployment."
+  echo "If the image doesn't exist, the deployment will fail and you'll need to:"
+  echo "  - Build and push the image to ${CONTROLLER_IMAGE}"
+  echo "  - Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
+  echo ""
 fi
 
-# Validate panel image before applying deployment
+# Validate panel image before applying deployment (non-blocking)
 log_step "Validating panel image"
 if ! validate_image "${PANEL_IMAGE}"; then
-  log_error "Panel image validation failed: ${PANEL_IMAGE}"
-  echo "Please ensure:"
-  echo "  - Image exists and is accessible"
-  echo "  - Network connectivity is available"
-  echo "  - If using private registry, set GHCR_USERNAME and GHCR_TOKEN"
-  exit 1
+  echo "WARNING: Panel image validation failed: ${PANEL_IMAGE}"
+  echo "Continuing anyway - k3s will attempt to pull the image during deployment."
+  echo "If the image doesn't exist, the deployment will fail and you'll need to:"
+  echo "  - Build and push the image to ${PANEL_IMAGE}"
+  echo "  - Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
+  echo ""
 fi
 
 log_step "Applying infra DB manifests"
