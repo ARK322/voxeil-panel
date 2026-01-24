@@ -43,6 +43,14 @@ spec:
           ports:
             - containerPort: 3306
               name: mysql
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: MYSQL_ROOT_PASSWORD
               valueFrom:
@@ -115,6 +123,14 @@ spec:
           ports:
             - containerPort: 6379
               name: redis
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
 ---
 apiVersion: v1
 kind: Service
@@ -151,6 +167,14 @@ spec:
       containers:
         - name: php-fpm
           image: mailcow/php-fpm-mailcow:latest
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
           env:
             - name: DBNAME
               valueFrom:
@@ -205,6 +229,16 @@ spec:
           ports:
             - containerPort: 80
               name: http
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
           env:
             - name: PHPFPM_HOST
               value: mailcow-php-fpm.mail-zone.svc.cluster.local
@@ -261,6 +295,16 @@ spec:
               name: smtps
             - containerPort: 587
               name: submission
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
           env:
             - name: DBNAME
               valueFrom:
@@ -347,6 +391,16 @@ spec:
               name: pop3
             - containerPort: 995
               name: pop3s
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 101
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - NET_BIND_SERVICE
           env:
             - name: DBNAME
               valueFrom:
