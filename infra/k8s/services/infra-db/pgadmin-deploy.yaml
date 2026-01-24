@@ -13,6 +13,9 @@ spec:
       labels:
         app: pgadmin
     spec:
+      securityContext:
+        fsGroup: 5050
+        fsGroupChangePolicy: "Always"
       initContainers:
         - name: init-permissions
           image: alpine:3.19
@@ -59,14 +62,22 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          startupProbe:
+            httpGet:
+              path: /misc/ping
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 30
           readinessProbe:
             httpGet:
               path: /misc/ping
               port: 80
-            initialDelaySeconds: 30
+            initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 5
-            failureThreshold: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /misc/ping
