@@ -90,8 +90,23 @@ wait_for_k3s_api() {
 # Check if StorageClass exists and log its volumeBindingMode
 check_storageclass() {
   local sc_name="${1:-local-path}"
+  local max_attempts=30
+  local attempt=0
+  
+  # Retry loop to wait for StorageClass to be available (k3s may need a moment to create it)
+  while [ ${attempt} -lt ${max_attempts} ]; do
+    if kubectl get storageclass "${sc_name}" >/dev/null 2>&1; then
+      break
+    fi
+    attempt=$((attempt + 1))
+    if [ $((attempt % 5)) -eq 0 ]; then
+      echo "Waiting for StorageClass '${sc_name}' to be available... (${attempt}/${max_attempts})"
+    fi
+    sleep 1
+  done
+  
   if ! kubectl get storageclass "${sc_name}" >/dev/null 2>&1; then
-    log_error "StorageClass '${sc_name}' not found. k3s should provide this by default."
+    log_error "StorageClass '${sc_name}' not found after ${max_attempts} attempts. k3s should provide this by default."
     echo "Available StorageClasses:"
     kubectl get storageclass || true
     return 1
