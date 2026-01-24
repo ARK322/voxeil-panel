@@ -1050,12 +1050,36 @@ if kubectl get namespace kyverno >/dev/null 2>&1; then
   echo "Kyverno namespace detected, checking webhook readiness..."
   # Wait a moment for Kyverno webhooks to be responsive
   sleep 2
-  # Check if Kyverno admission controller is ready
-  if kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
-    if ! kubectl wait --for=condition=Available deployment/kyverno-admission-controller -n kyverno --timeout=30s >/dev/null 2>&1; then
-      echo "Warning: Kyverno admission controller may not be fully ready, but proceeding..."
+  echo "Checking Kyverno deployments..."
+  
+  # Check if Kyverno admission controller deployment exists
+  # Use a short timeout for get command to avoid hanging
+  if kubectl get deployment kyverno-admission-controller -n kyverno --request-timeout=5s >/dev/null 2>&1; then
+    echo "Checking Kyverno admission controller readiness (timeout: 30s)..."
+    # kubectl wait has a timeout, make it non-blocking
+    # Suppress stderr to avoid noise, but allow exit code to be checked
+    if kubectl wait --for=condition=Available deployment/kyverno-admission-controller -n kyverno --timeout=30s --request-timeout=35s 2>/dev/null; then
+      echo "✓ Kyverno admission controller is ready"
+    else
+      echo "⚠ Warning: Kyverno admission controller may not be fully ready (timeout or not available)"
+      echo "  Proceeding anyway - this may cause webhook timeouts during cert-manager installation."
+    fi
+  else
+    echo "Kyverno admission controller deployment not found (may be installing or using different name)"
+  fi
+  
+  # Also check for other common Kyverno deployments (non-blocking)
+  if kubectl get deployment kyverno -n kyverno --request-timeout=5s >/dev/null 2>&1; then
+    echo "Checking Kyverno main deployment readiness (timeout: 30s)..."
+    if kubectl wait --for=condition=Available deployment/kyverno -n kyverno --timeout=30s --request-timeout=35s 2>/dev/null; then
+      echo "✓ Kyverno main deployment is ready"
+    else
+      echo "⚠ Kyverno main deployment not ready yet (proceeding anyway)"
     fi
   fi
+  echo "Proceeding with cert-manager installation..."
+else
+  echo "Kyverno namespace not found (will be installed later)"
 fi
 
 # Use retry_apply to handle webhook timeouts
