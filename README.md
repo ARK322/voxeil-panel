@@ -23,6 +23,16 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/voxeil.sh
 ```
 
+**About voxeil.sh:**
+- `voxeil.sh` is a temporary entrypoint script that you download and run
+- It is **not** installed permanently by default
+- It is **not** removed by `uninstall` or `purge-node` commands
+- You can safely delete and re-download it at any time
+
+### About voxeil.sh lifecycle
+
+The `voxeil.sh` script lives wherever you download it (e.g., `/tmp`, `/usr/local/bin`, or any directory of your choice). The `uninstall` and `purge-node` commands only remove Voxeil platform components and cluster resources—they do not remove the entrypoint script itself. Note that if you download the script to `/tmp`, your operating system may automatically clean it on reboot.
+
 ### Install
 
 **Basic installation:**
@@ -76,9 +86,11 @@ bash /tmp/voxeil.sh --ref v1.0.0 install
 
 **This removes ONLY Voxeil platform resources. It does NOT remove k3s, docker, or system namespaces.**
 
-**Safe uninstall (default):**
+**Note:** `uninstall` is safe and reversible—it only removes Voxeil components. For a complete node wipe (including k3s), use `purge-node` instead (see below).
+
+**Safe uninstall:**
 ```bash
-bash /tmp/voxeil.sh uninstall
+bash /tmp/voxeil.sh uninstall --force
 ```
 
 **Uninstall flags:**
@@ -121,9 +133,9 @@ bash /tmp/voxeil.sh uninstall --keep-volumes
 
 ### Purge Node (Full Reset)
 
-⚠️ **WARNING: This will delete the Kubernetes cluster on this node. This is irreversible.**
+⚠️ **WARNING: This will delete the Kubernetes cluster on this node. This is irreversible and different from `uninstall`.**
 
-**This completely wipes the node:**
+**Unlike `uninstall` (which only removes Voxeil platform resources), `purge-node` completely wipes the node:**
 - Removes k3s binaries and `/usr/local/bin/k3s-uninstall.sh`
 - Removes `/var/lib/rancher` and `/etc/rancher`
 - Removes `/var/lib/voxeil` state registry
@@ -182,7 +194,7 @@ Doctor mode **never modifies the system** and shows recommended next commands in
 **I want to reinstall Voxeil:**
 ```bash
 # Uninstall existing installation
-bash /tmp/voxeil.sh uninstall
+bash /tmp/voxeil.sh uninstall --force
 
 # Reinstall
 bash /tmp/voxeil.sh install
@@ -199,10 +211,10 @@ bash /tmp/voxeil.sh uninstall --force
 
 **I want to reuse the node for something else:**
 ```bash
-# Uninstall Voxeil resources
-bash /tmp/voxeil.sh uninstall
+# Uninstall Voxeil resources (safe, removes only Voxeil components)
+bash /tmp/voxeil.sh uninstall --force
 
-# If you also want to remove k3s (full node wipe)
+# If you also want to remove k3s (irreversible, full node wipe)
 bash /tmp/voxeil.sh purge-node --force
 ```
 ### Installation Outputs
