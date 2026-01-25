@@ -589,14 +589,14 @@ box_line_center "${ORANGE}██╗   ██╗${GRAY}  ██████╗   
 box_line_center "${ORANGE}██║   ██║${GRAY} ██╔═══██╗  ╚██╗██╔╝  ██╔════╝  ██║  ██║${NC}"
 box_line_center "${ORANGE}██║   ██║${GRAY} ██║   ██║   ╚███╔╝   █████╗    ██║  ██║${NC}"
 box_line_center "${ORANGE}╚██╗ ██╔╝${GRAY} ██║   ██║   ██╔██╗   ██╔══╝    ██║  ██║${NC}"
-box_line_center "${ORANGE} ╚████╔╝ ${GRAY} ╚██████╔╝  ██╔╝ ██╗  ███████╗  ██║  ███████╗${NC}"
-box_line_center "${ORANGE}  ╚═══╝  ${GRAY}  ╚═════╝   ╚═╝  ╚═╝  ╚══════╝  ╚═╝  ╚══════╝${NC}"
+box_line_center "${ORANGE} ╚████╔╝ ${GRAY} ╚██████╔╝  ██╔╝ ██╗  ███████╗  ██║   ███████╗${NC}"
+box_line_center "${ORANGE}  ╚═══╝  ${GRAY}  ╚═════╝   ╚═╝  ╚═╝  ╚══════╝  ╚═╝   ╚══════╝${NC}"
 
 printf "║%*s║\n" "$INNER" ""
 box_line_center "${GRAY}VOXEIL PANEL${NC}"
 box_line_center "${GRAY}Kubernetes Hosting Control Panel${NC}"
 printf "║%*s║\n" "$INNER" ""
-box_line_center "${GRAY}Secure  •  Isolated  •  Production-Grade Infrastructure${NC}"
+box_line_center "${GRAY}Secure • Isolated • Production-Grade Infrastructure${NC}"
 printf "║%*s║\n" "$INNER" ""
 echo "╚════════════════════════════════════════════════════════════════════════╝"
 echo
