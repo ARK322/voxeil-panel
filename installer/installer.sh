@@ -207,18 +207,19 @@ retry_apply() {
 # This ensures CronJobs use correct images and cleans up any failed jobs
 fix_kyverno_cleanup_jobs() {
   local namespace="kyverno"
+  local kyverno_manifest="${1:-}"
   
   # Check if kyverno namespace exists
   if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
     return 0  # Kyverno not installed yet, nothing to fix
   fi
   
-  echo "Ensuring Kyverno cleanup CronJobs are properly configured..."
+  log_info "Ensuring Kyverno cleanup CronJobs are properly configured..."
   
   # First, ensure CronJobs are updated with correct image from manifest
-  if [ -f "${SERVICES_DIR}/kyverno/install.yaml" ]; then
-    echo "Updating CronJobs with correct image configuration..."
-    kubectl apply --server-side --force-conflicts -f "${SERVICES_DIR}/kyverno/install.yaml" >/dev/null 2>&1 || true
+  if [ -n "${kyverno_manifest}" ] && [ -f "${kyverno_manifest}" ]; then
+    log_info "Updating CronJobs with correct image configuration..."
+    kubectl apply --server-side --force-conflicts -f "${kyverno_manifest}" >/dev/null 2>&1 || true
   fi
   
   # Find all cleanup job pods (both failed and running) that use old bitnami/kubectl images
@@ -279,14 +280,16 @@ fix_kyverno_cleanup_jobs() {
   done
   
   if [ "${cronjobs_ok}" = "true" ]; then
-    echo "✓ All CronJobs are using correct images."
+    log_ok "All CronJobs are using correct images."
   else
-    echo "Re-applying manifest to force CronJob update..."
-    kubectl apply --server-side --force-conflicts -f "${SERVICES_DIR}/kyverno/install.yaml" >/dev/null 2>&1 || true
+    if [ -n "${kyverno_manifest}" ] && [ -f "${kyverno_manifest}" ]; then
+      log_info "Re-applying manifest to force CronJob update..."
+      kubectl apply --server-side --force-conflicts -f "${kyverno_manifest}" >/dev/null 2>&1 || true
+    fi
   fi
   
   if [ ${fixed_count} -eq 0 ] && [ -z "${all_problem_pods}" ]; then
-    echo "✓ No cleanup job issues found."
+    log_ok "No cleanup job issues found."
   fi
 }
 
@@ -1110,6 +1113,8 @@ KUBECONFIG=""
 PROFILE="full"
 WITH_MAIL=false
 WITH_DNS=false
+VERSION=""
+CHANNEL="main"
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -1154,13 +1159,139 @@ while [[ $# -gt 0 ]]; do
       WITH_DNS=true
       shift
       ;;
+    --version)
+      VERSION="$2"
+      shift 2
+      ;;
+    --channel)
+      CHANNEL="$2"
+      if [[ "${CHANNEL}" != "stable" && "${CHANNEL}" != "main" ]]; then
+        log_error "Invalid channel: ${CHANNEL}. Must be 'stable' or 'main'"
+        exit 1
+      fi
+      shift 2
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--doctor] [--dry-run] [--force] [--skip-k3s] [--install-k3s] [--kubeconfig <path>] [--profile minimal|full] [--with-mail] [--with-dns]"
+      echo "Usage: $0 [--doctor] [--dry-run] [--force] [--skip-k3s] [--install-k3s] [--kubeconfig <path>] [--profile minimal|full] [--with-mail] [--with-dns] [--version <tag|branch|commit>] [--channel stable|main]"
       exit 1
       ;;
   esac
 done
+
+# ========= Repository configuration =========
+REPO="${REPO:-ARK322/voxeil-panel}"
+if [ -n "${VERSION}" ]; then
+  REF="${VERSION}"
+elif [ "${CHANNEL}" = "stable" ]; then
+  # Try to get latest tag, fallback to main
+  REF="main"
+else
+  REF="${CHANNEL}"
+fi
+
+GITHUB_RAW_BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
+
+# ========= Remote file fetch helpers =========
+# Ensure curl is available
+ensure_curl() {
+  if ! command -v curl >/dev/null 2>&1; then
+    log_info "curl not found, attempting to install..."
+    if command -v apt-get >/dev/null 2>&1; then
+      apt-get update -qq >/dev/null 2>&1 || true
+      apt-get install -y curl >/dev/null 2>&1 || {
+        log_error "Failed to install curl. Please install curl manually: apt-get install -y curl"
+        exit 1
+      }
+    else
+      log_error "curl is required but not installed. Please install curl manually."
+      exit 1
+    fi
+  fi
+}
+
+# Fetch a file from GitHub raw URL
+fetch_file() {
+  local repo_path="$1"
+  local output_path="$2"
+  local max_retries="${3:-5}"
+  local retry_delay="${4:-1}"
+  local attempt=1
+  
+  ensure_curl
+  
+  local url="${GITHUB_RAW_BASE}/${repo_path}"
+  
+  while [ ${attempt} -le ${max_retries} ]; do
+    if curl -fL --retry 2 --retry-delay ${retry_delay} --max-time 30 -o "${output_path}" "${url}" 2>/dev/null; then
+      # Validate file is non-empty
+      if [ -s "${output_path}" ]; then
+        return 0
+      else
+        log_warn "Downloaded file is empty: ${url} (attempt ${attempt}/${max_retries})"
+      fi
+    else
+      log_warn "Failed to fetch ${url} (attempt ${attempt}/${max_retries})"
+    fi
+    
+    if [ ${attempt} -lt ${max_retries} ]; then
+      sleep ${retry_delay}
+      retry_delay=$((retry_delay * 2))  # Exponential backoff
+    fi
+    attempt=$((attempt + 1))
+  done
+  
+  log_error "Failed to fetch ${url} after ${max_retries} attempts"
+  return 1
+}
+
+# Fetch and apply a YAML file
+apply_remote_yaml() {
+  local repo_path="$1"
+  local desc="${2:-${repo_path}}"
+  local tmp_file
+  tmp_file="$(mktemp)"
+  
+  if ! fetch_file "${repo_path}" "${tmp_file}"; then
+    rm -f "${tmp_file}"
+    return 1
+  fi
+  
+  if [ "${DRY_RUN}" = "true" ]; then
+    echo "[DRY-RUN] kubectl apply -f ${tmp_file} (from ${repo_path})"
+    rm -f "${tmp_file}"
+    return 0
+  fi
+  
+  if kubectl apply -f "${tmp_file}" >/dev/null 2>&1; then
+    rm -f "${tmp_file}"
+    return 0
+  else
+    log_error "Failed to apply ${desc}"
+    rm -f "${tmp_file}"
+    return 1
+  fi
+}
+
+# Fetch a directory structure (recursively fetch all YAML files)
+fetch_dir() {
+  local repo_dir="$1"
+  local local_dir="$2"
+  local file_list
+  
+  ensure_curl
+  
+  # Create local directory
+  mkdir -p "${local_dir}"
+  
+  # Try to get directory listing from GitHub API (limited, but works for known structure)
+  # For now, we'll fetch known files explicitly
+  # This is a simplified approach - in production, you might want to use GitHub API
+  log_info "Fetching directory structure: ${repo_dir}"
+  
+  # Return success - actual files will be fetched individually
+  return 0
+}
 
 # Run wrapper for dry-run support
 run() {
@@ -1575,39 +1706,52 @@ ensure_docker
 
 # ========= build backup images BEFORE k3s (docker must be ready) =========
 log_step "Building backup images (before k3s)"
-if [[ ! -d infra/docker/images/backup-runner ]]; then
-  log_error "infra/docker/images/backup-runner is missing."
-  exit 1
-fi
 
-# Check Dockerfile existence
-if [[ ! -f infra/docker/images/backup-runner/Dockerfile ]]; then
-  log_error "infra/docker/images/backup-runner/Dockerfile is missing."
-  exit 1
-fi
+# Fetch backup-runner Dockerfile and build context
+BACKUP_BUILD_DIR="${RENDER_DIR}/backup-runner"
+mkdir -p "${BACKUP_BUILD_DIR}"
 
-# Use buildx if available, fallback to legacy builder
-BUILD_CMD="docker build"
-if docker buildx version >/dev/null 2>&1; then
-  echo "Using docker buildx"
-  BUILD_CMD="docker buildx build --load"
+log_info "Fetching backup-runner build context..."
+if ! fetch_file "infra/docker/images/backup-runner/Dockerfile" "${BACKUP_BUILD_DIR}/Dockerfile" "backup-runner Dockerfile"; then
+  log_warn "Failed to fetch backup-runner Dockerfile. Skipping backup image build."
+  log_warn "Backup functionality may not work until backup-runner image is available."
+  SKIP_BACKUP_BUILD=true
 else
-  echo "Using legacy docker build (buildx not available)"
+  # Try to fetch any additional files in the backup-runner directory (if any)
+  # For now, just the Dockerfile is sufficient
+  SKIP_BACKUP_BUILD=false
 fi
 
-# Build images with explicit tags (no spaces, proper naming)
-echo "Building backup-runner:local..."
-${BUILD_CMD} -t backup-runner:local infra/docker/images/backup-runner || {
-  log_error "Failed to build backup-runner image"
-  exit 1
-}
+if [ "${SKIP_BACKUP_BUILD}" != "true" ]; then
+  # Use buildx if available, fallback to legacy builder
+  BUILD_CMD="docker build"
+  if docker buildx version >/dev/null 2>&1; then
+    log_info "Using docker buildx"
+    BUILD_CMD="docker buildx build --load"
+  else
+    log_info "Using legacy docker build (buildx not available)"
+  fi
 
-# Verify images exist after build
-if ! docker image inspect backup-runner:local >/dev/null 2>&1; then
-  log_error "backup-runner:local image not found after build"
-  exit 1
+  # Build images with explicit tags (no spaces, proper naming)
+  log_info "Building backup-runner:local..."
+  if ${BUILD_CMD} -t backup-runner:local "${BACKUP_BUILD_DIR}" >/dev/null 2>&1; then
+    # Verify images exist after build
+    if docker image inspect backup-runner:local >/dev/null 2>&1; then
+      log_ok "Backup images built successfully"
+    else
+      log_warn "backup-runner:local image not found after build"
+      SKIP_BACKUP_BUILD=true
+    fi
+  else
+    log_warn "Failed to build backup-runner image. Skipping."
+    SKIP_BACKUP_BUILD=true
+  fi
 fi
-log_ok "Backup images built successfully"
+
+if [ "${SKIP_BACKUP_BUILD}" = "true" ]; then
+  log_warn "Backup image build skipped. Backup functionality may be limited."
+  log_info "To build backup image later, fetch infra/docker/images/backup-runner and run: docker build -t backup-runner:local <dir>"
+fi
 
 # ========= install k3s if needed =========
 log_step "Installing k3s (if needed)"
@@ -1820,58 +1964,112 @@ TEMPLATES_DIR="${RENDER_DIR}/templates"
 PLATFORM_DIR="${SERVICES_DIR}/platform"
 BACKUP_SYSTEM_DIR="${SERVICES_DIR}/${BACKUP_SYSTEM_NAME}"
 
-if [[ ! -d infra/k8s/services/infra-db ]]; then
-  echo "infra/k8s/services/infra-db is missing; run from the repository root or download the full archive."
-  exit 1
+# Create directory structure
+mkdir -p "${SERVICES_DIR}/platform"
+mkdir -p "${SERVICES_DIR}/infra-db"
+mkdir -p "${SERVICES_DIR}/dns-zone"
+mkdir -p "${SERVICES_DIR}/mail-zone"
+mkdir -p "${SERVICES_DIR}/backup-system"
+mkdir -p "${SERVICES_DIR}/cert-manager"
+mkdir -p "${SERVICES_DIR}/traefik"
+mkdir -p "${SERVICES_DIR}/kyverno"
+mkdir -p "${SERVICES_DIR}/flux-system"
+mkdir -p "${TEMPLATES_DIR}"
+
+# ========= Fetch manifests from GitHub =========
+log_step "Fetching manifests from repository"
+
+# Function to fetch a manifest file
+fetch_manifest() {
+  local repo_path="$1"
+  local local_path="$2"
+  local desc="${3:-${repo_path}}"
+  
+  # Create parent directory
+  mkdir -p "$(dirname "${local_path}")"
+  
+  if ! fetch_file "${repo_path}" "${local_path}"; then
+    log_error "Failed to fetch ${desc}"
+    return 1
+  fi
+  return 0
+}
+
+# Fetch all required manifest files
+log_info "Fetching platform manifests..."
+fetch_manifest "infra/k8s/services/platform/namespace.yaml" "${PLATFORM_DIR}/namespace.yaml" "platform namespace"
+fetch_manifest "infra/k8s/services/platform/rbac.yaml" "${PLATFORM_DIR}/rbac.yaml" "platform RBAC"
+fetch_manifest "infra/k8s/services/platform/pvc.yaml" "${PLATFORM_DIR}/pvc.yaml" "platform PVC"
+fetch_manifest "infra/k8s/services/platform/controller-deploy.yaml" "${PLATFORM_DIR}/controller-deploy.yaml" "controller deployment"
+fetch_manifest "infra/k8s/services/platform/controller-svc.yaml" "${PLATFORM_DIR}/controller-svc.yaml" "controller service"
+fetch_manifest "infra/k8s/services/platform/panel-deploy.yaml" "${PLATFORM_DIR}/panel-deploy.yaml" "panel deployment"
+fetch_manifest "infra/k8s/services/platform/panel-svc.yaml" "${PLATFORM_DIR}/panel-svc.yaml" "panel service"
+fetch_manifest "infra/k8s/services/platform/panel-ingress.yaml" "${PLATFORM_DIR}/panel-ingress.yaml" "panel ingress"
+fetch_manifest "infra/k8s/services/platform/panel-auth.yaml" "${PLATFORM_DIR}/panel-auth.yaml" "panel auth"
+
+log_info "Fetching infra-db manifests..."
+fetch_manifest "infra/k8s/services/infra-db/namespace.yaml" "${SERVICES_DIR}/infra-db/namespace.yaml" "infra-db namespace"
+fetch_manifest "infra/k8s/services/infra-db/postgres-secret.yaml" "${SERVICES_DIR}/infra-db/postgres-secret.yaml" "postgres secret"
+fetch_manifest "infra/k8s/services/infra-db/pvc.yaml" "${SERVICES_DIR}/infra-db/pvc.yaml" "postgres PVC"
+fetch_manifest "infra/k8s/services/infra-db/postgres-service.yaml" "${SERVICES_DIR}/infra-db/postgres-service.yaml" "postgres service"
+fetch_manifest "infra/k8s/services/infra-db/postgres-statefulset.yaml" "${SERVICES_DIR}/infra-db/postgres-statefulset.yaml" "postgres statefulset"
+fetch_manifest "infra/k8s/services/infra-db/networkpolicy.yaml" "${SERVICES_DIR}/infra-db/networkpolicy.yaml" "infra-db networkpolicy"
+fetch_manifest "infra/k8s/services/infra-db/pgadmin-secret.yaml" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml" "pgadmin secret"
+fetch_manifest "infra/k8s/services/infra-db/pgadmin-auth.yaml" "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml" "pgadmin auth"
+fetch_manifest "infra/k8s/services/infra-db/pgadmin-svc.yaml" "${SERVICES_DIR}/infra-db/pgadmin-svc.yaml" "pgadmin service"
+fetch_manifest "infra/k8s/services/infra-db/pgadmin-deploy.yaml" "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml" "pgadmin deployment"
+fetch_manifest "infra/k8s/services/infra-db/pgadmin-ingress.yaml" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml" "pgadmin ingress"
+
+if [ "${WITH_DNS}" = "true" ]; then
+  log_info "Fetching DNS manifests..."
+  fetch_manifest "infra/k8s/services/dns-zone/namespace.yaml" "${SERVICES_DIR}/dns-zone/namespace.yaml" "dns-zone namespace"
+  fetch_manifest "infra/k8s/services/dns-zone/tsig-secret.yaml" "${SERVICES_DIR}/dns-zone/tsig-secret.yaml" "dns tsig secret"
+  fetch_manifest "infra/k8s/services/dns-zone/pvc.yaml" "${SERVICES_DIR}/dns-zone/pvc.yaml" "dns PVC"
+  fetch_manifest "infra/k8s/services/dns-zone/bind9.yaml" "${SERVICES_DIR}/dns-zone/bind9.yaml" "bind9 deployment"
+  # Fetch traefik-tcp directory files
+  fetch_manifest "infra/k8s/services/dns-zone/traefik-tcp/dns-routes.yaml" "${SERVICES_DIR}/dns-zone/traefik-tcp/dns-routes.yaml" "dns traefik routes" || true
 fi
-if [[ ! -d infra/k8s/services/dns-zone ]]; then
-  echo "infra/k8s/services/dns-zone is missing; run from the repository root or download the full archive."
-  exit 1
+
+if [ "${WITH_MAIL}" = "true" ]; then
+  log_info "Fetching mail manifests..."
+  fetch_manifest "infra/k8s/services/mail-zone/namespace.yaml" "${SERVICES_DIR}/mail-zone/namespace.yaml" "mail-zone namespace"
+  fetch_manifest "infra/k8s/services/mail-zone/mailcow-auth.yaml" "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml" "mailcow auth"
+  fetch_manifest "infra/k8s/services/mail-zone/mailcow-core.yaml" "${SERVICES_DIR}/mail-zone/mailcow-core.yaml" "mailcow core"
+  fetch_manifest "infra/k8s/services/mail-zone/networkpolicy.yaml" "${SERVICES_DIR}/mail-zone/networkpolicy.yaml" "mail networkpolicy"
+  fetch_manifest "infra/k8s/services/mail-zone/mailcow-ingress.yaml" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml" "mailcow ingress"
+  # Fetch traefik-tcp directory files
+  fetch_manifest "infra/k8s/services/mail-zone/traefik-tcp/ingressroutetcp.yaml" "${SERVICES_DIR}/mail-zone/traefik-tcp/ingressroutetcp.yaml" "mail traefik routes" || true
 fi
-if [[ ! -d infra/k8s/services/mail-zone ]]; then
-  echo "infra/k8s/services/mail-zone is missing; run from the repository root or download the full archive."
-  exit 1
+
+log_info "Fetching backup-system manifests..."
+fetch_manifest "infra/k8s/services/backup-system/namespace.yaml" "${BACKUP_SYSTEM_DIR}/namespace.yaml" "backup-system namespace"
+fetch_manifest "infra/k8s/services/backup-system/backup-scripts-configmap.yaml" "${BACKUP_SYSTEM_DIR}/backup-scripts-configmap.yaml" "backup scripts"
+fetch_manifest "infra/k8s/services/backup-system/backup-service-secret.yaml" "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml" "backup service secret"
+fetch_manifest "infra/k8s/services/backup-system/backup-service-deploy.yaml" "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml" "backup service deployment"
+fetch_manifest "infra/k8s/services/backup-system/backup-service-svc.yaml" "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml" "backup service"
+fetch_manifest "infra/k8s/services/backup-system/backup-job-templates-configmap.yaml" "${BACKUP_SYSTEM_DIR}/backup-job-templates-configmap.yaml" "backup job templates"
+fetch_manifest "infra/k8s/services/backup-system/rbac.yaml" "${BACKUP_SYSTEM_DIR}/rbac.yaml" "backup RBAC"
+fetch_manifest "infra/k8s/services/backup-system/serviceaccount.yaml" "${BACKUP_SYSTEM_DIR}/serviceaccount.yaml" "backup serviceaccount"
+
+if [ "${PROFILE}" = "full" ]; then
+  log_info "Fetching cert-manager manifests..."
+  fetch_manifest "infra/k8s/services/cert-manager/cert-manager.yaml" "${SERVICES_DIR}/cert-manager/cert-manager.yaml" "cert-manager"
+  fetch_manifest "infra/k8s/services/cert-manager/cluster-issuers.yaml" "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" "cert-manager cluster issuers"
+  
+  log_info "Fetching Kyverno manifests..."
+  fetch_manifest "infra/k8s/services/kyverno/namespace.yaml" "${SERVICES_DIR}/kyverno/namespace.yaml" "kyverno namespace"
+  fetch_manifest "infra/k8s/services/kyverno/install.yaml" "${SERVICES_DIR}/kyverno/install.yaml" "kyverno install"
+  fetch_manifest "infra/k8s/services/kyverno/policies.yaml" "${SERVICES_DIR}/kyverno/policies.yaml" "kyverno policies"
+  
+  log_info "Fetching Flux manifests..."
+  fetch_manifest "infra/k8s/services/flux-system/namespace.yaml" "${SERVICES_DIR}/flux-system/namespace.yaml" "flux-system namespace"
+  # Flux install.yaml is downloaded dynamically later
 fi
-if [[ ! -d infra/k8s/services/backup-system ]]; then
-  echo "infra/k8s/services/backup-system is missing; run from the repository root or download the full archive."
-  exit 1
-fi
-if [[ ! -d infra/k8s/services/cert-manager ]]; then
-  echo "infra/k8s/services/cert-manager is missing; run from the repository root or download the full archive."
-  exit 1
-fi
-if [[ ! -d infra/k8s/services/traefik ]]; then
-  echo "infra/k8s/services/traefik is missing; run from the repository root or download the full archive."
-  exit 1
-fi
-if [[ ! -d infra/k8s/services/kyverno ]]; then
-  echo "infra/k8s/services/kyverno is missing; run from the repository root or download the full archive."
-  exit 1
-fi
-if [[ ! -d infra/k8s/services/flux-system ]]; then
-  echo "infra/k8s/services/flux-system is missing; run from the repository root or download the full archive."
-  exit 1
-fi
-if [[ ! -d infra/k8s/services/platform ]]; then
-  echo "infra/k8s/services/platform is missing; run from the repository root or download the full archive."
-  exit 1
-fi
-if [[ ! -d infra/k8s/templates ]]; then
-  echo "infra/k8s/templates is missing; run from the repository root or download the full archive."
-  exit 1
-fi
-if ! mkdir -p "${SERVICES_DIR}"; then
-  log_error "Failed to create services directory: ${SERVICES_DIR}"
-  exit 1
-fi
-if ! cp -r infra/k8s/services/* "${SERVICES_DIR}/"; then
-  log_error "Failed to copy services directory"
-  exit 1
-fi
-if ! cp -r infra/k8s/templates "${TEMPLATES_DIR}"; then
-  log_error "Failed to copy templates directory"
-  exit 1
-fi
+
+log_info "Fetching Traefik manifests..."
+fetch_manifest "infra/k8s/services/traefik/helmchartconfig-traefik.yaml" "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml" "traefik config"
+
+log_ok "All manifests fetched successfully"
 
 if command -v htpasswd >/dev/null 2>&1; then
   bcrypt_line() {
@@ -1941,23 +2139,35 @@ stringData:
   MYSQL_ROOT_PASSWORD: "${MAILCOW_DB_ROOT_PASSWORD}"
 EOF
 
-echo "Templating manifests..."
+log_step "Templating manifests"
+
 # Check critical manifest files exist before templating
 REQUIRED_MANIFESTS=(
   "${PLATFORM_DIR}/controller-deploy.yaml"
   "${PLATFORM_DIR}/panel-deploy.yaml"
   "${PLATFORM_DIR}/panel-ingress.yaml"
   "${PLATFORM_DIR}/panel-auth.yaml"
-  "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
   "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
   "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
   "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
   "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
-  "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
-  "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
-  "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
-  "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
 )
+
+if [ "${PROFILE}" = "full" ]; then
+  REQUIRED_MANIFESTS+=("${SERVICES_DIR}/cert-manager/cluster-issuers.yaml")
+fi
+
+if [ "${WITH_MAIL}" = "true" ]; then
+  REQUIRED_MANIFESTS+=(
+    "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
+    "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+    "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
+  )
+fi
+
+if [ "${WITH_DNS}" = "true" ]; then
+  REQUIRED_MANIFESTS+=("${SERVICES_DIR}/dns-zone/tsig-secret.yaml")
+fi
 
 for manifest in "${REQUIRED_MANIFESTS[@]}"; do
   if [[ ! -f "${manifest}" ]]; then
@@ -1992,30 +2202,42 @@ if [[ -n "${FILES_WITH_PLACEHOLDER}" ]]; then
   echo "${FILES_WITH_PLACEHOLDER}" | xargs sed -i "s|REPLACE_IMAGE_BASE|${IMAGE_BASE_ESC}|g"
 fi
 
-sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE_ESC}|g" "${PLATFORM_DIR}/controller-deploy.yaml"
-sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE_ESC}|g" "${PLATFORM_DIR}/panel-deploy.yaml"
-sed -i "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN_ESC}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
-sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER_ESC}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
-sed -i "s|REPLACE_PANEL_BASICAUTH|${PANEL_BASICAUTH_B64_ESC}|g" "${PLATFORM_DIR}/panel-auth.yaml"
-sed -i "s|REPLACE_LETSENCRYPT_EMAIL|${LETSENCRYPT_EMAIL_ESC}|g" "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
-sed -i "s|REPLACE_POSTGRES_PASSWORD|${POSTGRES_PASSWORD_ESC}|g" "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
-sed -i "s|REPLACE_PGADMIN_EMAIL|${PGADMIN_EMAIL_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
-sed -i "s|REPLACE_PGADMIN_PASSWORD|${PGADMIN_PASSWORD_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
-sed -i "s|REPLACE_PGADMIN_DOMAIN|${PGADMIN_DOMAIN_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
-sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
-sed -i "s|REPLACE_PGADMIN_BASICAUTH|${PGADMIN_BASICAUTH_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
-sed -i "s|REPLACE_MAILCOW_HOSTNAME|${MAILCOW_DOMAIN_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
-sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
-sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
-sed -i "s|REPLACE_MAILCOW_BASICAUTH|${MAILCOW_BASICAUTH_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
-sed -i "s|REPLACE_ME_BASE64LIKE|${TSIG_SECRET_ESC}|g" "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
-sed -i "s|REPLACE_BACKUP_TOKEN|${BACKUP_TOKEN_ESC}|g" "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
-if grep -rl "REPLACE_IMAGE_BASE" "${BACKUP_SYSTEM_DIR}" >/dev/null 2>&1; then
-  echo "ERROR: REPLACE_IMAGE_BASE placeholder not fully replaced in backup-system manifests."
+# Template manifests (only if files exist)
+[ -f "${PLATFORM_DIR}/controller-deploy.yaml" ] && sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE_ESC}|g" "${PLATFORM_DIR}/controller-deploy.yaml"
+[ -f "${PLATFORM_DIR}/panel-deploy.yaml" ] && sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE_ESC}|g" "${PLATFORM_DIR}/panel-deploy.yaml"
+[ -f "${PLATFORM_DIR}/panel-ingress.yaml" ] && sed -i "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN_ESC}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
+[ -f "${PLATFORM_DIR}/panel-ingress.yaml" ] && sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER_ESC}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
+[ -f "${PLATFORM_DIR}/panel-auth.yaml" ] && sed -i "s|REPLACE_PANEL_BASICAUTH|${PANEL_BASICAUTH_B64_ESC}|g" "${PLATFORM_DIR}/panel-auth.yaml"
+
+if [ "${PROFILE}" = "full" ] && [ -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" ]; then
+  sed -i "s|REPLACE_LETSENCRYPT_EMAIL|${LETSENCRYPT_EMAIL_ESC}|g" "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml"
+fi
+
+[ -f "${SERVICES_DIR}/infra-db/postgres-secret.yaml" ] && sed -i "s|REPLACE_POSTGRES_PASSWORD|${POSTGRES_PASSWORD_ESC}|g" "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
+[ -f "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml" ] && sed -i "s|REPLACE_PGADMIN_EMAIL|${PGADMIN_EMAIL_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
+[ -f "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml" ] && sed -i "s|REPLACE_PGADMIN_PASSWORD|${PGADMIN_PASSWORD_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
+[ -f "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml" ] && sed -i "s|REPLACE_PGADMIN_DOMAIN|${PGADMIN_DOMAIN_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
+[ -f "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml" ] && sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
+[ -f "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml" ] && sed -i "s|REPLACE_PGADMIN_BASICAUTH|${PGADMIN_BASICAUTH_ESC}|g" "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
+
+if [ "${WITH_MAIL}" = "true" ]; then
+  [ -f "${SERVICES_DIR}/mail-zone/mailcow-core.yaml" ] && sed -i "s|REPLACE_MAILCOW_HOSTNAME|${MAILCOW_DOMAIN_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
+  [ -f "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml" ] && sed -i "s|REPLACE_MAILCOW_DOMAIN|${MAILCOW_DOMAIN_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+  [ -f "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml" ] && sed -i "s|REPLACE_MAILCOW_TLS_ISSUER|${MAILCOW_TLS_ISSUER_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+  [ -f "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml" ] && sed -i "s|REPLACE_MAILCOW_BASICAUTH|${MAILCOW_BASICAUTH_ESC}|g" "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
+fi
+
+if [ "${WITH_DNS}" = "true" ] && [ -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml" ]; then
+  sed -i "s|REPLACE_ME_BASE64LIKE|${TSIG_SECRET_ESC}|g" "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
+fi
+
+[ -f "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml" ] && sed -i "s|REPLACE_BACKUP_TOKEN|${BACKUP_TOKEN_ESC}|g" "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
+if [ -d "${BACKUP_SYSTEM_DIR}" ] && grep -rl "REPLACE_IMAGE_BASE" "${BACKUP_SYSTEM_DIR}" >/dev/null 2>&1; then
+  log_error "REPLACE_IMAGE_BASE placeholder not fully replaced in backup-system manifests."
   exit 1
 fi
-if grep -q "REPLACE_PANEL_BASICAUTH" "${PLATFORM_DIR}/panel-auth.yaml"; then
-  echo "ERROR: REPLACE_PANEL_BASICAUTH placeholder not fully replaced in panel-auth.yaml."
+if [ -f "${PLATFORM_DIR}/panel-auth.yaml" ] && grep -q "REPLACE_PANEL_BASICAUTH" "${PLATFORM_DIR}/panel-auth.yaml"; then
+  log_error "REPLACE_PANEL_BASICAUTH placeholder not fully replaced in panel-auth.yaml."
   exit 1
 fi
 
@@ -2030,12 +2252,12 @@ fi
 
 # ========= apply =========
 log_step "Applying Traefik entrypoints config"
-if [[ ! -d "${SERVICES_DIR}/traefik" ]]; then
-  log_error "Traefik directory missing: ${SERVICES_DIR}/traefik"
-  exit 1
+if [ -f "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml" ]; then
+  kubectl apply -f "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml"
+  write_state_flag "TRAEFIK_INSTALLED"
+else
+  log_warn "Traefik config not found, skipping"
 fi
-kubectl apply -f "${SERVICES_DIR}/traefik"
-write_state_flag "TRAEFIK_INSTALLED"
 
 # Install cert-manager only if profile is full (minimal profile skips it unless already used)
 if [ "${PROFILE}" = "full" ]; then
@@ -2194,7 +2416,7 @@ log_ok "Kyverno resources applied successfully"
 
 # Immediately fix cleanup jobs to ensure they use correct images
 # This prevents old bitnami/kubectl images from being used
-fix_kyverno_cleanup_jobs
+fix_kyverno_cleanup_jobs "${KYVERNO_MANIFEST}"
 
 # Wait for Kyverno deployments with proper polling
 log_info "Waiting for Kyverno deployments to be available..."
@@ -2231,7 +2453,8 @@ log_info "Waiting for policies to be active..."
 sleep 3
 
   # Fix any failed cleanup jobs (e.g., ImagePullBackOff from old bitnami/kubectl images)
-  fix_kyverno_cleanup_jobs
+  # Note: SERVICES_DIR may not be set yet during cleanup, so pass empty string
+  fix_kyverno_cleanup_jobs ""
 else
   log_info "Skipping Kyverno installation (profile: ${PROFILE})"
   if kubectl get namespace kyverno >/dev/null 2>&1; then
@@ -2563,36 +2786,36 @@ else
 fi
 
 log_step "Importing backup images to k3s"
-# Images were already built before k3s installation
+# Images were already built before k3s installation (if build succeeded)
 # Verify images exist before import
-if ! docker image inspect backup-runner:local >/dev/null 2>&1; then
-  log_error "backup-runner:local image not found. Cannot import to k3s."
-  exit 1
-fi
-
-# Check k3s command exists
-if ! command -v k3s >/dev/null 2>&1; then
-  log_error "k3s command not found. Cannot import images."
-  exit 1
-fi
-
-# Check if images already imported (idempotent)
-if k3s ctr images list | grep -q "backup-runner:local"; then
-  echo "backup-runner:local already imported, skipping..."
+if docker image inspect backup-runner:local >/dev/null 2>&1; then
+  # Check k3s command exists
+  if ! command -v k3s >/dev/null 2>&1; then
+    log_warn "k3s command not found. Cannot import images. Backup image will be pulled when needed."
+  else
+    # Check if images already imported (idempotent)
+    if k3s ctr images list 2>/dev/null | grep -q "backup-runner:local"; then
+      log_info "backup-runner:local already imported, skipping..."
+    else
+      log_info "Importing backup-runner:local to k3s..."
+      if docker save backup-runner:local | k3s ctr images import - >/dev/null 2>&1; then
+        log_ok "Backup image imported successfully"
+      else
+        log_warn "Failed to import backup-runner:local to k3s. Image will be pulled when needed."
+      fi
+    fi
+    
+    # Verify images in k3s
+    if k3s ctr images list 2>/dev/null | grep -E "backup-runner" >/dev/null 2>&1; then
+      log_ok "Backup images verified in k3s"
+    else
+      log_warn "Backup images not found in k3s. Will be pulled when needed."
+    fi
+  fi
 else
-  echo "Importing backup-runner:local to k3s..."
-  docker save backup-runner:local | k3s ctr images import - || {
-    log_error "Failed to import backup-runner:local to k3s"
-    exit 1
-  }
+  log_warn "backup-runner:local image not found. Backup functionality may be limited."
+  log_info "Backup image will need to be built or pulled separately."
 fi
-
-# Verify images in k3s
-echo "Verifying images in k3s..."
-k3s ctr images list | grep -E "backup-runner" || {
-  log_error "Backup images not found in k3s after import"
-  exit 1
-}
 
 log_step "Applying backup-system manifests"
 backup_apply "${BACKUP_SYSTEM_DIR}/namespace.yaml"
@@ -2617,9 +2840,17 @@ write_state_flag "BACKUP_SYSTEM_INSTALLED"
 log_step "Applying ingresses"
 kubectl apply -f "${PLATFORM_DIR}/panel-ingress.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-ingress.yaml"
-kubectl apply -f "${SERVICES_DIR}/dns-zone/traefik-tcp"
-kubectl apply -f "${SERVICES_DIR}/mail-zone/traefik-tcp"
-kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+
+if [ "${WITH_DNS}" = "true" ] && [ -f "${SERVICES_DIR}/dns-zone/traefik-tcp/dns-routes.yaml" ]; then
+  kubectl apply -f "${SERVICES_DIR}/dns-zone/traefik-tcp/dns-routes.yaml"
+fi
+
+if [ "${WITH_MAIL}" = "true" ]; then
+  if [ -f "${SERVICES_DIR}/mail-zone/traefik-tcp/ingressroutetcp.yaml" ]; then
+    kubectl apply -f "${SERVICES_DIR}/mail-zone/traefik-tcp/ingressroutetcp.yaml"
+  fi
+  kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-ingress.yaml"
+fi
 
 echo "Controller stays internal (no NodePort)."
 

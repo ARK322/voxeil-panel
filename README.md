@@ -20,8 +20,13 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 
 **Download and install:**
 ```bash
+# Download installer wrapper (recommended)
 curl -fL -o /tmp/voxeil-install.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh
 bash /tmp/voxeil-install.sh [flags]
+
+# Or download installer directly
+curl -fL -o /tmp/voxeil-installer.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/installer/installer.sh
+bash /tmp/voxeil-installer.sh [flags]
 ```
 
 **Basic install:**
@@ -46,6 +51,8 @@ The installer will prompt for:
 | `--profile minimal\|full` | Installation profile (default: full) |
 | `--with-mail` | Install mailcow (opt-in) |
 | `--with-dns` | Install bind9 DNS (opt-in) |
+| `--version <tag\|branch\|commit>` | Use specific version/ref (overrides --channel) |
+| `--channel stable\|main` | Use stable or main channel (default: main) |
 
 **Profile options:**
 - `minimal`: Platform essentials only (no kyverno/cert-manager/flux unless already used)
