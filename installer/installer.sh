@@ -2678,6 +2678,15 @@ for i in {1..30}; do
   sleep 2
 done
 
+# Validate pgadmin deployment manifest before applying
+log_info "Validating pgadmin deployment manifest..."
+if ! kubectl apply --dry-run=server -f "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml" >/dev/null 2>&1; then
+  log_error "pgadmin deployment manifest validation failed"
+  echo "=== kubectl dry-run error ==="
+  kubectl apply --dry-run=server -f "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml" 2>&1 || true
+  exit 1
+fi
+
 # Apply pgadmin deployment
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml"
 
