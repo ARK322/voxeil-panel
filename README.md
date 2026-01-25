@@ -108,7 +108,7 @@ bash /tmp/voxeil.sh --ref v1.0.0 install
 
 **Safe uninstall:**
 ```bash
-bash /tmp/voxeil.sh uninstall --force
+curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/voxeil.sh && bash /tmp/voxeil.sh uninstall --force
 ```
 
 **Note:** The `uninstall` command will **NOT** delete `/tmp/voxeil.sh`. You can manually delete it if needed.
@@ -169,7 +169,7 @@ bash /tmp/voxeil.sh uninstall --keep-volumes
 
 **Requires explicit --force flag:**
 ```bash
-bash /tmp/voxeil.sh purge-node --force
+curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/voxeil.sh && bash /tmp/voxeil.sh purge-node --force
 ```
 
 **Note:** 
