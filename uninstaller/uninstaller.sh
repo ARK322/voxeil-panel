@@ -52,14 +52,28 @@ ensure_docker() {
 
 # Check if kubectl is available
 if ! command -v kubectl >/dev/null 2>&1; then
-  echo "ERROR: kubectl is not installed or not in PATH"
-  exit 1
+  echo "⚠️  kubectl is not installed or not in PATH"
+  echo ""
+  echo "This means k3s/Kubernetes is not installed."
+  echo "If you want to completely remove everything, you can:"
+  echo "  1. Remove k3s: /usr/local/bin/k3s-uninstall.sh (if exists)"
+  echo "  2. Remove Docker (if installed): apt-get remove -y docker.io containerd"
+  echo ""
+  echo "Exiting uninstaller (nothing to uninstall from Kubernetes)."
+  exit 0
 fi
 
 # Check if we can connect to cluster
 if ! kubectl cluster-info >/dev/null 2>&1; then
-  echo "ERROR: Cannot connect to Kubernetes cluster"
-  exit 1
+  echo "⚠️  Cannot connect to Kubernetes cluster"
+  echo ""
+  echo "The cluster may not be running or k3s may have been removed."
+  echo "If you want to completely remove everything, you can:"
+  echo "  1. Remove k3s: /usr/local/bin/k3s-uninstall.sh (if exists)"
+  echo "  2. Remove Docker (if installed): apt-get remove -y docker.io containerd"
+  echo ""
+  echo "Exiting uninstaller (cannot connect to cluster)."
+  exit 0
 fi
 
 # Check Docker (non-fatal, just warn if unavailable)
