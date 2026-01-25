@@ -388,6 +388,21 @@ execute_or_print() {
   run "$1"
 }
 
+# Disable Kyverno webhooks to prevent API lock
+disable_kyverno_webhooks() {
+  echo "=== Preflight: Disabling Kyverno webhooks to prevent API lock ==="
+  # delete labeled first
+  kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \
+    -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true >/dev/null 2>&1 || true
+
+  # delete by name patterns (backward compatibility)
+  kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
+    | tr ' ' '\n' | grep -i '^kyverno-' | xargs -r kubectl delete validatingwebhookconfiguration --ignore-not-found >/dev/null 2>&1 || true
+
+  kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
+    | tr ' ' '\n' | grep -i '^kyverno-' | xargs -r kubectl delete mutatingwebhookconfiguration --ignore-not-found >/dev/null 2>&1 || true
+}
+
 # Wait for namespace deletion with timeout
 wait_ns_deleted() {
   local namespace="$1"
@@ -456,8 +471,17 @@ delete_namespace() {
     done
   fi
   
-  # Delete namespace
-  run "kubectl delete namespace \"${namespace}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  # Delete namespace (capture stderr to detect webhook failures)
+  if [ "${DRY_RUN}" = "true" ]; then
+    echo "[DRY-RUN] kubectl delete namespace \"${namespace}\" --ignore-not-found=true --grace-period=0 --force"
+  else
+    err="$(kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force 2>&1 || true)"
+    if echo "${err}" | grep -qiE 'failed calling webhook.*kyverno|kyverno-svc|context deadline exceeded'; then
+      echo "    ⚠ Detected Kyverno webhook blockage, disabling Kyverno webhooks and retrying namespace delete..."
+      disable_kyverno_webhooks
+      kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+    fi
+  fi
   
   # Wait for namespace deletion
   wait_ns_deleted "${namespace}" 300
@@ -475,6 +499,11 @@ fi
 # ========= Deletion Order (Reverse of Installation) =========
 
 if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
+  # Preflight: Disable Kyverno webhooks BEFORE any deletions to prevent API lock
+  if [ "${FORCE}" = "true" ] || is_installed "KYVERNO_INSTALLED" || kubectl get validatingwebhookconfigurations 2>/dev/null | grep -qi kyverno; then
+    disable_kyverno_webhooks
+  fi
+  
   # A) Workloads first - delete all resources by label
   echo "=== Step A: Deleting workloads and namespace-scoped resources ==="
   echo "  Deleting all resources labeled app.kubernetes.io/part-of=voxeil..."
@@ -537,28 +566,25 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     delete_namespace "cert-manager"
   fi
   
-  # C) Webhooks (cluster-scoped) by label
+  # C) Remaining webhooks (cluster-scoped) by label (cert-manager, Flux, etc.)
+  # Note: Kyverno webhooks are handled in preflight to prevent API lock
   echo ""
-  echo "=== Step C: Deleting webhooks ==="
+  echo "=== Step C: Deleting remaining webhooks ==="
   run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
-  # Also delete by name patterns if not labeled (backward compatibility)
-  if [ "${FORCE}" = "true" ] || is_installed "KYVERNO_INSTALLED"; then
-    echo "  Deleting Kyverno webhooks (by name pattern)..."
-    orphaned_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
-    orphaned_mutating="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
-    for webhook in ${orphaned_webhooks}; do
-      run "kubectl delete validatingwebhookconfiguration \"${webhook}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-    done
-    for webhook in ${orphaned_mutating}; do
-      run "kubectl delete mutatingwebhookconfiguration \"${webhook}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-    done
-  fi
-  
+  # Also delete by name patterns if not labeled (backward compatibility - cert-manager, Flux, etc.)
   if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
     echo "  Deleting cert-manager webhooks (by name pattern)..."
     cert_webhooks="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i cert-manager || true)"
     for webhook in ${cert_webhooks}; do
+      run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \"${webhook}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    done
+  fi
+  
+  if [ "${FORCE}" = "true" ] || is_installed "FLUX_INSTALLED"; then
+    echo "  Deleting Flux webhooks (by name pattern)..."
+    flux_webhooks="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i flux || true)"
+    for webhook in ${flux_webhooks}; do
       run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \"${webhook}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
     done
   fi
