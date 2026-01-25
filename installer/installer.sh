@@ -115,6 +115,16 @@ is_installed() {
   [ "$(read_state_flag "${flag}")" = "1" ]
 }
 
+# Label namespace with app.kubernetes.io/part-of=voxeil
+label_namespace() {
+  local namespace="$1"
+  if [ "${DRY_RUN}" = "true" ]; then
+    echo "[DRY-RUN] kubectl label namespace \"${namespace}\" app.kubernetes.io/part-of=voxeil --overwrite"
+  else
+    kubectl label namespace "${namespace}" app.kubernetes.io/part-of=voxeil --overwrite >/dev/null 2>&1 || true
+  fi
+}
+
 # ========= helpers =========
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
 rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 || true; }
@@ -1094,6 +1104,12 @@ echo ""
 DRY_RUN=false
 FORCE=false
 DOCTOR=false
+SKIP_K3S=false
+INSTALL_K3S=false
+KUBECONFIG=""
+PROFILE="full"
+WITH_MAIL=false
+WITH_DNS=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -1109,9 +1125,38 @@ while [[ $# -gt 0 ]]; do
       DOCTOR=true
       shift
       ;;
+    --skip-k3s)
+      SKIP_K3S=true
+      shift
+      ;;
+    --install-k3s)
+      INSTALL_K3S=true
+      shift
+      ;;
+    --kubeconfig)
+      KUBECONFIG="$2"
+      export KUBECONFIG
+      shift 2
+      ;;
+    --profile)
+      PROFILE="$2"
+      if [[ "${PROFILE}" != "minimal" && "${PROFILE}" != "full" ]]; then
+        log_error "Invalid profile: ${PROFILE}. Must be 'minimal' or 'full'"
+        exit 1
+      fi
+      shift 2
+      ;;
+    --with-mail)
+      WITH_MAIL=true
+      shift
+      ;;
+    --with-dns)
+      WITH_DNS=true
+      shift
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--dry-run] [--force] [--doctor]"
+      echo "Usage: $0 [--doctor] [--dry-run] [--force] [--skip-k3s] [--install-k3s] [--kubeconfig <path>] [--profile minimal|full] [--with-mail] [--with-dns]"
       exit 1
       ;;
   esac
@@ -1566,20 +1611,50 @@ log_ok "Backup images built successfully"
 
 # ========= install k3s if needed =========
 log_step "Installing k3s (if needed)"
-if ! command -v kubectl >/dev/null 2>&1; then
-  echo "Installing k3s..."
-  curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
-  write_state_flag "K3S_INSTALLED"
-else
-  if is_installed "K3S_INSTALLED"; then
-    echo "k3s already installed (state flag present)"
-  else
-    echo "k3s found but not tracked in state, marking as installed"
+
+# Handle k3s installation based on flags
+if [ "${SKIP_K3S}" = "true" ]; then
+  if ! command -v kubectl >/dev/null 2>&1; then
+    log_error "kubectl not found and --skip-k3s specified. Cannot proceed."
+    exit 1
+  fi
+  if ! kubectl cluster-info >/dev/null 2>&1; then
+    log_error "kubectl cannot reach cluster and --skip-k3s specified. Cannot proceed."
+    exit 1
+  fi
+  log_info "Skipping k3s installation (--skip-k3s)"
+elif [ "${INSTALL_K3S}" = "true" ]; then
+  if ! command -v kubectl >/dev/null 2>&1; then
+    log_info "Installing k3s..."
+    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
     write_state_flag "K3S_INSTALLED"
+  else
+    log_info "k3s already present (kubectl found), not reinstalling"
+    if ! is_installed "K3S_INSTALLED"; then
+      write_state_flag "K3S_INSTALLED"
+    fi
+  fi
+else
+  # Default behavior: install if kubectl not found, otherwise use existing
+  if ! command -v kubectl >/dev/null 2>&1; then
+    log_info "kubectl not found, installing k3s..."
+    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+    write_state_flag "K3S_INSTALLED"
+  else
+    log_info "kubectl found, using existing cluster"
+    if ! is_installed "K3S_INSTALLED"; then
+      write_state_flag "K3S_INSTALLED"
+    fi
   fi
 fi
 
 need_cmd kubectl
+
+# Set KUBECONFIG if provided
+if [ -n "${KUBECONFIG}" ]; then
+  export KUBECONFIG
+  log_info "Using kubeconfig: ${KUBECONFIG}"
+fi
 
 # Wait for k3s API
 wait_for_k3s_api
@@ -1962,11 +2037,13 @@ fi
 kubectl apply -f "${SERVICES_DIR}/traefik"
 write_state_flag "TRAEFIK_INSTALLED"
 
-log_step "Installing cert-manager (cluster-wide)"
-if [[ ! -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml" ]]; then
-  log_error "cert-manager.yaml missing: ${SERVICES_DIR}/cert-manager/cert-manager.yaml"
-  exit 1
-fi
+# Install cert-manager only if profile is full (minimal profile skips it unless already used)
+if [ "${PROFILE}" = "full" ]; then
+  log_step "Installing cert-manager (cluster-wide)"
+  if [[ ! -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml" ]]; then
+    log_error "cert-manager.yaml missing: ${SERVICES_DIR}/cert-manager/cert-manager.yaml"
+    exit 1
+  fi
 
 # Check if Kyverno is installed and might cause webhook timeouts
 # Also check for orphaned Kyverno webhooks (namespace deleted but webhooks remain)
@@ -2083,16 +2160,26 @@ kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cer
   kubectl get pods -n cert-manager
   exit 1
 }
-write_state_flag "CERT_MANAGER_INSTALLED"
-echo "Applying ClusterIssuers."
-if [[ -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" ]]; then
-  retry_apply "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" "ClusterIssuers" 3 || {
-    log_error "Failed to apply ClusterIssuers after retries"
-    echo "Continuing anyway - ClusterIssuers can be applied later"
-  }
+  write_state_flag "CERT_MANAGER_INSTALLED"
+  # Label cert-manager namespace
+  label_namespace "cert-manager"
+  echo "Applying ClusterIssuers."
+  if [[ -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" ]]; then
+    retry_apply "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" "ClusterIssuers" 3 || {
+      log_error "Failed to apply ClusterIssuers after retries"
+      echo "Continuing anyway - ClusterIssuers can be applied later"
+    }
+  fi
+else
+  log_info "Skipping cert-manager installation (profile: ${PROFILE})"
+  if kubectl get namespace cert-manager >/dev/null 2>&1; then
+    label_namespace "cert-manager"
+  fi
 fi
 
-log_step "Installing Kyverno (idempotent)"
+# Install Kyverno only if profile is full
+if [ "${PROFILE}" = "full" ]; then
+  log_step "Installing Kyverno (idempotent)"
 # Idempotent namespace creation
 kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
 
@@ -2129,9 +2216,11 @@ kubectl wait --for=condition=Available deployment -n kyverno --all --timeout="${
   kubectl get events -n kyverno --sort-by='.lastTimestamp' | tail -30
   exit 1
 }
-write_state_flag "KYVERNO_INSTALLED"
+  write_state_flag "KYVERNO_INSTALLED"
+  # Label kyverno namespace
+  label_namespace "kyverno"
 
-# Apply policies (idempotent) - wait a bit for Kyverno to be fully ready
+  # Apply policies (idempotent) - wait a bit for Kyverno to be fully ready
 log_info "Waiting for Kyverno to be fully operational..."
 sleep 5
 echo "Applying Kyverno policies..."
@@ -2141,10 +2230,18 @@ kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
 log_info "Waiting for policies to be active..."
 sleep 3
 
-# Fix any failed cleanup jobs (e.g., ImagePullBackOff from old bitnami/kubectl images)
-fix_kyverno_cleanup_jobs
+  # Fix any failed cleanup jobs (e.g., ImagePullBackOff from old bitnami/kubectl images)
+  fix_kyverno_cleanup_jobs
+else
+  log_info "Skipping Kyverno installation (profile: ${PROFILE})"
+  if kubectl get namespace kyverno >/dev/null 2>&1; then
+    label_namespace "kyverno"
+  fi
+fi
 
-log_step "Installing Flux controllers"
+# Install Flux only if profile is full
+if [ "${PROFILE}" = "full" ]; then
+  log_step "Installing Flux controllers"
 kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
 FLUX_INSTALL_URL="https://github.com/fluxcd/flux2/releases/download/v2.3.0/install.yaml"
 if ! curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"; then
@@ -2175,10 +2272,19 @@ kubectl wait --for=condition=Available deployment -n flux-system --all --timeout
   kubectl get events -n flux-system --sort-by='.lastTimestamp' | tail -20
   exit 1
 }
-write_state_flag "FLUX_INSTALLED"
+  write_state_flag "FLUX_INSTALLED"
+  # Label flux-system namespace
+  label_namespace "flux-system"
+else
+  log_info "Skipping Flux installation (profile: ${PROFILE})"
+  if kubectl get namespace flux-system >/dev/null 2>&1; then
+    label_namespace "flux-system"
+  fi
+fi
 
 log_step "Applying platform base manifests"
 kubectl apply -f "${PLATFORM_DIR}/namespace.yaml"
+label_namespace "platform"
 kubectl apply -f "${PLATFORM_DIR}/rbac.yaml"
 # Ensure serviceAccount exists before applying deployment (required for Kyverno policies)
 if ! kubectl get serviceaccount controller-sa -n platform >/dev/null 2>&1; then
@@ -2247,6 +2353,7 @@ fi
 
 log_step "Applying infra DB manifests"
 kubectl apply -f "${SERVICES_DIR}/infra-db/namespace.yaml"
+label_namespace "infra-db"
 kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pvc.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-service.yaml"
@@ -2376,11 +2483,14 @@ kubectl apply -f "${PLATFORM_DIR}/panel-deploy.yaml"
 kubectl apply -f "${PLATFORM_DIR}/panel-svc.yaml"
 write_state_flag "PLATFORM_INSTALLED"
 
-log_step "Applying DNS (bind9) manifests"
-kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
-kubectl apply -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
-kubectl apply -f "${SERVICES_DIR}/dns-zone/pvc.yaml"
-kubectl apply -f "${SERVICES_DIR}/dns-zone/bind9.yaml"
+# Install DNS only if --with-dns flag is set
+if [ "${WITH_DNS}" = "true" ]; then
+  log_step "Applying DNS (bind9) manifests"
+  kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
+  label_namespace "dns-zone"
+  kubectl apply -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
+  kubectl apply -f "${SERVICES_DIR}/dns-zone/pvc.yaml"
+  kubectl apply -f "${SERVICES_DIR}/dns-zone/bind9.yaml"
 
 # Wait for bind9 Deployment to be ready (PVC will bind when pod is scheduled)
 log_info "Waiting for bind9 Deployment to be ready..."
@@ -2403,11 +2513,20 @@ if ! kubectl wait --for=condition=Available deployment/bind9 -n dns-zone --timeo
   kubectl get pvc -n dns-zone || true
   exit 1
 fi
-log_ok "bind9 Deployment is ready"
+  log_ok "bind9 Deployment is ready"
+  write_state_flag "DNS_INSTALLED"
+else
+  log_info "Skipping DNS installation (use --with-dns to enable)"
+  if kubectl get namespace dns-zone >/dev/null 2>&1; then
+    label_namespace "dns-zone"
+  fi
+fi
 
-log_step "Applying mailcow manifests"
-kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
-kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-secrets.yaml"
+# Install mail only if --with-mail flag is set
+if [ "${WITH_MAIL}" = "true" ]; then
+    kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
+  label_namespace "mail-zone"
+  kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-secrets.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-core.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/networkpolicy.yaml"
@@ -2434,7 +2553,14 @@ if ! kubectl wait --for=condition=Ready pod -l app=mailcow,component=mysql -n ma
   kubectl get pvc -n mail-zone || true
   exit 1
 fi
-log_ok "mailcow-mysql StatefulSet is ready"
+  log_ok "mailcow-mysql StatefulSet is ready"
+  write_state_flag "MAIL_INSTALLED"
+else
+  log_info "Skipping mail installation (use --with-mail to enable)"
+  if kubectl get namespace mail-zone >/dev/null 2>&1; then
+    label_namespace "mail-zone"
+  fi
+fi
 
 log_step "Importing backup images to k3s"
 # Images were already built before k3s installation
@@ -2470,6 +2596,7 @@ k3s ctr images list | grep -E "backup-runner" || {
 
 log_step "Applying backup-system manifests"
 backup_apply "${BACKUP_SYSTEM_DIR}/namespace.yaml"
+label_namespace "backup-system"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-scripts-configmap.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 # Apply remaining backup-system manifests if they exist

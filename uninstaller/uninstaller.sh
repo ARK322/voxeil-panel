@@ -70,7 +70,9 @@ is_installed() {
 DRY_RUN=false
 FORCE=false
 DOCTOR=false
-VPS_FORMAT=false
+PURGE_NODE=false
+KEEP_VOLUMES=false
+KUBECONFIG=""
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -86,13 +88,22 @@ while [[ $# -gt 0 ]]; do
       DOCTOR=true
       shift
       ;;
-    --vps-format)
-      VPS_FORMAT=true
+    --purge-node)
+      PURGE_NODE=true
       shift
+      ;;
+    --keep-volumes)
+      KEEP_VOLUMES=true
+      shift
+      ;;
+    --kubeconfig)
+      KUBECONFIG="$2"
+      export KUBECONFIG
+      shift 2
       ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--dry-run] [--force] [--doctor] [--vps-format]"
+      echo "Usage: $0 [--doctor] [--dry-run] [--force] [--purge-node] [--keep-volumes] [--kubeconfig <path>]"
       exit 1
       ;;
   esac
@@ -359,7 +370,8 @@ if [ ! -f "${STATE_FILE}" ]; then
   if [ "${FORCE}" != "true" ]; then
     echo "  Use --force to proceed with cleanup based on detected resources."
     echo ""
-    exit 1
+    echo "  Safe default: exiting without changes."
+    exit 0
   fi
   echo "  Proceeding with uninstall based on detected resources (--force)..."
   echo ""
@@ -486,17 +498,26 @@ delete_namespace() {
   if [ "${DRY_RUN}" = "true" ]; then
     echo "[DRY-RUN] kubectl delete namespace \"${namespace}\" --ignore-not-found=true --grace-period=0 --force"
   else
+    # Capture both stdout and stderr
     err="$(kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force 2>&1 || true)"
+    # Check for webhook errors in stderr
     if echo "$err" | grep -qiE 'failed calling webhook|context deadline exceeded' && echo "$err" | grep -qiE 'kyverno|cert-manager'; then
       echo "  ⚠ Admission webhook blockage detected while deleting ${namespace}. Disabling webhooks and retrying..."
       disable_admission_webhooks_preflight
-      kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+      # Retry deletion after disabling webhooks
+      kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force 2>&1 || true
     fi
   fi
   
   # Wait for namespace deletion
   wait_ns_deleted "${namespace}" 300
 }
+
+# Set KUBECONFIG if provided
+if [ -n "${KUBECONFIG}" ]; then
+  export KUBECONFIG
+  echo "[INFO] Using kubeconfig: ${KUBECONFIG}"
+fi
 
 # Check kubectl availability
 if ! command -v kubectl >/dev/null 2>&1 || ! kubectl cluster-info >/dev/null 2>&1; then
@@ -697,93 +718,85 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     disable_admission_webhooks_preflight
   fi
   
-  # G) Storage cleanup - PVs
-  echo ""
-  echo "=== Step G: Cleaning up PersistentVolumes ==="
-  # PVs might not have labels. Detect PVs whose claimRef.namespace is one of voxeil namespaces
-  VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
-  for ns in ${VOXEIL_NS_LIST}; do
-    if [ "${FORCE}" = "true" ] || kubectl get namespace "${ns}" >/dev/null 2>&1 2>&1; then
-      # Find PVs for this namespace
-      if command -v python3 >/dev/null 2>&1; then
-        PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
-      elif command -v jq >/dev/null 2>&1; then
-        PVS="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
-      else
-        # Fallback: get all PVs and check claimRef manually
-        PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
+  # G) Storage cleanup - PVs (unless --keep-volumes)
+  if [ "${KEEP_VOLUMES}" != "true" ]; then
+    echo ""
+    echo "=== Step G: Cleaning up PersistentVolumes ==="
+    # PVs might not have labels. Detect PVs whose claimRef.namespace is one of voxeil namespaces
+    VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
+    for ns in ${VOXEIL_NS_LIST}; do
+      if [ "${FORCE}" = "true" ] || kubectl get namespace "${ns}" >/dev/null 2>&1 2>&1; then
+        # Find PVs for this namespace
+        if command -v python3 >/dev/null 2>&1; then
+          PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
+        elif command -v jq >/dev/null 2>&1; then
+          PVS="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
+        else
+          # Fallback: get all PVs and check claimRef manually
+          PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
+        fi
+        if [ -n "${PVS}" ]; then
+          echo "  Deleting PVs for namespace ${ns}..."
+          for pv in ${PVS}; do
+            run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+          done
+        fi
       fi
-      if [ -n "${PVS}" ]; then
-        echo "  Deleting PVs for namespace ${ns}..."
-        for pv in ${PVS}; do
-          run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-        done
-      fi
-    fi
-  done
+    done
+  else
+    echo ""
+    echo "=== Step G: Skipping PersistentVolume cleanup (--keep-volumes) ==="
+  fi
 fi
 
-# H) k3s/docker cleanup (VPS FORMAT MODE only)
-if [ "${VPS_FORMAT}" = "true" ]; then
+# H) Node purge (--purge-node AND --force required)
+if [ "${PURGE_NODE}" = "true" ]; then
+  if [ "${FORCE}" != "true" ]; then
+    echo ""
+    echo "⚠ ERROR: --purge-node requires --force flag"
+    echo "  This is a safety measure to prevent accidental node wipe."
+    exit 1
+  fi
+  
   echo ""
-  echo "=== Step H: VPS Format Mode - Removing k3s ==="
+  echo "=== Step H: Node Purge Mode (--purge-node --force) ==="
+  echo "  WARNING: This will remove k3s and rancher directories from the node."
+  echo ""
+  
   if [ "${DRY_RUN}" = "true" ]; then
-    echo "[DRY RUN] Would remove k3s"
+    echo "[DRY RUN] Would remove k3s and rancher directories"
   else
+    # Stop and disable k3s service
     if command -v systemctl >/dev/null 2>&1; then
       systemctl stop k3s 2>/dev/null || true
       systemctl disable k3s 2>/dev/null || true
     fi
+    
+    # Run k3s uninstall script if available
     if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
+      echo "  Running k3s-uninstall.sh..."
       /usr/local/bin/k3s-uninstall.sh >/dev/null 2>&1 || true
     fi
+    
+    # Remove k3s binaries and directories
+    echo "  Removing k3s binaries and directories..."
     rm -f /usr/local/bin/k3s /usr/local/bin/kubectl /usr/local/bin/crictl /usr/local/bin/ctr 2>/dev/null || true
-    rm -rf /var/lib/rancher/k3s /etc/rancher/k3s /var/log/k3s 2>/dev/null || true
+    rm -rf /var/lib/rancher /etc/rancher /var/log/k3s 2>/dev/null || true
     rm -f /etc/systemd/system/k3s.service 2>/dev/null || true
+    
     if command -v systemctl >/dev/null 2>&1; then
       systemctl daemon-reload 2>/dev/null || true
     fi
-  fi
-  
-  # Remove docker (VPS FORMAT MODE only)
-  echo ""
-  echo "=== Step H (continued): VPS Format Mode - Removing Docker ==="
-  if [ "${DRY_RUN}" = "true" ]; then
-    echo "[DRY RUN] Would remove Docker"
-  else
-    if command -v systemctl >/dev/null 2>&1; then
-      systemctl stop docker 2>/dev/null || true
-      systemctl disable docker 2>/dev/null || true
-    fi
-    if command -v apt-get >/dev/null 2>&1; then
-      apt-get remove -y docker.io docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
-      apt-get purge -y docker.io docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin 2>/dev/null || true
-    elif command -v yum >/dev/null 2>&1; then
-      yum remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine 2>/dev/null || true
-    fi
-    rm -rf /var/lib/docker /etc/docker 2>/dev/null || true
-  fi
-  
-  # Delete kube-system, kube-public, kube-node-lease, default namespaces (VPS FORMAT MODE only)
-  if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-    echo ""
-    echo "=== Step H (continued): VPS Format Mode - Removing k3s system namespaces ==="
-    for ns in kube-system kube-public kube-node-lease default; do
-      if kubectl get namespace "${ns}" >/dev/null 2>&1; then
-        echo "  Deleting namespace: ${ns}..."
-        delete_namespace "${ns}"
-      fi
-    done
-  fi
-elif [ "${FORCE}" = "true" ] || is_installed "K3S_INSTALLED"; then
-  # Only show message if k3s would have been removed but VPS_FORMAT is false
-  if [ "${DRY_RUN}" != "true" ]; then
-    echo ""
-    echo "VPS format mode disabled (use --vps-format to wipe k3s/docker)."
+    
+    # Remove /var/lib/voxeil (state registry)
+    echo "  Removing /var/lib/voxeil..."
+    rm -rf /var/lib/voxeil 2>/dev/null || true
+    
+    echo "  ✓ Node purge complete"
   fi
 fi
 
-# I) Clean up filesystem files
+# I) Clean up filesystem files (unless --purge-node, which handles /var/lib/voxeil)
 echo ""
 echo "=== Step I: Cleaning up filesystem files ==="
 run "rm -rf /etc/voxeil 2>/dev/null || true"
@@ -792,7 +805,10 @@ run "rm -f /etc/systemd/system/voxeil-ufw-apply.service 2>/dev/null || true"
 run "rm -f /etc/systemd/system/voxeil-ufw-apply.path 2>/dev/null || true"
 run "rm -f /etc/fail2ban/jail.d/voxeil.conf 2>/dev/null || true"
 run "rm -f /etc/ssh/sshd_config.voxeil-backup.* 2>/dev/null || true"
-run "rm -rf /var/lib/voxeil 2>/dev/null || true"
+# Only remove /var/lib/voxeil if not doing node purge (purge handles it)
+if [ "${PURGE_NODE}" != "true" ]; then
+  run "rm -rf /var/lib/voxeil 2>/dev/null || true"
+fi
 
 if [ "${DRY_RUN}" != "true" ] && command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload 2>/dev/null || true

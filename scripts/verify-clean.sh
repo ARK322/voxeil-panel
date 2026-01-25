@@ -138,7 +138,41 @@ run_checks_once() {
     echo "  ✓ No Voxeil-related PVs found"
   fi
   
-  # 4) Check for state file
+  # 4) Check for webhook configs by pattern (kyverno, cert-manager)
+  echo ""
+  echo "=== Checking webhook configurations (by pattern) ==="
+  VOXEIL_WEBHOOKS_PATTERN="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager)' || true)"
+  
+  if [ -n "${VOXEIL_WEBHOOKS_PATTERN}" ]; then
+    echo "  ⚠ Found Voxeil webhook configurations:"
+    echo "${VOXEIL_WEBHOOKS_PATTERN}" | while read -r wh; do
+      echo "    - ${wh}"
+    done
+    echo ""
+    ISSUES_FOUND=$((ISSUES_FOUND + 1))
+    EXIT_CODE=1
+  else
+    echo "  ✓ No Voxeil webhook configurations found"
+  fi
+  
+  # 5) Check for CRDs by pattern
+  echo ""
+  echo "=== Checking CRDs (by pattern) ==="
+  VOXEIL_CRDS_PATTERN="$(kubectl get crd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '(kyverno|cert-manager|fluxcd|toolkit)' || true)"
+  
+  if [ -n "${VOXEIL_CRDS_PATTERN}" ]; then
+    echo "  ⚠ Found Voxeil CRDs:"
+    echo "${VOXEIL_CRDS_PATTERN}" | while read -r crd; do
+      echo "    - ${crd}"
+    done
+    echo ""
+    ISSUES_FOUND=$((ISSUES_FOUND + 1))
+    EXIT_CODE=1
+  else
+    echo "  ✓ No Voxeil CRDs found"
+  fi
+  
+  # 6) Check for state file
   echo ""
   echo "=== Checking filesystem state ==="
   if [ -f /var/lib/voxeil/install.state ]; then

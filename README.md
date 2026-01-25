@@ -35,37 +35,115 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
    docker push ghcr.io/ark322/voxeil-panel:latest
    ```
    
-2) One-liner install (no git clone required):
+2) Install Voxeil platform (idempotent):
+   
+   **Recommended (download first to avoid pipe failures):**
+   ```bash
+   curl -fL -o /tmp/voxeil-install.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh
+   bash /tmp/voxeil-install.sh [flags]
+   ```
+   
+   **Or one-liner (may fail with curl:(23) pipe errors):**
    ```bash
    curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh | bash
    ```
-   - Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
-  - For private site images, provide GHCR credentials during deploy from the panel.
-   - For upgrades run: `sudo bash update/update.sh`
-   - For smoke tests run: `bash scripts/test-smoke.sh`
-   - Provide Let's Encrypt email:
-     - `LETSENCRYPT_EMAIL`
-   The installer will ask only for:
+   
+   **Installer flags:**
+   - `--doctor` - Print installation status, make no changes
+   - `--dry-run` - Show what would be installed without making changes
+   - `--force` - Force installation even if components exist
+   - `--skip-k3s` - Skip k3s installation (fail if kubectl unavailable)
+   - `--install-k3s` - Install k3s if missing (idempotent)
+   - `--kubeconfig <path>` - Use specific kubeconfig file
+   - `--profile minimal|full` - Installation profile (default: full)
+     - `minimal`: Platform essentials only (no kyverno/cert-manager/flux unless already used)
+     - `full`: Includes cert-manager, kyverno, flux, infra-db, backup-system
+   - `--with-mail` - Install mailcow (opt-in)
+   - `--with-dns` - Install bind9 DNS (opt-in)
+   
+   **Examples:**
+   ```bash
+   # Check what's installed (doctor mode)
+   bash installer/installer.sh --doctor
+   
+   # Minimal install (platform only)
+   bash installer/installer.sh --profile minimal
+   
+   # Full install with mail and DNS
+   bash installer/installer.sh --profile full --with-mail --with-dns
+   
+   # Install on existing cluster (skip k3s)
+   bash installer/installer.sh --skip-k3s --kubeconfig ~/.kube/config
+   ```
+   
+   The installer will prompt for:
    - Panel domain (TLS enabled via cert-manager)
-   - Let's Encrypt email
+   - Let's Encrypt email (required for cert-manager)
+   
+   Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
 
 ### Uninstall
-To remove all Voxeil Panel components from the cluster:
+
+**Safe uninstall (default):** Removes ONLY Voxeil resources, never touches kube-system/default/kube-public/kube-node-lease or k3s/docker.
+
+**Recommended (download first):**
+```bash
+curl -fL -o /tmp/voxeil-uninstall.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/uninstaller/uninstaller.sh
+bash /tmp/voxeil-uninstall.sh [flags]
+```
+
+**Or one-liner:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ARK322/voxeil-panel/main/uninstaller/uninstaller.sh | bash
 ```
-Or if you have cloned the repository:
+
+**Uninstaller flags:**
+- `--doctor` - Print what exists and recommended next commands, make no changes
+- `--dry-run` - Show what would be removed without making changes
+- `--force` - Clean up unlabeled leftovers when state file is missing
+- `--purge-node` - Remove k3s and rancher directories (requires --force)
+- `--keep-volumes` - Keep PersistentVolumes (default: delete PVs)
+- `--kubeconfig <path>` - Use specific kubeconfig file
+
+**Safety rules:**
+1. Default uninstall NEVER deletes kube-system/default/kube-public/kube-node-lease
+2. Default uninstall NEVER uninstalls k3s/docker/runtime
+3. Node wipe requires: `--purge-node --force` (explicit opt-in)
+4. If `/var/lib/voxeil/install.state` exists → uninstall only what KEY=1
+5. If state missing: default uninstall prints warning and exits 0 (safe)
+6. `--force` triggers fallback cleanup (known leftovers + pattern match) safely
+
+**Examples:**
 ```bash
+# Check what exists (doctor mode)
+bash uninstaller/uninstaller.sh --doctor
+
+# Safe uninstall (uses state registry)
 bash uninstaller/uninstaller.sh
+
+# Force cleanup (for leftovers / state missing)
+bash uninstaller/uninstaller.sh --force
+
+# Purge node (removes k3s + rancher dirs, requires --force)
+bash uninstaller/uninstaller.sh --purge-node --force
+
+# Uninstall but keep volumes
+bash uninstaller/uninstaller.sh --keep-volumes
 ```
 
-**WARNING:** The uninstaller will automatically delete all components without confirmation prompts.
+**What gets removed:**
+- All Voxeil namespaces (platform, infra-db, dns-zone, mail-zone, backup-system, kyverno, flux-system, cert-manager)
+- All user-* and tenant-* namespaces
+- All resources labeled `app.kubernetes.io/part-of=voxeil`
+- Kyverno, Flux, and cert-manager CRDs and webhooks
+- PersistentVolumes (unless --keep-volumes)
+- Filesystem files (/etc/voxeil, /var/lib/voxeil, etc.)
 
-The uninstaller will:
-- Delete all Voxeil Panel namespaces (platform, infra-db, dns-zone, mail-zone, backup-system)
-- Delete all user and tenant namespaces
-- Delete Kyverno, Flux, and cert-manager (including CRDs)
-- Clean up CRDs and remaining problematic resources
+**Node purge (--purge-node --force):**
+- Removes k3s binaries and /usr/local/bin/k3s-uninstall.sh
+- Removes /var/lib/rancher and /etc/rancher
+- Removes /var/lib/voxeil state registry
+- Does NOT remove docker packages (unless k3s-uninstall.sh does)
 3) Outputs:
   - Panel admin username + password + email (stored in `platform-secrets`)
    - Controller API key (stored in `platform-secrets`)
