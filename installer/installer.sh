@@ -1728,6 +1728,17 @@ echo "  Let's Encrypt Email: ${LETSENCRYPT_EMAIL}"
 echo "  TLS: enabled via cert-manager (site-based; opt-in)"
 echo ""
 
+# ========= Store installation metadata in state =========
+INSTALL_TIMESTAMP="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u +"%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$(date +%s)")"
+state_set "INSTALL_TIMESTAMP" "${INSTALL_TIMESTAMP}"
+state_set "PANEL_DOMAIN" "${PANEL_DOMAIN}"
+state_set "ADMIN_EMAIL" "${ADMIN_EMAIL}"
+if [ -n "${VERSION}" ]; then
+  state_set "VERSION" "${VERSION}"
+elif [ -n "${REF}" ]; then
+  state_set "VERSION" "${REF}"
+fi
+
 # ========= ensure docker is installed FIRST (before k3s) =========
 ensure_docker
 

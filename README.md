@@ -16,24 +16,32 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 
 ### Quick Start
 
-**Note:** This repository does not require cloning. You can install Voxeil Panel with a single command.
+**⚠️ IMPORTANT: This repository does NOT require cloning. Everything works via a single curl-based command.**
 
 **Download and install:**
 ```bash
 curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/voxeil.sh
-chmod +x /tmp/voxeil.sh
 bash /tmp/voxeil.sh install
 ```
 
-**About voxeil.sh:**
-- `voxeil.sh` is a temporary entrypoint script that you download and run
-- It is **not** installed permanently by default
-- It is **not** removed by `uninstall` or `purge-node` commands (you can manually delete it if needed)
+**About `voxeil.sh`:**
+- `voxeil.sh` is an **ephemeral entrypoint script** that you download and run
+- It is **NOT** installed system-wide
+- It is **NOT** removed by `uninstall` or `purge-node` commands
+- Deleting `voxeil.sh` does **NOT** affect the installed system
 - You can safely delete and re-download it at any time
+- The script orchestrates everything and may download internal scripts from GitHub
 
-### About voxeil.sh lifecycle
+**Note:** The `installer/`, `uninstaller/`, and `scripts/` directories are **internal only** and should **never** be accessed directly by end users.
 
-The `voxeil.sh` script lives wherever you download it (e.g., `/tmp`, `/usr/local/bin`, or any directory of your choice). The `uninstall` and `purge-node` commands only remove Voxeil platform components and cluster resources—they do **not** remove the entrypoint script itself. Note that if you download the script to `/tmp`, your operating system may automatically clean it on reboot.
+### Commands
+
+All commands are executed via `voxeil.sh`:
+
+- `install` - Install Voxeil Panel
+- `uninstall [--force]` - Safe uninstall (removes only Voxeil resources)
+- `purge-node --force` - Complete node wipe (removes k3s, requires --force)
+- `doctor` - Check installation status (read-only)
 
 ### Install
 
@@ -102,7 +110,7 @@ bash /tmp/voxeil.sh --ref v1.0.0 install
 bash /tmp/voxeil.sh uninstall --force
 ```
 
-**Note:** The `uninstall` command will **not** delete `/tmp/voxeil.sh`. You can manually delete it if needed.
+**Note:** The `uninstall` command will **NOT** delete `/tmp/voxeil.sh`. You can manually delete it if needed.
 
 **Uninstall flags:**
 
@@ -126,6 +134,11 @@ bash /tmp/voxeil.sh uninstall --force
 - k3s or docker
 - System namespaces (kube-system, default, kube-public, kube-node-lease)
 - Other workloads on the cluster
+- `/tmp/voxeil.sh` (the entrypoint script)
+
+**State file behavior:**
+- If `/var/lib/voxeil/install.state` is missing, uninstall will **warn** and require `--force` to proceed
+- This is a safety measure to prevent accidental cleanup of unlabeled resources
 
 **Examples:**
 ```bash
@@ -147,10 +160,11 @@ bash /tmp/voxeil.sh uninstall --keep-volumes
 ⚠️ **WARNING: This will delete the Kubernetes cluster on this node. This is irreversible and different from `uninstall`.**
 
 **Unlike `uninstall` (which only removes Voxeil platform resources), `purge-node` completely wipes the node:**
-- Removes k3s binaries and `/usr/local/bin/k3s-uninstall.sh`
+- Removes k3s using `/usr/local/bin/k3s-uninstall.sh` if present
 - Removes `/var/lib/rancher` and `/etc/rancher`
 - Removes `/var/lib/voxeil` state registry
 - Does NOT remove docker packages (unless k3s-uninstall.sh does)
+- OS remains intact
 
 **Requires explicit --force flag:**
 ```bash
@@ -159,7 +173,28 @@ bash /tmp/voxeil.sh purge-node --force
 
 **Note:** 
 - The `purge-node` command requires `--force` as a safety measure to prevent accidental node wipe
-- The `purge-node` command will **not** delete `/tmp/voxeil.sh`. You can manually delete it if needed
+- The `purge-node` command will **NOT** delete `/tmp/voxeil.sh`. You can manually delete it if needed
+
+### Doctor Mode
+
+Check installation status without making changes:
+
+```bash
+bash /tmp/voxeil.sh doctor
+```
+
+**What it checks:**
+- State file contents (`/var/lib/voxeil/install.state`)
+- Resources labeled `app.kubernetes.io/part-of=voxeil`
+- Stuck Terminating namespaces
+- Unlabeled namespaces that might be leftovers
+- PersistentVolumes tied to voxeil namespaces (by claimRef)
+- Webhook configurations (validating and mutating)
+- CRDs (Custom Resource Definitions)
+- ClusterRoles and ClusterRoleBindings
+- PVCs
+
+Doctor mode **never modifies the system** and shows recommended next commands in its output. Exit code is 0 if clean, 1 if leftovers are found.
 
 ### Version Pinning
 
@@ -188,26 +223,7 @@ bash /tmp/voxeil.sh --ref v1.0.0 uninstall --force
 ./scripts/build-images.sh --push --tag latest
 ```
 
-### Doctor Mode
-
-Check installation status without making changes:
-
-```bash
-bash /tmp/voxeil.sh doctor
-```
-
-**What it checks:**
-- State file contents (`/var/lib/voxeil/install.state`)
-- Resources labeled `app.kubernetes.io/part-of=voxeil`
-- Stuck Terminating namespaces
-- Unlabeled namespaces that might be leftovers
-- PersistentVolumes tied to voxeil namespaces (by claimRef)
-- Webhook configurations (validating and mutating)
-- CRDs (Custom Resource Definitions)
-- ClusterRoles and ClusterRoleBindings
-- PVCs
-
-Doctor mode **never modifies the system** and shows recommended next commands in its output. Exit code is 0 if clean, 1 if leftovers are found.
+**Note:** The `scripts/` directory is for internal use only. End users should use `voxeil.sh` commands.
 
 ### Common Scenarios
 
@@ -237,6 +253,7 @@ bash /tmp/voxeil.sh uninstall --force
 # If you also want to remove k3s (irreversible, full node wipe)
 bash /tmp/voxeil.sh purge-node --force
 ```
+
 ### Installation Outputs
 
 After successful installation:

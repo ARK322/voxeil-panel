@@ -16,9 +16,13 @@ spec:
         container.apparmor.security.beta.kubernetes.io/pgadmin: unconfined
     spec:
       securityContext:
-        fsGroup: 5050
-        fsGroupChangePolicy: "Always"
+        runAsUser: 0
+        runAsGroup: 0
         runAsNonRoot: false
+        readOnlyRootFilesystem: false
+        allowPrivilegeEscalation: false
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: init-permissions
           image: alpine:3.19
@@ -104,15 +108,15 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
-            # pgadmin4 image requires root for initialization, then switches to 5050 internally
-            # Explicitly set runAsUser/runAsGroup to 5050 (pgadmin user) to avoid permission issues
-            runAsUser: 5050
-            runAsGroup: 5050
-            runAsNonRoot: true
-            allowPrivilegeEscalation: true
+            # pgAdmin container MUST start as root to avoid "Operation not permitted" errors
+            # The container runtime may drop privileges internally, but we start as root
+            runAsUser: 0
+            runAsGroup: 0
+            runAsNonRoot: false
             readOnlyRootFilesystem: false
+            allowPrivilegeEscalation: false
             seccompProfile:
-              type: Unconfined
+              type: RuntimeDefault
       volumes:
         - name: pgadmin-data
           persistentVolumeClaim:
