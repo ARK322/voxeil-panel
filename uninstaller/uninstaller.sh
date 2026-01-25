@@ -109,8 +109,17 @@ cleanup_filesystem_files() {
     fi
   fi
 
-  # Remove SSH config backups (voxeil-backup.*)
+  # Restore SSH config from backup and remove backups
   if ls /etc/ssh/sshd_config.voxeil-backup.* 2>/dev/null | grep -q .; then
+    echo "Restoring SSH config from backup..."
+    latest_backup="$(ls -t /etc/ssh/sshd_config.voxeil-backup.* 2>/dev/null | head -n 1 || true)"
+    if [ -n "${latest_backup}" ] && [ -f "${latest_backup}" ]; then
+      cp "${latest_backup}" /etc/ssh/sshd_config 2>/dev/null || true
+      if command -v systemctl >/dev/null 2>&1; then
+        systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || true
+      fi
+      echo "  ✓ SSH config restored from backup"
+    fi
     echo "Removing SSH config backups..."
     rm -f /etc/ssh/sshd_config.voxeil-backup.* && files_removed=$((files_removed + 1)) || true
   fi
@@ -142,46 +151,27 @@ cleanup_filesystem_files() {
 # Clean up filesystem files first (works even without kubectl)
 cleanup_filesystem_files || true
 
-# Check if kubectl is available
-if ! command -v kubectl >/dev/null 2>&1; then
-  echo "⚠️  kubectl is not installed or not in PATH"
+# Check if kubectl is available and cluster is accessible
+KUBECTL_AVAILABLE=false
+if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
+  KUBECTL_AVAILABLE=true
+  # Check Docker (non-fatal, just warn if unavailable)
+  ensure_docker || true
   echo ""
-  echo "This means k3s/Kubernetes is not installed."
-  echo "Filesystem files have been cleaned up (if any were found)."
+  echo "Starting Kubernetes cleanup process..."
   echo ""
-  echo "If you want to completely remove everything, you can:"
-  echo "  1. Remove k3s: /usr/local/bin/k3s-uninstall.sh (if exists)"
-  echo "  2. Remove Docker (if installed): apt-get remove -y docker.io containerd"
+else
+  if ! command -v kubectl >/dev/null 2>&1; then
+    echo "⚠️  kubectl is not installed or not in PATH"
+    echo "   This means k3s/Kubernetes is not installed."
+  else
+    echo "⚠️  Cannot connect to Kubernetes cluster"
+    echo "   The cluster may not be running or k3s may have been removed."
+  fi
+  echo "   Filesystem files have been cleaned up (if any were found)."
+  echo "   Proceeding to remove k3s and Docker (if installed)..."
   echo ""
-  echo "Exiting uninstaller (nothing to uninstall from Kubernetes)."
-  # Small delay to allow curl to finish writing before pipe closes
-  sleep 0.1 2>/dev/null || true
-  exit 0
 fi
-
-# Check if we can connect to cluster
-if ! kubectl cluster-info >/dev/null 2>&1; then
-  echo "⚠️  Cannot connect to Kubernetes cluster"
-  echo ""
-  echo "The cluster may not be running or k3s may have been removed."
-  echo "Filesystem files have been cleaned up (if any were found)."
-  echo ""
-  echo "If you want to completely remove everything, you can:"
-  echo "  1. Remove k3s: /usr/local/bin/k3s-uninstall.sh (if exists)"
-  echo "  2. Remove Docker (if installed): apt-get remove -y docker.io containerd"
-  echo ""
-  echo "Exiting uninstaller (cannot connect to cluster)."
-  # Small delay to allow curl to finish writing before pipe closes
-  sleep 0.1 2>/dev/null || true
-  exit 0
-fi
-
-# Check Docker (non-fatal, just warn if unavailable)
-ensure_docker || true
-
-echo ""
-echo "Starting uninstall process..."
-echo ""
 
 # Aggressive function to delete namespace and all its resources
 delete_namespace() {
@@ -245,9 +235,11 @@ delete_namespace() {
   fi
 }
 
-# Delete Voxeil Panel namespaces
-echo "=== Deleting Voxeil Panel namespaces ==="
-delete_namespace "platform"
+# Only proceed with Kubernetes cleanup if kubectl is available and cluster is accessible
+if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
+  # Delete Voxeil Panel namespaces
+  echo "=== Deleting Voxeil Panel namespaces ==="
+  delete_namespace "platform"
 delete_namespace "infra-db"
 delete_namespace "dns-zone"
 delete_namespace "mail-zone"
@@ -600,12 +592,11 @@ echo "  ✓ Services and Ingresses"
 echo "  ✓ ConfigMaps and Secrets"
 echo "  ✓ IngressRouteTCP (Traefik custom resources)"
 echo ""
-echo ""
-echo "=== VPS FORMAT COMPLETE ==="
-echo "All Kubernetes resources have been deleted."
-echo ""
+fi
+# End of Kubernetes cleanup (only if kubectl was available)
 
-# VPS FORMAT MODE: Automatically remove k3s and Docker
+# VPS FORMAT MODE: Automatically remove k3s and Docker (always, even if kubectl not available)
+echo ""
 echo "=== Removing k3s and Docker (VPS format mode) ==="
 
 # Remove k3s - comprehensive cleanup
@@ -718,11 +709,70 @@ fi
 
 echo "  ✓ Docker completely removed"
 
+# Remove ClamAV (if installed by installer)
 echo ""
-echo "✓ VPS FORMAT COMPLETE - Everything has been wiped:"
-echo "  ✓ All Kubernetes resources deleted"
+echo "Removing ClamAV (if installed)..."
+if command -v apt-get >/dev/null 2>&1; then
+  if command -v clamscan >/dev/null 2>&1; then
+    # Stop ClamAV services
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl stop clamav-freshclam 2>/dev/null || true
+      systemctl stop clamav-daemon 2>/dev/null || true
+      systemctl disable clamav-freshclam 2>/dev/null || true
+      systemctl disable clamav-daemon 2>/dev/null || true
+    fi
+    # Remove ClamAV packages
+    apt-get remove -y clamav clamav-daemon 2>/dev/null || true
+    apt-get purge -y clamav clamav-daemon 2>/dev/null || true
+    # Remove ClamAV data directories
+    rm -rf /var/lib/clamav 2>/dev/null || true
+    rm -rf /var/log/clamav 2>/dev/null || true
+    echo "  ✓ ClamAV removed"
+  else
+    echo "  ClamAV not found, skipping"
+  fi
+fi
+
+# Remove fail2ban (if installed by installer) - config already removed, now remove package
+echo ""
+echo "Removing fail2ban (if installed)..."
+if command -v apt-get >/dev/null 2>&1; then
+  if command -v fail2ban-client >/dev/null 2>&1; then
+    # Stop fail2ban service
+    if command -v systemctl >/dev/null 2>&1; then
+      systemctl stop fail2ban 2>/dev/null || true
+      systemctl disable fail2ban 2>/dev/null || true
+    fi
+    # Remove fail2ban packages
+    apt-get remove -y fail2ban 2>/dev/null || true
+    apt-get purge -y fail2ban 2>/dev/null || true
+    # Remove fail2ban data directories
+    rm -rf /var/lib/fail2ban 2>/dev/null || true
+    rm -rf /var/log/fail2ban 2>/dev/null || true
+    echo "  ✓ fail2ban removed"
+  else
+    echo "  fail2ban not found, skipping"
+  fi
+fi
+
+# Final apt cleanup
+if command -v apt-get >/dev/null 2>&1; then
+  echo ""
+  echo "Performing final apt cleanup..."
+  apt-get autoremove -y 2>/dev/null || true
+  apt-get autoclean 2>/dev/null || true
+  echo "  ✓ apt cleanup completed"
+fi
+
+echo ""
+echo "=== VPS FORMAT COMPLETE ==="
+if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
+  echo "  ✓ All Kubernetes resources deleted"
+fi
 echo "  ✓ k3s removed (if was installed)"
 echo "  ✓ Docker removed (if was installed)"
+echo "  ✓ ClamAV removed (if was installed)"
+echo "  ✓ fail2ban removed (if was installed)"
 echo "  ✓ All filesystem files cleaned"
 echo ""
 echo "System is now completely clean - ready for fresh installation."
