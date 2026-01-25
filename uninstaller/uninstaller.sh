@@ -50,11 +50,78 @@ ensure_docker() {
   return 1
 }
 
+# Clean up filesystem files (works even if kubectl is not available)
+cleanup_filesystem_files() {
+  echo ""
+  echo "=== Cleaning up filesystem files ==="
+  files_removed=0
+
+  # Remove Voxeil configuration files
+  if [ -d /etc/voxeil ]; then
+    echo "Removing /etc/voxeil directory..."
+    rm -rf /etc/voxeil && files_removed=$((files_removed + 1)) || true
+  fi
+
+  # Remove voxeil-ufw-apply script
+  if [ -f /usr/local/bin/voxeil-ufw-apply ]; then
+    echo "Removing /usr/local/bin/voxeil-ufw-apply..."
+    rm -f /usr/local/bin/voxeil-ufw-apply && files_removed=$((files_removed + 1)) || true
+  fi
+
+  # Remove systemd service files
+  if [ -f /etc/systemd/system/voxeil-ufw-apply.service ]; then
+    echo "Stopping and removing voxeil-ufw-apply.service..."
+    systemctl stop voxeil-ufw-apply.service 2>/dev/null || true
+    systemctl disable voxeil-ufw-apply.service 2>/dev/null || true
+    rm -f /etc/systemd/system/voxeil-ufw-apply.service && files_removed=$((files_removed + 1)) || true
+  fi
+
+  if [ -f /etc/systemd/system/voxeil-ufw-apply.path ]; then
+    echo "Stopping and removing voxeil-ufw-apply.path..."
+    systemctl stop voxeil-ufw-apply.path 2>/dev/null || true
+    systemctl disable voxeil-ufw-apply.path 2>/dev/null || true
+    rm -f /etc/systemd/system/voxeil-ufw-apply.path && files_removed=$((files_removed + 1)) || true
+  fi
+
+  # Reload systemd if services were removed
+  if [ ${files_removed} -gt 0 ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload 2>/dev/null || true
+  fi
+
+  # Remove fail2ban voxeil config
+  if [ -f /etc/fail2ban/jail.d/voxeil.conf ]; then
+    echo "Removing /etc/fail2ban/jail.d/voxeil.conf..."
+    rm -f /etc/fail2ban/jail.d/voxeil.conf && files_removed=$((files_removed + 1)) || true
+    if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet fail2ban 2>/dev/null; then
+      systemctl reload fail2ban 2>/dev/null || true
+    fi
+  fi
+
+  # Remove SSH config backups (voxeil-backup.*)
+  if ls /etc/ssh/sshd_config.voxeil-backup.* 2>/dev/null | grep -q .; then
+    echo "Removing SSH config backups..."
+    rm -f /etc/ssh/sshd_config.voxeil-backup.* && files_removed=$((files_removed + 1)) || true
+  fi
+
+  if [ ${files_removed} -gt 0 ]; then
+    echo "Removed ${files_removed} file(s)/directory(ies)"
+  else
+    echo "No filesystem files found to remove"
+  fi
+  
+  return ${files_removed}
+}
+
+# Clean up filesystem files first (works even without kubectl)
+cleanup_filesystem_files || true
+
 # Check if kubectl is available
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "⚠️  kubectl is not installed or not in PATH"
   echo ""
   echo "This means k3s/Kubernetes is not installed."
+  echo "Filesystem files have been cleaned up (if any were found)."
+  echo ""
   echo "If you want to completely remove everything, you can:"
   echo "  1. Remove k3s: /usr/local/bin/k3s-uninstall.sh (if exists)"
   echo "  2. Remove Docker (if installed): apt-get remove -y docker.io containerd"
@@ -70,6 +137,8 @@ if ! kubectl cluster-info >/dev/null 2>&1; then
   echo "⚠️  Cannot connect to Kubernetes cluster"
   echo ""
   echo "The cluster may not be running or k3s may have been removed."
+  echo "Filesystem files have been cleaned up (if any were found)."
+  echo ""
   echo "If you want to completely remove everything, you can:"
   echo "  1. Remove k3s: /usr/local/bin/k3s-uninstall.sh (if exists)"
   echo "  2. Remove Docker (if installed): apt-get remove -y docker.io containerd"
@@ -275,5 +344,8 @@ kubectl get namespaces 2>/dev/null | grep -vE '^(NAME|kube-system|kube-public|ku
 echo ""
 echo "Note: If you want to completely remove k3s, run:"
 echo "  /usr/local/bin/k3s-uninstall.sh"
+echo ""
+echo "Note: If you want to remove Docker, run:"
+echo "  apt-get remove -y docker.io containerd"
 echo ""
 echo "Uninstall completed."
