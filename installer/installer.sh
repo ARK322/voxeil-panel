@@ -652,8 +652,22 @@ ensure_docker() {
   # Ensure Docker daemon configuration directory exists
   mkdir -p /etc/docker
 
+  # Check for required kernel modules
+  echo "Checking for required kernel modules..."
+  if ! lsmod | grep -q overlay; then
+    echo "⚠️  Warning: overlay kernel module not loaded"
+    echo "   Attempting to load overlay module..."
+    modprobe overlay 2>/dev/null || echo "   Could not load overlay module (may need reboot)"
+  fi
+  if ! lsmod | grep -q br_netfilter; then
+    echo "⚠️  Warning: br_netfilter kernel module not loaded"
+    modprobe br_netfilter 2>/dev/null || true
+  fi
+
   # Configure Docker daemon with basic settings (helps avoid common startup issues)
+  # Use existing daemon.json if present, otherwise create a new one
   if [ ! -f /etc/docker/daemon.json ]; then
+    echo "Creating Docker daemon configuration..."
     cat > /etc/docker/daemon.json <<EOF
 {
   "storage-driver": "overlay2",
@@ -661,9 +675,12 @@ ensure_docker() {
   "log-opts": {
     "max-size": "10m",
     "max-file": "3"
-  }
+  },
+  "live-restore": true
 }
 EOF
+  else
+    echo "Docker daemon.json already exists, preserving existing configuration"
   fi
 
   # Reload systemd to pick up any changes
@@ -679,38 +696,112 @@ EOF
     sleep 2
     
     # Then enable and start docker service
-    systemctl enable docker
-    systemctl start docker
+    systemctl enable docker || {
+      log_error "Failed to enable Docker service"
+      exit 1
+    }
+    
+    # Start docker service (don't exit on failure, we'll check status below)
+    systemctl start docker || {
+      echo "Docker service start command failed, checking status..."
+    }
     sleep 5
     
     # Check if service started successfully
     if ! systemctl is-active --quiet docker; then
-      echo "Docker service failed to start. Checking status and logs..."
+      echo ""
+      echo "=========================================="
+      echo "Docker service failed to start"
+      echo "=========================================="
+      echo ""
+      
+      echo "--- Docker service status ---"
       systemctl status docker --no-pager -l || true
       echo ""
-      echo "Docker service logs:"
+      
+      echo "--- Docker service logs (last 50 lines) ---"
       journalctl -u docker.service --no-pager -n 50 || true
       echo ""
-      echo "Checking for common issues..."
+      
+      echo "--- Checking for common issues ---"
       
       # Check for AppArmor issues
       if command -v aa-status >/dev/null 2>&1; then
         echo "AppArmor status:"
-        aa-status 2>/dev/null | head -5 || true
+        aa-status 2>/dev/null | head -10 || true
+        echo ""
       fi
       
       # Check for storage driver issues
-      echo "Checking storage driver..."
-      ls -la /var/lib/docker/ 2>/dev/null || echo "Docker data directory missing or inaccessible"
+      echo "Docker data directory:"
+      ls -la /var/lib/docker/ 2>/dev/null || echo "  Docker data directory missing or inaccessible"
+      echo ""
       
-      # Try to manually start docker daemon to see error
-      echo "Attempting to diagnose issue..."
-      dockerd --debug 2>&1 | head -20 &
-      DOCKERD_PID=$!
-      sleep 3
-      kill $DOCKERD_PID 2>/dev/null || true
+      # Check for containerd conflicts (k3s uses containerd)
+      if systemctl is-active --quiet containerd 2>/dev/null; then
+        echo "⚠️  Warning: containerd service is running (k3s uses containerd)"
+        echo "   This is normal - Docker and k3s can coexist, but may share containerd"
+        echo ""
+      fi
       
-      log_error "Docker service failed to start. Please check the logs above for details."
+      # Check for socket issues
+      echo "Docker socket status:"
+      ls -la /var/run/docker.sock /run/docker.sock 2>/dev/null || echo "  Docker socket not found"
+      echo ""
+      
+      # Check kernel modules
+      echo "Required kernel modules:"
+      echo "  overlay: $(lsmod | grep -q overlay && echo 'loaded' || echo 'NOT LOADED')"
+      echo "  br_netfilter: $(lsmod | grep -q br_netfilter && echo 'loaded' || echo 'NOT LOADED')"
+      echo "  ip_tables: $(lsmod | grep -q ip_tables && echo 'loaded' || echo 'NOT LOADED')"
+      echo ""
+      
+      # Check systemd dependencies
+      echo "Docker service dependencies:"
+      systemctl list-dependencies docker.service --no-pager 2>/dev/null | head -20 || true
+      echo ""
+      
+      # Check for failed dependencies
+      echo "Failed systemd units:"
+      systemctl --failed --no-pager 2>/dev/null || true
+      echo ""
+      
+      # Try to get more detailed error from journalctl
+      echo "--- Recent Docker-related systemd errors ---"
+      journalctl -u docker.service --no-pager -n 100 | grep -iE "error|fail|denied|permission" | tail -20 || true
+      echo ""
+      
+      # Check disk space
+      echo "Disk space:"
+      df -h /var/lib/docker 2>/dev/null || df -h / 2>/dev/null | head -2
+      echo ""
+      
+      # Try to manually start docker daemon to see error (non-blocking)
+      echo "--- Attempting to diagnose with dockerd --debug (5 seconds) ---"
+      timeout 5 dockerd --debug 2>&1 | head -30 || {
+        echo "  (dockerd debug output unavailable or timed out)"
+      }
+      echo ""
+      
+      echo "=========================================="
+      echo "TROUBLESHOOTING STEPS:"
+      echo "=========================================="
+      echo ""
+      echo "1. Check the logs above for specific error messages"
+      echo "2. Ensure you have sufficient disk space"
+      echo "3. Check if AppArmor/SELinux is blocking Docker"
+      echo "4. Verify Docker socket permissions: ls -la /var/run/docker.sock"
+      echo "5. Try manually starting Docker: systemctl start docker"
+      echo "6. Check for conflicting container runtimes"
+      echo "7. Review systemd journal: journalctl -u docker.service -n 100"
+      echo ""
+      echo "If the issue persists, you may need to:"
+      echo "  - Check system logs: journalctl -xe"
+      echo "  - Verify kernel modules: lsmod | grep overlay"
+      echo "  - Check for hardware/VM compatibility issues"
+      echo ""
+      
+      log_error "Docker service failed to start. Please review the diagnostics above."
       exit 1
     fi
   else
