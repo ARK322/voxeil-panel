@@ -424,6 +424,86 @@ validate_image() {
   return 1
 }
 
+# Check for image pull errors in a namespace/deployment
+check_image_pull_errors() {
+  local namespace="$1"
+  local deployment="$2"
+  local image_name="${3:-}"
+  
+  # Check for pods with image pull errors
+  local image_pull_pods
+  image_pull_pods="$(kubectl get pods -n "${namespace}" -l app="${deployment}" \
+    -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].state.waiting.reason}{"\t"}{.status.containerStatuses[0].state.waiting.message}{"\n"}{end}' 2>/dev/null | \
+    grep -E "(ImagePullBackOff|ErrImagePull|ImagePullError)" || true)"
+  
+  if [ -n "${image_pull_pods}" ]; then
+    echo ""
+    echo "⚠️  IMAGE PULL ERROR DETECTED for ${namespace}/${deployment}"
+    echo ""
+    
+    # Extract pod name and error message
+    local pod_name error_reason error_message
+    while IFS=$'\t' read -r pod_name error_reason error_message; do
+      echo "Pod: ${pod_name}"
+      echo "Error: ${error_reason}"
+      if [ -n "${error_message}" ]; then
+        echo "Message: ${error_message}"
+      fi
+      echo ""
+    done <<< "${image_pull_pods}"
+    
+    # Get image from deployment if not provided
+    if [ -z "${image_name}" ]; then
+      image_name="$(kubectl get deployment "${deployment}" -n "${namespace}" \
+        -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "")"
+    fi
+    
+    if [ -n "${image_name}" ]; then
+      echo "Failed image: ${image_name}"
+      echo ""
+      echo "SOLUTIONS:"
+      echo ""
+      
+      # Check if image is from GHCR
+      if [[ "${image_name}" == *"ghcr.io"* ]]; then
+        echo "1. If image is private, set authentication:"
+        echo "   export GHCR_USERNAME=your-username"
+        echo "   export GHCR_TOKEN=your-token"
+        echo "   Then re-run the installer"
+        echo ""
+        echo "2. If image doesn't exist, build and push it:"
+        echo "   ./scripts/build-images.sh --push --tag latest"
+        echo ""
+        echo "3. Or build locally and use local images:"
+        echo "   ./scripts/build-images.sh --tag local"
+        echo "   export CONTROLLER_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-controller:local"
+        echo "   export PANEL_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-panel:local"
+        echo "   Then re-run the installer"
+      else
+        echo "1. Check if the image exists: docker pull ${image_name}"
+        echo "2. Verify network connectivity to the registry"
+        echo "3. Check if authentication is required"
+      fi
+      
+      echo ""
+      echo "4. Skip image validation (not recommended):"
+      echo "   export SKIP_IMAGE_VALIDATION=true"
+      echo "   Then re-run the installer"
+      echo ""
+    fi
+    
+    # Show recent events related to image pull
+    echo "--- Recent image pull events ---"
+    kubectl get events -n "${namespace}" --sort-by='.lastTimestamp' | \
+      grep -iE "image|pull|backoff|error" | tail -10 || true
+    echo ""
+    
+    return 1
+  fi
+  
+  return 0
+}
+
 # Diagnostic function for deployment failures
 diagnose_deployment() {
   local namespace="$1"
@@ -434,6 +514,12 @@ diagnose_deployment() {
   echo "DIAGNOSTIC REPORT: ${namespace}/${deployment}"
   echo "=========================================="
   echo ""
+  
+  # Check for image pull errors first
+  local image_name
+  image_name="$(kubectl get deployment "${deployment}" -n "${namespace}" \
+    -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "")"
+  check_image_pull_errors "${namespace}" "${deployment}" "${image_name}" || true
   
   echo "--- All pods in namespace ${namespace} ---"
   kubectl get pods -n "${namespace}" -o wide || true
@@ -962,6 +1048,7 @@ if [ -n "${orphaned_webhooks}" ] || [ -n "${orphaned_mutating}" ]; then
 fi
 
 # Clean up stuck PVCs in Voxeil Panel namespaces (if they exist but namespace is being recreated)
+# Also clean up PVCs stuck in Terminating state
 for ns in platform infra-db dns-zone mail-zone backup-system; do
   if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
     # Namespace doesn't exist, but check for finalizers on PVCs (if any were left behind)
@@ -971,6 +1058,25 @@ for ns in platform infra-db dns-zone mail-zone backup-system; do
       for pvc in ${pvcs}; do
         kubectl delete pvc "${pvc}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       done
+    fi
+  else
+    # Namespace exists, check for PVCs stuck in Terminating state
+    terminating_pvcs="$(kubectl get pvc -n "${ns}" -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.metadata.deletionTimestamp}{"\n"}{end}' 2>/dev/null | grep -v "^$" | cut -f1 || true)"
+    if [ -n "${terminating_pvcs}" ]; then
+      echo "  Found PVCs stuck in Terminating state in namespace ${ns}, attempting to fix..."
+      for pvc in ${terminating_pvcs}; do
+        echo "    Fixing PVC: ${pvc}"
+        # Remove finalizers to allow PVC to be deleted
+        kubectl patch pvc "${pvc}" -n "${ns}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+        # Wait a moment for PVC to be deleted
+        sleep 2
+        # If still exists, try force delete
+        if kubectl get pvc "${pvc}" -n "${ns}" >/dev/null 2>&1; then
+          kubectl delete pvc "${pvc}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        fi
+      done
+      # Wait a bit more for PVCs to be fully deleted
+      sleep 3
     fi
   fi
 done
@@ -1543,6 +1649,20 @@ kubectl apply -f "${SERVICES_DIR}/infra-db/networkpolicy.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-secret.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-svc.yaml"
+
+# Ensure pgadmin PVC is ready before deploying pgadmin
+echo "Ensuring pgadmin PVC is ready..."
+# Wait for any terminating PVCs to be cleaned up
+for i in {1..30}; do
+  terminating_pvc="$(kubectl get pvc pgadmin-pvc -n infra-db -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || echo "")"
+  if [ -z "${terminating_pvc}" ]; then
+    break
+  fi
+  echo "  Waiting for pgadmin-pvc to finish terminating... (${i}/30)"
+  sleep 2
+done
+
+# Apply pgadmin deployment
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml"
 
 # Wait for postgres StatefulSet to be ready (PVC will bind when pod is scheduled)
@@ -1588,6 +1708,17 @@ for i in {1..30}; do
   sleep 1
 done
 
+# Clean up any failed/crashed pgadmin pods before waiting
+echo "Cleaning up any failed pgadmin pods..."
+failed_pgadmin_pods="$(kubectl get pods -n infra-db -l app=pgadmin -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\t"}{.status.containerStatuses[0].state.waiting.reason}{"\n"}{end}' 2>/dev/null | grep -E "(Failed|CrashLoopBackOff|Error)" | cut -f1 || true)"
+if [ -n "${failed_pgadmin_pods}" ]; then
+  for pod in ${failed_pgadmin_pods}; do
+    echo "  Deleting failed pod: ${pod}"
+    kubectl delete pod "${pod}" -n infra-db --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+  done
+  sleep 2
+fi
+
 if ! kubectl wait --for=condition=Available deployment/pgadmin -n infra-db --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
   log_error "pgadmin Deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
   echo "=== pgadmin Pod Status ==="
@@ -1609,6 +1740,20 @@ if ! kubectl wait --for=condition=Available deployment/pgadmin -n infra-db --tim
   echo ""
   echo "=== PVC Status ==="
   kubectl get pvc -n infra-db || true
+  echo ""
+  echo "=== Checking for PVC issues ==="
+  pgadmin_pvc_status="$(kubectl get pvc pgadmin-pvc -n infra-db -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")"
+  if [ "${pgadmin_pvc_status}" = "Terminating" ]; then
+    echo "ERROR: pgadmin-pvc is stuck in Terminating state"
+    echo "Attempting to fix by removing finalizers..."
+    kubectl patch pvc pgadmin-pvc -n infra-db -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+    echo "Waiting for PVC to be deleted..."
+    sleep 5
+    echo "Re-applying pgadmin PVC..."
+    kubectl apply -f "${SERVICES_DIR}/infra-db/pvc.yaml" || true
+  elif [ "${pgadmin_pvc_status}" != "Bound" ] && [ "${pgadmin_pvc_status}" != "Pending" ]; then
+    echo "WARNING: pgadmin-pvc status is ${pgadmin_pvc_status} (expected Bound or Pending)"
+  fi
   echo ""
   echo "=== Events (last 20) ==="
   kubectl get events -n infra-db --sort-by='.lastTimestamp' | tail -20 || true
@@ -1892,11 +2037,42 @@ for i in {1..30}; do
   sleep 1
 done
 
-if ! kubectl wait --for=condition=Available deployment/controller -n platform --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
-  log_error "Controller deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
-  diagnose_deployment "platform" "controller"
-  exit 1
-fi
+# Wait for deployment with periodic image pull error checks
+echo "Waiting for controller to become available (checking for image pull errors every 30s)..."
+CONTROLLER_WAIT_START=$(date +%s)
+CONTROLLER_LAST_CHECK=${CONTROLLER_WAIT_START}
+CONTROLLER_CHECK_INTERVAL=30
+
+while ! kubectl wait --for=condition=Available deployment/controller -n platform --timeout=30s 2>/dev/null; do
+  CONTROLLER_CURRENT_TIME=$(date +%s)
+  CONTROLLER_ELAPSED=$((CONTROLLER_CURRENT_TIME - CONTROLLER_WAIT_START))
+  
+  # Check for image pull errors every check_interval seconds
+  if [ $((CONTROLLER_CURRENT_TIME - CONTROLLER_LAST_CHECK)) -ge ${CONTROLLER_CHECK_INTERVAL} ]; then
+    CONTROLLER_LAST_CHECK=${CONTROLLER_CURRENT_TIME}
+    if ! check_image_pull_errors "platform" "controller" "${CONTROLLER_IMAGE}"; then
+      echo ""
+      echo "⚠️  Image pull error detected. Deployment may fail."
+      echo "   Continuing to wait, but you may need to fix the image issue..."
+      echo ""
+    fi
+  fi
+  
+  # Check if we've exceeded the timeout
+  if [ ${CONTROLLER_ELAPSED} -ge ${DEPLOYMENT_ROLLOUT_TIMEOUT} ]; then
+    log_error "Controller deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
+    check_image_pull_errors "platform" "controller" "${CONTROLLER_IMAGE}" || true
+    diagnose_deployment "platform" "controller"
+    exit 1
+  fi
+  
+  # Show progress every 60 seconds
+  if [ $((CONTROLLER_ELAPSED % 60)) -eq 0 ] && [ ${CONTROLLER_ELAPSED} -gt 0 ]; then
+    echo "Still waiting... (${CONTROLLER_ELAPSED}s / ${DEPLOYMENT_ROLLOUT_TIMEOUT}s elapsed)"
+  fi
+done
+
+echo "Controller deployment is available"
 
 # Additional pod-level readiness check
 echo "Verifying controller pods are ready..."
@@ -1934,11 +2110,42 @@ for i in {1..30}; do
   sleep 1
 done
 
-if ! kubectl wait --for=condition=Available deployment/panel -n platform --timeout="${DEPLOYMENT_ROLLOUT_TIMEOUT}s"; then
-  log_error "Panel deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
-  diagnose_deployment "platform" "panel"
-  exit 1
-fi
+# Wait for deployment with periodic image pull error checks
+echo "Waiting for panel to become available (checking for image pull errors every 30s)..."
+PANEL_WAIT_START=$(date +%s)
+PANEL_LAST_CHECK=${PANEL_WAIT_START}
+PANEL_CHECK_INTERVAL=30
+
+while ! kubectl wait --for=condition=Available deployment/panel -n platform --timeout=30s 2>/dev/null; do
+  PANEL_CURRENT_TIME=$(date +%s)
+  PANEL_ELAPSED=$((PANEL_CURRENT_TIME - PANEL_WAIT_START))
+  
+  # Check for image pull errors every check_interval seconds
+  if [ $((PANEL_CURRENT_TIME - PANEL_LAST_CHECK)) -ge ${PANEL_CHECK_INTERVAL} ]; then
+    PANEL_LAST_CHECK=${PANEL_CURRENT_TIME}
+    if ! check_image_pull_errors "platform" "panel" "${PANEL_IMAGE}"; then
+      echo ""
+      echo "⚠️  Image pull error detected. Deployment may fail."
+      echo "   Continuing to wait, but you may need to fix the image issue..."
+      echo ""
+    fi
+  fi
+  
+  # Check if we've exceeded the timeout
+  if [ ${PANEL_ELAPSED} -ge ${DEPLOYMENT_ROLLOUT_TIMEOUT} ]; then
+    log_error "Panel deployment did not become available within ${DEPLOYMENT_ROLLOUT_TIMEOUT}s"
+    check_image_pull_errors "platform" "panel" "${PANEL_IMAGE}" || true
+    diagnose_deployment "platform" "panel"
+    exit 1
+  fi
+  
+  # Show progress every 60 seconds
+  if [ $((PANEL_ELAPSED % 60)) -eq 0 ] && [ ${PANEL_ELAPSED} -gt 0 ]; then
+    echo "Still waiting... (${PANEL_ELAPSED}s / ${DEPLOYMENT_ROLLOUT_TIMEOUT}s elapsed)"
+  fi
+done
+
+echo "Panel deployment is available"
 
 # Additional pod-level readiness check for panel
 echo "Verifying panel pods are ready..."
