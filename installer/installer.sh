@@ -697,7 +697,14 @@ ensure_docker() {
     return 0
   fi
 
-  # Docker missing or daemon not running
+  # If --build-images is not set, Docker is optional - just warn and return
+  if [ "${BUILD_IMAGES}" != "true" ]; then
+    log_warn "Docker is not available, but image build is optional. Skipping Docker setup."
+    log_info "Use --build-images flag if you need to build backup images."
+    return 0
+  fi
+
+  # Docker missing or daemon not running - but --build-images is set, so we need it
   if ! command -v apt-get >/dev/null 2>&1; then
     log_error "Docker is required for backup image build, but automatic install is only supported on apt-get systems (Ubuntu/Debian)."
     exit 1
@@ -1115,6 +1122,7 @@ WITH_MAIL=false
 WITH_DNS=false
 VERSION=""
 CHANNEL="main"
+BUILD_IMAGES=false
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -1171,9 +1179,13 @@ while [[ $# -gt 0 ]]; do
       fi
       shift 2
       ;;
+    --build-images)
+      BUILD_IMAGES=true
+      shift
+      ;;
     *)
       echo "Unknown option: $1"
-      echo "Usage: $0 [--doctor] [--dry-run] [--force] [--skip-k3s] [--install-k3s] [--kubeconfig <path>] [--profile minimal|full] [--with-mail] [--with-dns] [--version <tag|branch|commit>] [--channel stable|main]"
+      echo "Usage: $0 [--doctor] [--dry-run] [--force] [--skip-k3s] [--install-k3s] [--kubeconfig <path>] [--profile minimal|full] [--with-mail] [--with-dns] [--version <tag|branch|commit>] [--channel stable|main] [--build-images]"
       exit 1
       ;;
   esac
@@ -1191,6 +1203,21 @@ else
 fi
 
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
+
+# ========= Initialize RENDER_DIR early (before any usage) =========
+RENDER_DIR="${RENDER_DIR:-$(mktemp -d)}"
+if [[ ! -d "${RENDER_DIR}" ]]; then
+  log_error "Failed to create temporary directory"
+  exit 1
+fi
+export RENDER_DIR
+# Cleanup temp dir on exit
+cleanup_render_dir() {
+  if [[ -n "${RENDER_DIR:-}" && -d "${RENDER_DIR}" ]]; then
+    rm -rf "${RENDER_DIR}" || true
+  fi
+}
+trap cleanup_render_dir EXIT
 
 # ========= Remote file fetch helpers =========
 # Ensure curl is available
@@ -1704,25 +1731,28 @@ echo ""
 # ========= ensure docker is installed FIRST (before k3s) =========
 ensure_docker
 
-# ========= build backup images BEFORE k3s (docker must be ready) =========
-log_step "Building backup images (before k3s)"
+# ========= build backup images BEFORE k3s (optional, only if --build-images is set) =========
+SKIP_BACKUP_BUILD=true
+if [ "${BUILD_IMAGES}" = "true" ]; then
+  log_step "Building backup images (before k3s)"
+  
+  # Check if Docker is actually available before attempting build
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    log_error "Docker is required for --build-images but is not available."
+    log_error "Please install Docker first or remove --build-images flag."
+    exit 1
+  fi
 
-# Fetch backup-runner Dockerfile and build context
-BACKUP_BUILD_DIR="${RENDER_DIR}/backup-runner"
-mkdir -p "${BACKUP_BUILD_DIR}"
+  # Fetch backup-runner Dockerfile and build context
+  BACKUP_BUILD_DIR="${RENDER_DIR}/backup-runner"
+  mkdir -p "${BACKUP_BUILD_DIR}"
 
-log_info "Fetching backup-runner build context..."
-if ! fetch_file "infra/docker/images/backup-runner/Dockerfile" "${BACKUP_BUILD_DIR}/Dockerfile" "backup-runner Dockerfile"; then
-  log_warn "Failed to fetch backup-runner Dockerfile. Skipping backup image build."
-  log_warn "Backup functionality may not work until backup-runner image is available."
-  SKIP_BACKUP_BUILD=true
-else
-  # Try to fetch any additional files in the backup-runner directory (if any)
-  # For now, just the Dockerfile is sufficient
-  SKIP_BACKUP_BUILD=false
-fi
+  log_info "Fetching backup-runner build context..."
+  if ! fetch_file "infra/docker/images/backup-runner/Dockerfile" "${BACKUP_BUILD_DIR}/Dockerfile" "backup-runner Dockerfile"; then
+    log_error "Failed to fetch backup-runner Dockerfile. Cannot build backup images."
+    exit 1
+  fi
 
-if [ "${SKIP_BACKUP_BUILD}" != "true" ]; then
   # Use buildx if available, fallback to legacy builder
   BUILD_CMD="docker build"
   if docker buildx version >/dev/null 2>&1; then
@@ -1738,19 +1768,17 @@ if [ "${SKIP_BACKUP_BUILD}" != "true" ]; then
     # Verify images exist after build
     if docker image inspect backup-runner:local >/dev/null 2>&1; then
       log_ok "Backup images built successfully"
+      SKIP_BACKUP_BUILD=false
     else
-      log_warn "backup-runner:local image not found after build"
-      SKIP_BACKUP_BUILD=true
+      log_error "backup-runner:local image not found after build"
+      exit 1
     fi
   else
-    log_warn "Failed to build backup-runner image. Skipping."
-    SKIP_BACKUP_BUILD=true
+    log_error "Failed to build backup-runner image."
+    exit 1
   fi
-fi
-
-if [ "${SKIP_BACKUP_BUILD}" = "true" ]; then
-  log_warn "Backup image build skipped. Backup functionality may be limited."
-  log_info "To build backup image later, fetch infra/docker/images/backup-runner and run: docker build -t backup-runner:local <dir>"
+else
+  log_info "Skipping backup image build (optional). Use --build-images to enable."
 fi
 
 # ========= install k3s if needed =========
@@ -1945,19 +1973,7 @@ done
 log_ok "Cleanup completed. Proceeding with installation..."
 
 # ========= render manifests to temp dir =========
-RENDER_DIR="$(mktemp -d)"
-if [[ ! -d "${RENDER_DIR}" ]]; then
-  log_error "Failed to create temporary directory"
-  exit 1
-fi
-# Cleanup temp dir on exit
-cleanup_render_dir() {
-  if [[ -n "${RENDER_DIR:-}" && -d "${RENDER_DIR}" ]]; then
-    rm -rf "${RENDER_DIR}" || true
-  fi
-}
-trap cleanup_render_dir EXIT
-
+# RENDER_DIR is already initialized earlier, just ensure subdirectories exist
 BACKUP_SYSTEM_NAME="backup-system"
 SERVICES_DIR="${RENDER_DIR}/services"
 TEMPLATES_DIR="${RENDER_DIR}/templates"
