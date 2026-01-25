@@ -1,6 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# ========= error handling and logging =========
+LAST_COMMAND=""
+STEP_COUNTER=0
+
+log_step() {
+  STEP_COUNTER=$((STEP_COUNTER + 1))
+  echo ""
+  echo "=== [STEP] ${STEP_COUNTER}: $1 ==="
+}
+
+log_info() {
+  echo "=== [INFO] $1 ==="
+}
+
+log_warn() {
+  echo "=== [WARN] $1 ==="
+}
+
+log_ok() {
+  echo "=== [OK]   $1 ==="
+}
+
+log_error() {
+  echo "=== [ERROR] $1 ===" >&2
+}
+
+# Trap to log failed commands
+trap 'LAST_COMMAND="${BASH_COMMAND}"; LAST_LINE="${LINENO}"' DEBUG
+trap 'if [ $? -ne 0 ]; then
+  log_error "Command failed at line ${LAST_LINE}: ${LAST_COMMAND}"
+  exit 1
+fi' ERR
+
 # ========= State Registry =========
 STATE_FILE="/var/lib/voxeil/install.state"
 
@@ -111,9 +144,10 @@ done
 
 # ========= Doctor mode =========
 if [ "${DOCTOR}" = "true" ]; then
+  echo ""
   echo "=== Voxeil Panel Uninstaller - Doctor Mode ==="
   echo ""
-  echo "Scanning for installed components and leftover resources..."
+  log_info "Scanning for installed components and leftover resources..."
   echo ""
   
   EXIT_CODE=0
@@ -356,24 +390,67 @@ if [ "${DOCTOR}" = "true" ]; then
   exit ${EXIT_CODE}
 fi
 
-# ========= Main uninstaller =========
+# ===== VOXEIL logo =====
+ORANGE="\033[38;5;208m"
+GRAY="\033[38;5;252m"
+NC="\033[0m"
+
+INNER=72
+strip_ansi() { echo -e "$1" | sed -r 's/\x1B\[[0-9;]*[mK]//g'; }
+
+box_line_center() {
+  local line="$1"
+  local plain len pad_left pad_right
+  plain="$(strip_ansi "$line")"
+  len=${#plain}
+  if (( len > INNER )); then
+    plain="${plain:0:INNER}"
+    line="$plain"
+    len=$INNER
+  fi
+  pad_left=$(( (INNER - len) / 2 ))
+  pad_right=$(( INNER - len - pad_left ))
+  printf "║%*s%b%*s║\n" "$pad_left" "" "$line" "$pad_right" ""
+}
+
+echo
+echo "╔════════════════════════════════════════════════════════════════════════╗"
+printf "║%*s║\n" "$INNER" ""
+printf "║%*s║\n" "$INNER" ""
+
+box_line_center "${ORANGE}██╗   ██╗${GRAY}  ██████╗   ██╗  ██╗  ███████╗  ██╗  ██╗${NC}"
+box_line_center "${ORANGE}██║   ██║${GRAY} ██╔═══██╗  ╚██╗██╔╝  ██╔════╝  ██║  ██║${NC}"
+box_line_center "${ORANGE}██║   ██║${GRAY} ██║   ██║   ╚███╔╝   █████╗    ██║  ██║${NC}"
+box_line_center "${ORANGE}╚██╗ ██╔╝${GRAY} ██║   ██║   ██╔██╗   ██╔══╝    ██║  ██║${NC}"
+box_line_center "${ORANGE} ╚████╔╝ ${GRAY} ╚██████╔╝  ██╔╝ ██╗  ███████╗  ██║   ███████╗${NC}"
+box_line_center "${ORANGE}  ╚═══╝  ${GRAY}  ╚═════╝   ╚═╝  ╚═╝  ╚══════╝  ╚═╝   ╚══════╝${NC}"
+
+printf "║%*s║\n" "$INNER" ""
+box_line_center "${GRAY}VOXEIL PANEL${NC}"
+box_line_center "${GRAY}Uninstaller${NC}"
+printf "║%*s║\n" "$INNER" ""
+box_line_center "${GRAY}Safe • Production-Grade Cleanup${NC}"
+printf "║%*s║\n" "$INNER" ""
+echo "╚════════════════════════════════════════════════════════════════════════╝"
+echo
 echo "== Voxeil Panel Uninstaller =="
 echo ""
 
+# ========= Main uninstaller =========
 # Load state
 state_load
 
 # Check if state file exists
 if [ ! -f "${STATE_FILE}" ]; then
-  echo "⚠ Warning: State file not found at ${STATE_FILE}"
+  log_warn "State file not found at ${STATE_FILE}"
   echo "  This may indicate a partial installation or manual cleanup."
   if [ "${FORCE}" != "true" ]; then
     echo "  Use --force to proceed with cleanup based on detected resources."
     echo ""
-    echo "  Safe default: exiting without changes."
+    log_info "Safe default: exiting without changes."
     exit 0
   fi
-  echo "  Proceeding with uninstall based on detected resources (--force)..."
+  log_info "Proceeding with uninstall based on detected resources (--force)..."
   echo ""
 fi
 
@@ -408,7 +485,7 @@ execute_or_print() {
 # Disable admission webhooks (Kyverno and cert-manager) to prevent API lock
 disable_admission_webhooks_preflight() {
   echo ""
-  echo "=== Preflight: disabling Kyverno/cert-manager admission webhooks (to prevent API lock) ==="
+  log_info "Preflight: disabling Kyverno/cert-manager admission webhooks (to prevent API lock)"
 
   # Kyverno: delete any webhook configs named kyverno-*
   kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
@@ -438,17 +515,17 @@ wait_ns_deleted() {
   
   while [ ${waited} -lt ${timeout} ]; do
     if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
-      echo "    ✓ Namespace ${namespace} deleted"
+      log_ok "Namespace ${namespace} deleted"
       return 0
     fi
     sleep 1
     waited=$((waited + 1))
     if [ $((waited % 10)) -eq 0 ]; then
-      echo "    Waiting for namespace ${namespace} to be deleted... (${waited}/${timeout}s)"
+      log_info "Waiting for namespace ${namespace} to be deleted... (${waited}/${timeout}s)"
     fi
     # Force remove finalizers if stuck
     if [ $((waited % 30)) -eq 0 ] && [ ${waited} -gt 0 ]; then
-      echo "    Attempting to force remove finalizers..."
+      log_info "Attempting to force remove finalizers..."
       # Try kubectl patch first
       kubectl patch namespace "${namespace}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
       # If that doesn't work, use raw API
@@ -463,7 +540,7 @@ wait_ns_deleted() {
     fi
   done
   
-  echo "    ⚠ Namespace ${namespace} still exists after ${timeout}s, forcing deletion..."
+  log_warn "Namespace ${namespace} still exists after ${timeout}s, forcing deletion..."
   # Final attempt to force remove finalizers
   if command -v python3 >/dev/null 2>&1; then
     kubectl get namespace "${namespace}" -o json | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
@@ -483,7 +560,7 @@ delete_namespace() {
     return 0
   fi
   
-  echo "  Deleting namespace: ${namespace}..."
+  log_info "Deleting namespace: ${namespace}..."
   
   # Delete all PVCs first (they block namespace deletion)
   pvcs="$(kubectl get pvc -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
@@ -502,7 +579,7 @@ delete_namespace() {
     err="$(kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force 2>&1 || true)"
     # Check for webhook errors in stderr
     if echo "$err" | grep -qiE 'failed calling webhook|context deadline exceeded' && echo "$err" | grep -qiE 'kyverno|cert-manager'; then
-      echo "  ⚠ Admission webhook blockage detected while deleting ${namespace}. Disabling webhooks and retrying..."
+      log_warn "Admission webhook blockage detected while deleting ${namespace}. Disabling webhooks and retrying..."
       disable_admission_webhooks_preflight
       # Retry deletion after disabling webhooks
       kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force 2>&1 || true
@@ -516,12 +593,12 @@ delete_namespace() {
 # Set KUBECONFIG if provided
 if [ -n "${KUBECONFIG}" ]; then
   export KUBECONFIG
-  echo "[INFO] Using kubeconfig: ${KUBECONFIG}"
+  log_info "Using kubeconfig: ${KUBECONFIG}"
 fi
 
 # Check kubectl availability
 if ! command -v kubectl >/dev/null 2>&1 || ! kubectl cluster-info >/dev/null 2>&1; then
-  echo "⚠ kubectl not available or cluster not accessible"
+  log_warn "kubectl not available or cluster not accessible"
   echo "  Proceeding with filesystem cleanup only..."
   KUBECTL_AVAILABLE=false
 else
@@ -540,20 +617,19 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   fi
   
   # A) Workloads first - delete all resources by label
-  echo "=== Step A: Deleting workloads and namespace-scoped resources ==="
-  echo "  Deleting all resources labeled app.kubernetes.io/part-of=voxeil..."
+  log_step "Deleting workloads and namespace-scoped resources"
+  log_info "Deleting all resources labeled app.kubernetes.io/part-of=voxeil..."
   run "kubectl delete all,cm,secret,sa,role,rolebinding,ingress,networkpolicy -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # Also delete PVCs explicitly
-  echo "  Deleting PVCs..."
+  log_info "Deleting PVCs..."
   run "kubectl delete pvc -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # B) Namespaces next (reverse order), and WAIT
-  echo ""
-  echo "=== Step B: Deleting namespaces (reverse order) ==="
+  log_step "Deleting namespaces (reverse order)"
   
   # Delete user and tenant namespaces first (dynamically created)
-  echo "  Deleting user namespaces..."
+  log_info "Deleting user namespaces..."
   user_namespaces="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^user-' || true)"
   if [ -n "${user_namespaces}" ]; then
     for ns in ${user_namespaces}; do
@@ -563,7 +639,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     done
   fi
   
-  echo "  Deleting tenant namespaces..."
+  log_info "Deleting tenant namespaces..."
   tenant_namespaces="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^tenant-' || true)"
   if [ -n "${tenant_namespaces}" ]; then
     for ns in ${tenant_namespaces}; do
@@ -603,13 +679,12 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   
   # C) Remaining webhooks (cluster-scoped) by label (cert-manager, Flux, etc.)
   # Note: Kyverno webhooks are handled in preflight to prevent API lock
-  echo ""
-  echo "=== Step C: Deleting remaining webhooks ==="
+  log_step "Deleting remaining webhooks"
   run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # Also delete by name patterns if not labeled (backward compatibility - cert-manager, Flux, etc.)
   if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
-    echo "  Deleting cert-manager webhooks (by name pattern)..."
+    log_info "Deleting cert-manager webhooks (by name pattern)..."
     cert_webhooks="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i cert-manager || true)"
     for webhook in ${cert_webhooks}; do
       run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \"${webhook}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
@@ -617,7 +692,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   fi
   
   if [ "${FORCE}" = "true" ] || is_installed "FLUX_INSTALLED"; then
-    echo "  Deleting Flux webhooks (by name pattern)..."
+    log_info "Deleting Flux webhooks (by name pattern)..."
     flux_webhooks="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i flux || true)"
     for webhook in ${flux_webhooks}; do
       run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \"${webhook}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
@@ -625,8 +700,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   fi
   
   # D) ClusterRoles / ClusterRoleBindings by label
-  echo ""
-  echo "=== Step D: Deleting ClusterRoles and ClusterRoleBindings ==="
+  log_step "Deleting ClusterRoles and ClusterRoleBindings"
   run "kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # Also delete by name (backward compatibility)
@@ -635,46 +709,45 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   
   # Delete ClusterIssuers and HelmChartConfig
   if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
-    echo "  Deleting ClusterIssuers..."
+    log_info "Deleting ClusterIssuers..."
     run "kubectl delete clusterissuer --all --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
-  echo "  Deleting HelmChartConfig..."
+  log_info "Deleting HelmChartConfig..."
   run "kubectl delete helmchartconfig traefik -n kube-system --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # E) CRDs LAST by label
-  echo ""
-  echo "=== Step E: Deleting CRDs ==="
+  log_step "Deleting CRDs"
   run "kubectl delete crd -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # Also delete by name patterns (backward compatibility)
-  if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
-    echo "  Deleting cert-manager CRDs (by name pattern)..."
+  # Note: FORCE=true CRD deletions are deferred to Step F (after namespace deletion)
+  if [ "${FORCE}" != "true" ] && is_installed "CERT_MANAGER_INSTALLED"; then
+    log_info "Deleting cert-manager CRDs (by name pattern)..."
     run "kubectl delete crd -l app.kubernetes.io/name=cert-manager --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
     run "kubectl delete crd certificates.cert-manager.io certificaterequests.cert-manager.io challenges.acme.cert-manager.io clusterissuers.cert-manager.io issuers.cert-manager.io orders.acme.cert-manager.io --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
-  if [ "${FORCE}" = "true" ] || is_installed "KYVERNO_INSTALLED"; then
-    echo "  Deleting Kyverno CRDs (by name pattern)..."
+  if [ "${FORCE}" != "true" ] && is_installed "KYVERNO_INSTALLED"; then
+    log_info "Deleting Kyverno CRDs (by name pattern)..."
     run "kubectl delete crd -l app.kubernetes.io/name=kyverno --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
     run "kubectl delete crd policies.kyverno.io clusterpolicies.kyverno.io policyreports.wgpolicyk8s.io clusterpolicyreports.wgpolicyk8s.io --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
-  if [ "${FORCE}" = "true" ] || is_installed "FLUX_INSTALLED"; then
-    echo "  Deleting Flux CRDs (by name pattern)..."
+  if [ "${FORCE}" != "true" ] && is_installed "FLUX_INSTALLED"; then
+    log_info "Deleting Flux CRDs (by name pattern)..."
     run "kubectl delete crd -l app.kubernetes.io/name=flux --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
   # F) Force-mode fallback cleanup for unlabeled leftovers (state missing)
   if [ "${FORCE}" = "true" ]; then
-    echo ""
-    echo "=== Step F: Force-mode fallback cleanup (unlabeled leftovers) ==="
+    log_step "Force-mode fallback cleanup (unlabeled leftovers)"
     
     # Delete unlabeled namespaces
-    echo "  Cleaning up unlabeled namespaces..."
+    log_info "Cleaning up unlabeled namespaces..."
     for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
       if kubectl get namespace "${ns}" >/dev/null 2>&1; then
         if ! kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
-          echo "    Deleting unlabeled namespace: ${ns}"
+          log_info "Deleting unlabeled namespace: ${ns}"
           delete_namespace "${ns}"
         fi
       fi
@@ -685,7 +758,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     if [ -n "${user_namespaces}" ]; then
       for ns in ${user_namespaces}; do
         if ! kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
-          echo "    Deleting unlabeled namespace: ${ns}"
+          log_info "Deleting unlabeled namespace: ${ns}"
           delete_namespace "${ns}"
         fi
       done
@@ -695,33 +768,40 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     if [ -n "${tenant_namespaces}" ]; then
       for ns in ${tenant_namespaces}; do
         if ! kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
-          echo "    Deleting unlabeled namespace: ${ns}"
+          log_info "Deleting unlabeled namespace: ${ns}"
           delete_namespace "${ns}"
         fi
       done
     fi
     
     # Delete remaining cluster resources
-    echo "  Cleaning up cluster roles and bindings..."
+    log_info "Cleaning up cluster roles and bindings..."
     run "kubectl delete clusterrole controller-bootstrap user-operator --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
     run "kubectl delete clusterrolebinding controller-bootstrap-binding --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
     
-    # Delete CRDs by patterns (name match, not labels)
-    echo "  Cleaning up CRDs by name pattern..."
+    # Remove lingering webhookconfigs again (idempotent)
+    log_info "Cleaning up remaining webhookconfigs..."
+    disable_admission_webhooks_preflight
+    
+    # Delete CRDs by patterns (name match, not labels) - LAST, after namespaces and webhooks
+    log_info "Cleaning up CRDs by name pattern (kyverno/cert-manager/flux/toolkit)..."
     crds="$(kubectl get crd -o name 2>/dev/null | grep -E '(kyverno|cert-manager|fluxcd|toolkit)' || true)"
     if [ -n "${crds}" ]; then
       echo "${crds}" | xargs -r kubectl delete --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
     fi
     
-    # Remove lingering webhookconfigs again (idempotent)
-    echo "  Cleaning up remaining webhookconfigs..."
-    disable_admission_webhooks_preflight
+    # Also delete CRDs by name patterns (from Step E, deferred here for FORCE=true case)
+    log_info "Cleaning up CRDs by component patterns..."
+    run "kubectl delete crd -l app.kubernetes.io/name=cert-manager --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd certificates.cert-manager.io certificaterequests.cert-manager.io challenges.acme.cert-manager.io clusterissuers.cert-manager.io issuers.cert-manager.io orders.acme.cert-manager.io --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd -l app.kubernetes.io/name=kyverno --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd policies.kyverno.io clusterpolicies.kyverno.io policyreports.wgpolicyk8s.io clusterpolicyreports.wgpolicyk8s.io --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd -l app.kubernetes.io/name=flux --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
   # G) Storage cleanup - PVs (unless --keep-volumes)
   if [ "${KEEP_VOLUMES}" != "true" ]; then
-    echo ""
-    echo "=== Step G: Cleaning up PersistentVolumes ==="
+    log_step "Cleaning up PersistentVolumes"
     # PVs might not have labels. Detect PVs whose claimRef.namespace is one of voxeil namespaces
     VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
     for ns in ${VOXEIL_NS_LIST}; do
@@ -735,32 +815,29 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
           # Fallback: get all PVs and check claimRef manually
           PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
         fi
-        if [ -n "${PVS}" ]; then
-          echo "  Deleting PVs for namespace ${ns}..."
-          for pv in ${PVS}; do
+      if [ -n "${PVS}" ]; then
+        log_info "Deleting PVs for namespace ${ns}..."
+        for pv in ${PVS}; do
             run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
           done
         fi
       fi
     done
   else
-    echo ""
-    echo "=== Step G: Skipping PersistentVolume cleanup (--keep-volumes) ==="
+    log_step "Skipping PersistentVolume cleanup (--keep-volumes)"
   fi
 fi
 
 # H) Node purge (--purge-node AND --force required)
 if [ "${PURGE_NODE}" = "true" ]; then
   if [ "${FORCE}" != "true" ]; then
-    echo ""
-    echo "⚠ ERROR: --purge-node requires --force flag"
+    log_error "--purge-node requires --force flag"
     echo "  This is a safety measure to prevent accidental node wipe."
     exit 1
   fi
   
-  echo ""
-  echo "=== Step H: Node Purge Mode (--purge-node --force) ==="
-  echo "  WARNING: This will remove k3s and rancher directories from the node."
+  log_step "Node Purge Mode (--purge-node --force)"
+  log_warn "This will remove k3s and rancher directories from the node."
   echo ""
   
   if [ "${DRY_RUN}" = "true" ]; then
@@ -774,12 +851,12 @@ if [ "${PURGE_NODE}" = "true" ]; then
     
     # Run k3s uninstall script if available
     if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
-      echo "  Running k3s-uninstall.sh..."
+      log_info "Running k3s-uninstall.sh..."
       /usr/local/bin/k3s-uninstall.sh >/dev/null 2>&1 || true
     fi
     
     # Remove k3s binaries and directories
-    echo "  Removing k3s binaries and directories..."
+    log_info "Removing k3s binaries and directories..."
     rm -f /usr/local/bin/k3s /usr/local/bin/kubectl /usr/local/bin/crictl /usr/local/bin/ctr 2>/dev/null || true
     rm -rf /var/lib/rancher /etc/rancher /var/log/k3s 2>/dev/null || true
     rm -f /etc/systemd/system/k3s.service 2>/dev/null || true
@@ -789,16 +866,15 @@ if [ "${PURGE_NODE}" = "true" ]; then
     fi
     
     # Remove /var/lib/voxeil (state registry)
-    echo "  Removing /var/lib/voxeil..."
+    log_info "Removing /var/lib/voxeil..."
     rm -rf /var/lib/voxeil 2>/dev/null || true
     
-    echo "  ✓ Node purge complete"
+    log_ok "Node purge complete"
   fi
 fi
 
 # I) Clean up filesystem files (unless --purge-node, which handles /var/lib/voxeil)
-echo ""
-echo "=== Step I: Cleaning up filesystem files ==="
+log_step "Cleaning up filesystem files"
 run "rm -rf /etc/voxeil 2>/dev/null || true"
 run "rm -f /usr/local/bin/voxeil-ufw-apply 2>/dev/null || true"
 run "rm -f /etc/systemd/system/voxeil-ufw-apply.service 2>/dev/null || true"
@@ -817,7 +893,7 @@ fi
 echo ""
 echo "=== Uninstall Complete ==="
 if [ "${DRY_RUN}" = "true" ]; then
-  echo "  (Dry run - no changes were made)"
+  log_info "Dry run - no changes were made"
 else
-  echo "  ✓ All Voxeil Panel components removed"
+  log_ok "All Voxeil Panel components removed"
 fi
