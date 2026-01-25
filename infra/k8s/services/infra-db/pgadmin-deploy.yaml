@@ -16,6 +16,7 @@ spec:
       securityContext:
         fsGroup: 5050
         fsGroupChangePolicy: "Always"
+        runAsNonRoot: false
       initContainers:
         - name: init-permissions
           image: alpine:3.19
@@ -102,8 +103,10 @@ spec:
             failureThreshold: 3
           securityContext:
             # pgadmin4 image requires root for initialization, then switches to 5050 internally
-            # Removing runAsNonRoot to allow entrypoint script to execute
-            allowPrivilegeEscalation: false
+            # Explicitly set runAsUser/runAsGroup to 0 to avoid Kyverno/cert-manager conflicts
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: true
             readOnlyRootFilesystem: false
             seccompProfile:
               type: RuntimeDefault
