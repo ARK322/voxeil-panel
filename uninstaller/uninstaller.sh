@@ -13,6 +13,43 @@ echo "  - All data in PVCs (this cannot be undone!)"
 echo ""
 echo "Starting uninstall process..."
 
+# Docker check function (for cleanup operations)
+ensure_docker() {
+  echo ""
+  echo "=== Checking Docker availability ==="
+  
+  # Check if docker command exists
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "⚠️  Docker command not found (some cleanup operations may be limited)"
+    return 1
+  fi
+  
+  # Check if daemon is reachable
+  # Try multiple times as Docker might be starting up
+  local check_attempts=3
+  local check_attempt=0
+  while [ ${check_attempt} -lt ${check_attempts} ]; do
+    if docker info >/dev/null 2>&1; then
+      echo "✓ Docker is available and running"
+      return 0
+    fi
+    check_attempt=$((check_attempt + 1))
+    if [ ${check_attempt} -lt ${check_attempts} ]; then
+      sleep 1
+    fi
+  done
+  
+  # Check if Docker socket exists
+  if [ -S /var/run/docker.sock ] 2>/dev/null || [ -S /run/docker.sock ] 2>/dev/null; then
+    echo "⚠️  Docker socket exists but docker info failed (permission issue?)"
+    echo "   Some cleanup operations may be limited"
+    return 1
+  fi
+  
+  echo "⚠️  Docker daemon is not running (some cleanup operations may be limited)"
+  return 1
+}
+
 # Check if kubectl is available
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "ERROR: kubectl is not installed or not in PATH"
@@ -24,6 +61,9 @@ if ! kubectl cluster-info >/dev/null 2>&1; then
   echo "ERROR: Cannot connect to Kubernetes cluster"
   exit 1
 fi
+
+# Check Docker (non-fatal, just warn if unavailable)
+ensure_docker || true
 
 echo ""
 echo "Starting uninstall process..."
