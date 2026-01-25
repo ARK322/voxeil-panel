@@ -60,6 +60,8 @@ if ! command -v kubectl >/dev/null 2>&1; then
   echo "  2. Remove Docker (if installed): apt-get remove -y docker.io containerd"
   echo ""
   echo "Exiting uninstaller (nothing to uninstall from Kubernetes)."
+  # Small delay to allow curl to finish writing before pipe closes
+  sleep 0.1 2>/dev/null || true
   exit 0
 fi
 
@@ -73,6 +75,8 @@ if ! kubectl cluster-info >/dev/null 2>&1; then
   echo "  2. Remove Docker (if installed): apt-get remove -y docker.io containerd"
   echo ""
   echo "Exiting uninstaller (cannot connect to cluster)."
+  # Small delay to allow curl to finish writing before pipe closes
+  sleep 0.1 2>/dev/null || true
   exit 0
 fi
 
