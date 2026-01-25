@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # ========= error handling and logging =========
 LAST_COMMAND=""
@@ -246,6 +246,19 @@ if [ "${DOCTOR}" = "true" ]; then
     echo "  ✓ None found"
   fi
   
+  # Check for stuck Terminating namespaces
+  echo ""
+  echo "=== Stuck Terminating Namespaces ==="
+  TERMINATING_NS="$(kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\n"}{end}' 2>/dev/null | grep -E '\tTerminating$' | cut -f1 || true)"
+  if [ -n "${TERMINATING_NS}" ]; then
+    echo "${TERMINATING_NS}" | while read -r ns; do
+      echo "  ⚠ ${ns} (stuck in Terminating)"
+      EXIT_CODE=1
+    done
+  else
+    echo "  ✓ None found"
+  fi
+  
   # Check for unlabeled namespaces that might be voxeil-related
   echo ""
   echo "=== Unlabeled Namespaces (potential leftovers) ==="
@@ -261,27 +274,27 @@ if [ "${DOCTOR}" = "true" ]; then
     echo "  ✓ None found"
   fi
   
-  # Check PVs tied to voxeil namespaces
+  # Check PVs tied to voxeil namespaces (by claimRef)
   echo ""
   echo "=== PersistentVolumes (checking claimRef) ==="
   VOXEIL_PVS=0
-  for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
-    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
-      if command -v python3 >/dev/null 2>&1; then
-        PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
-      elif command -v jq >/dev/null 2>&1; then
-        PVS="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
-      else
-        PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
-      fi
-      if [ -n "${PVS}" ]; then
-        echo "  ⚠ PVs for namespace ${ns}:"
-        echo "${PVS}" | while read -r pv; do
-          echo "    - ${pv}"
-        done
-        VOXEIL_PVS=1
-        EXIT_CODE=1
-      fi
+  VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
+  for ns in ${VOXEIL_NS_LIST}; do
+    # Check PVs even if namespace doesn't exist (leftover PVs)
+    if command -v python3 >/dev/null 2>&1; then
+      PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name'] + '\t' + pv.get('spec', {}).get('claimRef', {}).get('namespace', '')) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
+    elif command -v jq >/dev/null 2>&1; then
+      PVS="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
+    else
+      PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
+    fi
+    if [ -n "${PVS}" ]; then
+      echo "  ⚠ PVs for namespace ${ns}:"
+      echo "${PVS}" | while read -r pv; do
+        echo "    - ${pv}"
+      done
+      VOXEIL_PVS=1
+      EXIT_CODE=1
     fi
   done
   if [ ${VOXEIL_PVS} -eq 0 ]; then
@@ -290,8 +303,8 @@ if [ "${DOCTOR}" = "true" ]; then
   
   # Check for leftover CRDs
   echo ""
-  echo "Checking CRDs..."
-  VOXEIL_CRDS="$(kubectl get crd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '(cert-manager|kyverno|flux)' || true)"
+  echo "=== CRDs (Custom Resource Definitions) ==="
+  VOXEIL_CRDS="$(kubectl get crd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '(cert-manager|kyverno|fluxcd|toolkit)' || true)"
   if [ -n "${VOXEIL_CRDS}" ]; then
     echo "  ⚠ Found Voxeil CRDs:"
     echo "${VOXEIL_CRDS}" | while read -r crd; do
@@ -332,8 +345,8 @@ if [ "${DOCTOR}" = "true" ]; then
   
   # Check for leftover webhooks
   echo ""
-  echo "Checking webhooks..."
-  VOXEIL_WEBHOOKS="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux)' || true)"
+  echo "=== Webhook Configurations ==="
+  VOXEIL_WEBHOOKS="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux|toolkit)' || true)"
   if [ -n "${VOXEIL_WEBHOOKS}" ]; then
     echo "  ⚠ Found Voxeil webhooks:"
     echo "${VOXEIL_WEBHOOKS}" | while read -r wh; do
@@ -381,10 +394,14 @@ if [ "${DOCTOR}" = "true" ]; then
   fi
   
   echo ""
+  echo "=== Summary ==="
   if [ ${EXIT_CODE} -eq 0 ]; then
-    echo "✓ System is clean - no Voxeil resources found"
+    echo "[OK] System is clean - no Voxeil resources found"
   else
-    echo "⚠ System has leftover Voxeil resources"
+    echo "[WARN] System has leftover Voxeil resources"
+    echo ""
+    echo "Recommended next steps:"
+    echo "  bash /tmp/voxeil.sh uninstall --force"
   fi
   
   exit ${EXIT_CODE}
@@ -485,8 +502,34 @@ execute_or_print() {
 # Disable admission webhooks (Kyverno and cert-manager) to prevent API lock
 disable_admission_webhooks_preflight() {
   echo ""
-  log_info "Preflight: disabling Kyverno/cert-manager admission webhooks (to prevent API lock)"
+  log_info "Preflight: disabling Kyverno/cert-manager/flux admission webhooks (to prevent API lock)"
 
+  # First, try to patch failurePolicy to Ignore (safer than immediate delete)
+  # This prevents API lock while still allowing graceful cleanup
+  webhook_patterns="kyverno cert-manager flux toolkit"
+  for pattern in ${webhook_patterns}; do
+    # ValidatingWebhookConfigurations
+    validating_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
+    if [ -n "${validating_webhooks}" ]; then
+      for wh in ${validating_webhooks}; do
+        # Patch failurePolicy to Ignore
+        kubectl patch validatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=json 2>/dev/null || \
+        kubectl patch validatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=merge 2>/dev/null || true
+      done
+    fi
+    
+    # MutatingWebhookConfigurations
+    mutating_webhooks="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
+    if [ -n "${mutating_webhooks}" ]; then
+      for wh in ${mutating_webhooks}; do
+        # Patch failurePolicy to Ignore
+        kubectl patch mutatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=json 2>/dev/null || \
+        kubectl patch mutatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=merge 2>/dev/null || true
+      done
+    fi
+  done
+
+  # If patch fails (webhook unreachable), try direct delete
   # Kyverno: delete any webhook configs named kyverno-*
   kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
     | tr ' ' '\n' | grep -E '^kyverno-' | xargs -r kubectl delete validatingwebhookconfiguration --ignore-not-found >/dev/null 2>&1 || true
@@ -497,6 +540,13 @@ disable_admission_webhooks_preflight() {
   # cert-manager: there can be BOTH validating and mutating configs called cert-manager-webhook
   kubectl delete validatingwebhookconfiguration cert-manager-webhook --ignore-not-found >/dev/null 2>&1 || true
   kubectl delete mutatingwebhookconfiguration cert-manager-webhook --ignore-not-found >/dev/null 2>&1 || true
+
+  # Flux webhooks
+  kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
+    | tr ' ' '\n' | grep -iE 'flux' | xargs -r kubectl delete validatingwebhookconfiguration --ignore-not-found >/dev/null 2>&1 || true
+
+  kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
+    | tr ' ' '\n' | grep -iE 'flux' | xargs -r kubectl delete mutatingwebhookconfiguration --ignore-not-found >/dev/null 2>&1 || true
 
   # Also delete labeled webhooks
   kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \

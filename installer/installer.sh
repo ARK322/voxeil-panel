@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # ========= error handling and logging =========
 LAST_COMMAND=""
@@ -26,6 +26,21 @@ log_ok() {
 log_error() {
   echo "=== [ERROR] $1 ===" >&2
 }
+
+# ========= Initialize RENDER_DIR early (before any usage) =========
+RENDER_DIR="${RENDER_DIR:-$(mktemp -d)}"
+if [[ ! -d "${RENDER_DIR}" ]]; then
+  log_error "Failed to create temporary directory"
+  exit 1
+fi
+export RENDER_DIR
+# Cleanup temp dir on exit
+cleanup_render_dir() {
+  if [[ -n "${RENDER_DIR:-}" && -d "${RENDER_DIR}" ]]; then
+    rm -rf "${RENDER_DIR}" || true
+  fi
+}
+trap cleanup_render_dir EXIT
 
 # Trap to log failed commands
 trap 'LAST_COMMAND="${BASH_COMMAND}"; LAST_LINE="${LINENO}"' DEBUG
@@ -1204,21 +1219,6 @@ fi
 
 GITHUB_RAW_BASE="https://raw.githubusercontent.com/${REPO}/${REF}"
 
-# ========= Initialize RENDER_DIR early (before any usage) =========
-RENDER_DIR="${RENDER_DIR:-$(mktemp -d)}"
-if [[ ! -d "${RENDER_DIR}" ]]; then
-  log_error "Failed to create temporary directory"
-  exit 1
-fi
-export RENDER_DIR
-# Cleanup temp dir on exit
-cleanup_render_dir() {
-  if [[ -n "${RENDER_DIR:-}" && -d "${RENDER_DIR}" ]]; then
-    rm -rf "${RENDER_DIR}" || true
-  fi
-}
-trap cleanup_render_dir EXIT
-
 # ========= Remote file fetch helpers =========
 # Ensure curl is available
 ensure_curl() {
@@ -1881,12 +1881,40 @@ write_state_flag "STORAGE_INSTALLED"
 log_step "Cleaning up leftover resources from previous installations"
 echo "Checking for and cleaning up orphaned resources..."
 
-# Clean up orphaned Kyverno webhooks (if namespace deleted but webhooks remain)
-orphaned_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
-orphaned_mutating="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
+# Preflight: Patch admission webhooks to prevent API lock during cleanup
+# This is critical for Terminating namespaces that may be blocked by unreachable webhooks
+log_info "Preflight: Patching admission webhooks to prevent API lock..."
+
+# Find webhook configs by pattern (kyverno, cert-manager, flux)
+webhook_patterns="kyverno cert-manager flux toolkit"
+for pattern in ${webhook_patterns}; do
+  # ValidatingWebhookConfigurations
+  validating_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
+  if [ -n "${validating_webhooks}" ]; then
+    for wh in ${validating_webhooks}; do
+      # Patch failurePolicy to Ignore to prevent API lock
+      kubectl patch validatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=json 2>/dev/null || \
+      kubectl patch validatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=merge 2>/dev/null || true
+    done
+  fi
+  
+  # MutatingWebhookConfigurations
+  mutating_webhooks="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
+  if [ -n "${mutating_webhooks}" ]; then
+    for wh in ${mutating_webhooks}; do
+      # Patch failurePolicy to Ignore to prevent API lock
+      kubectl patch mutatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=json 2>/dev/null || \
+      kubectl patch mutatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=merge 2>/dev/null || true
+    done
+  fi
+done
+
+# Clean up orphaned webhooks (if namespace deleted but webhooks remain)
+orphaned_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux)' || true)"
+orphaned_mutating="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux)' || true)"
 
 if [ -n "${orphaned_webhooks}" ] || [ -n "${orphaned_mutating}" ]; then
-  echo "  Found orphaned Kyverno webhooks, cleaning up..."
+  echo "  Found orphaned webhooks, attempting to delete..."
   for webhook in ${orphaned_webhooks}; do
     kubectl delete validatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
   done
@@ -1962,11 +1990,36 @@ fi
 
 # Clean up any finalizers on namespaces that are stuck
 echo "  Checking for namespaces stuck in Terminating state..."
-for ns in platform infra-db dns-zone mail-zone backup-system; do
-  if kubectl get namespace "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Terminating"; then
+for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
+  ns_phase="$(kubectl get namespace "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+  if [ "${ns_phase}" = "Terminating" ]; then
     echo "  Found namespace ${ns} stuck in Terminating, attempting to fix..."
-    # Use patch instead of jq (more compatible)
+    # First try patch
     kubectl patch namespace "${ns}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+    
+    # Wait up to 60 seconds for namespace to be deleted
+    waited=0
+    while [ ${waited} -lt 60 ]; do
+      if ! kubectl get namespace "${ns}" >/dev/null 2>&1; then
+        echo "    ✓ Namespace ${ns} deleted"
+        break
+      fi
+      sleep 2
+      waited=$((waited + 2))
+    done
+    
+    # If still exists, use /finalize endpoint
+    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+      echo "    Attempting finalize endpoint cleanup for ${ns}..."
+      if command -v python3 >/dev/null 2>&1; then
+        kubectl get namespace "${ns}" -o json | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+      elif command -v jq >/dev/null 2>&1; then
+        kubectl get namespace "${ns}" -o json | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+      else
+        # Fallback: try patch again
+        kubectl patch namespace "${ns}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      fi
+    fi
   fi
 done
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
 
 # Voxeil Panel - Single Entrypoint Script
 # Supports: install, uninstall, purge-node, doctor, help

@@ -16,22 +16,24 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 
 ### Quick Start
 
-**Note:** Downloading to a file is recommended over `curl | bash` due to occasional `curl:(23)` pipe glitches.
+**Note:** This repository does not require cloning. You can install Voxeil Panel with a single command.
 
-**Download the entrypoint script:**
+**Download and install:**
 ```bash
 curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/voxeil.sh
+chmod +x /tmp/voxeil.sh
+bash /tmp/voxeil.sh install
 ```
 
 **About voxeil.sh:**
 - `voxeil.sh` is a temporary entrypoint script that you download and run
 - It is **not** installed permanently by default
-- It is **not** removed by `uninstall` or `purge-node` commands
+- It is **not** removed by `uninstall` or `purge-node` commands (you can manually delete it if needed)
 - You can safely delete and re-download it at any time
 
 ### About voxeil.sh lifecycle
 
-The `voxeil.sh` script lives wherever you download it (e.g., `/tmp`, `/usr/local/bin`, or any directory of your choice). The `uninstall` and `purge-node` commands only remove Voxeil platform components and cluster resources—they do not remove the entrypoint script itself. Note that if you download the script to `/tmp`, your operating system may automatically clean it on reboot.
+The `voxeil.sh` script lives wherever you download it (e.g., `/tmp`, `/usr/local/bin`, or any directory of your choice). The `uninstall` and `purge-node` commands only remove Voxeil platform components and cluster resources—they do **not** remove the entrypoint script itself. Note that if you download the script to `/tmp`, your operating system may automatically clean it on reboot.
 
 ### Install
 
@@ -59,10 +61,17 @@ The installer will prompt for:
 | `--with-dns` | Install bind9 DNS (opt-in) |
 | `--version <tag\|branch\|commit>` | Use specific version/ref (overrides --channel) |
 | `--channel stable\|main` | Use stable or main channel (default: main) |
+| `--build-images` | Build backup images locally (default: skip, images pulled from registry) |
 
 **Profile options:**
 - `minimal`: Platform essentials only (no kyverno/cert-manager/flux unless already used)
 - `full`: Includes cert-manager, kyverno, flux, infra-db, backup-system
+
+**Image build options:**
+- By default, backup images are **not built locally** (Docker dependency avoided)
+- Use `--build-images` flag to build backup images locally before k3s installation
+- If `--build-images` is not used, backup images will be pulled from the registry when needed
+- If GHCR image validation fails during install, the installer will show a warning and continue (you can skip validation with `SKIP_IMAGE_VALIDATION=true` env var)
 
 **Examples:**
 ```bash
@@ -92,6 +101,8 @@ bash /tmp/voxeil.sh --ref v1.0.0 install
 ```bash
 bash /tmp/voxeil.sh uninstall --force
 ```
+
+**Note:** The `uninstall` command will **not** delete `/tmp/voxeil.sh`. You can manually delete it if needed.
 
 **Uninstall flags:**
 
@@ -146,7 +157,9 @@ bash /tmp/voxeil.sh uninstall --keep-volumes
 bash /tmp/voxeil.sh purge-node --force
 ```
 
-**Note:** The `purge-node` command requires `--force` as a safety measure to prevent accidental node wipe.
+**Note:** 
+- The `purge-node` command requires `--force` as a safety measure to prevent accidental node wipe
+- The `purge-node` command will **not** delete `/tmp/voxeil.sh`. You can manually delete it if needed
 
 ### Version Pinning
 
@@ -162,8 +175,11 @@ bash /tmp/voxeil.sh --ref v1.0.0 uninstall --force
 
 ### Build Images (Optional)
 
-For local development or custom builds:
+**During installation:**
+- Use `--build-images` flag to build backup images locally before k3s installation
+- Default: backup images are skipped (pulled from registry when needed)
 
+**For local development or custom builds:**
 ```bash
 # Build images locally
 ./scripts/build-images.sh --tag local
@@ -183,11 +199,15 @@ bash /tmp/voxeil.sh doctor
 **What it checks:**
 - State file contents (`/var/lib/voxeil/install.state`)
 - Resources labeled `app.kubernetes.io/part-of=voxeil`
+- Stuck Terminating namespaces
 - Unlabeled namespaces that might be leftovers
-- PersistentVolumes tied to voxeil namespaces
-- Webhook configurations and CRDs
+- PersistentVolumes tied to voxeil namespaces (by claimRef)
+- Webhook configurations (validating and mutating)
+- CRDs (Custom Resource Definitions)
+- ClusterRoles and ClusterRoleBindings
+- PVCs
 
-Doctor mode **never modifies the system** and shows recommended next commands in its output.
+Doctor mode **never modifies the system** and shows recommended next commands in its output. Exit code is 0 if clean, 1 if leftovers are found.
 
 ### Common Scenarios
 
