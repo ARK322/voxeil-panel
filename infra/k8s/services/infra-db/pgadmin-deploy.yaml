@@ -22,7 +22,7 @@ spec:
         readOnlyRootFilesystem: false
         allowPrivilegeEscalation: true
         seccompProfile:
-          type: RuntimeDefault
+          type: Unconfined
       initContainers:
         - name: init-permissions
           image: alpine:3.19
@@ -111,13 +111,15 @@ spec:
             # pgAdmin container MUST start as root to avoid "Operation not permitted" errors
             # The container runtime may drop privileges internally, but we start as root
             # allowPrivilegeEscalation must be true for pgAdmin to execute /venv/bin/python3
+            # seccompProfile Unconfined is required for k3s/containerd compatibility
             runAsUser: 0
             runAsGroup: 0
             runAsNonRoot: false
             readOnlyRootFilesystem: false
             allowPrivilegeEscalation: true
+            privileged: false
             seccompProfile:
-              type: RuntimeDefault
+              type: Unconfined
       volumes:
         - name: pgadmin-data
           persistentVolumeClaim:

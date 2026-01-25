@@ -499,12 +499,59 @@ execute_or_print() {
   run "$1"
 }
 
+# Scale down controllers before deleting namespaces to prevent webhook recreation
+scale_down_controllers() {
+  log_info "Scaling down controllers to prevent webhook recreation..."
+  
+  # Scale down Kyverno deployments
+  for ns in kyverno; do
+    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+      deployments="$(kubectl get deployments -n "${ns}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+      if [ -n "${deployments}" ]; then
+        for deploy in ${deployments}; do
+          run "kubectl scale deployment \"${deploy}\" -n \"${ns}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+        done
+      fi
+    fi
+  done
+  
+  # Scale down cert-manager deployments
+  for ns in cert-manager; do
+    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+      deployments="$(kubectl get deployments -n "${ns}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+      if [ -n "${deployments}" ]; then
+        for deploy in ${deployments}; do
+          run "kubectl scale deployment \"${deploy}\" -n \"${ns}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+        done
+      fi
+    fi
+  done
+  
+  # Scale down Flux controllers
+  for ns in flux-system; do
+    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+      deployments="$(kubectl get deployments -n "${ns}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+      if [ -n "${deployments}" ]; then
+        for deploy in ${deployments}; do
+          run "kubectl scale deployment \"${deploy}\" -n \"${ns}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+        done
+      fi
+    fi
+  done
+  
+  # Wait a moment for controllers to stop
+  sleep 2
+}
+
 # Disable admission webhooks (Kyverno and cert-manager) to prevent API lock
 disable_admission_webhooks_preflight() {
   echo ""
   log_info "Preflight: disabling Kyverno/cert-manager/flux admission webhooks (to prevent API lock)"
 
-  # First, try to patch failurePolicy to Ignore (safer than immediate delete)
+  # First, scale down controllers to prevent webhook recreation
+  scale_down_controllers
+
+  # Then, try to patch failurePolicy to Ignore (safer than immediate delete)
   # This prevents API lock while still allowing graceful cleanup
   webhook_patterns="kyverno cert-manager flux toolkit"
   for pattern in ${webhook_patterns}; do
@@ -573,30 +620,36 @@ wait_ns_deleted() {
     if [ $((waited % 10)) -eq 0 ]; then
       log_info "Waiting for namespace ${namespace} to be deleted... (${waited}/${timeout}s)"
     fi
-    # Force remove finalizers if stuck
+    # Force remove finalizers if stuck (more aggressive in --force mode)
     if [ $((waited % 30)) -eq 0 ] && [ ${waited} -gt 0 ]; then
       log_info "Attempting to force remove finalizers..."
       # Try kubectl patch first
       kubectl patch namespace "${namespace}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-      # If that doesn't work, use raw API
-      if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+      # If that doesn't work and --force is set, use raw API /finalize endpoint
+      if [ "${FORCE}" = "true" ] && kubectl get namespace "${namespace}" >/dev/null 2>&1; then
         # Use python or jq to patch JSON if available
         if command -v python3 >/dev/null 2>&1; then
-          kubectl get namespace "${namespace}" -o json | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+          kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
         elif command -v jq >/dev/null 2>&1; then
-          kubectl get namespace "${namespace}" -o json | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+          kubectl get namespace "${namespace}" -o json 2>/dev/null | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
         fi
       fi
     fi
   done
   
   log_warn "Namespace ${namespace} still exists after ${timeout}s, forcing deletion..."
-  # Final attempt to force remove finalizers
-  if command -v python3 >/dev/null 2>&1; then
-    kubectl get namespace "${namespace}" -o json | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
-  elif command -v jq >/dev/null 2>&1; then
-    kubectl get namespace "${namespace}" -o json | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+  # Final attempt to force remove finalizers (use /finalize endpoint for --force mode)
+  if [ "${FORCE}" = "true" ]; then
+    log_info "Using /finalize endpoint to force remove finalizers for ${namespace}..."
+    if command -v python3 >/dev/null 2>&1; then
+      kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+    elif command -v jq >/dev/null 2>&1; then
+      kubectl get namespace "${namespace}" -o json 2>/dev/null | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+    else
+      kubectl patch namespace "${namespace}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+    fi
   else
+    # Non-force mode: just try patch
     kubectl patch namespace "${namespace}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
   fi
   return 1
@@ -924,6 +977,7 @@ if [ "${PURGE_NODE}" = "true" ]; then
 fi
 
 # I) Clean up filesystem files (unless --purge-node, which handles /var/lib/voxeil)
+# NOTE: /tmp/voxeil.sh is NOT deleted - it is ephemeral and user-managed
 log_step "Cleaning up filesystem files"
 run "rm -rf /etc/voxeil 2>/dev/null || true"
 run "rm -f /usr/local/bin/voxeil-ufw-apply 2>/dev/null || true"

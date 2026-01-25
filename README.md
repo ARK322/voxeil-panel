@@ -18,19 +18,20 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 
 **⚠️ IMPORTANT: This repository does NOT require cloning. Everything works via a single curl-based command.**
 
-**Download and install:**
+**One-command installation:**
 ```bash
-curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/voxeil.sh
-bash /tmp/voxeil.sh install
+curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/voxeil.sh && bash /tmp/voxeil.sh install
 ```
 
 **About `voxeil.sh`:**
-- `voxeil.sh` is an **ephemeral entrypoint script** that you download and run
+- `voxeil.sh` is the **single entrypoint** for all Voxeil operations (install, uninstall, purge-node, doctor)
+- It is an **ephemeral script** that you download and run (typically to `/tmp/voxeil.sh`)
 - It is **NOT** installed system-wide
 - It is **NOT** removed by `uninstall` or `purge-node` commands
-- Deleting `voxeil.sh` does **NOT** affect the installed system
+- Deleting `/tmp/voxeil.sh` does **NOT** affect the installed system
 - You can safely delete and re-download it at any time
-- The script orchestrates everything and may download internal scripts from GitHub
+- The script orchestrates everything and downloads internal scripts (installer/uninstaller) from GitHub as needed
+- **Repository cloning is NOT required for end users** - this repo is for development only
 
 **Note:** The `installer/`, `uninstaller/`, and `scripts/` directories are **internal only** and should **never** be accessed directly by end users.
 
