@@ -101,8 +101,8 @@ spec:
             timeoutSeconds: 5
             failureThreshold: 3
           securityContext:
-            runAsNonRoot: true
-            runAsUser: 5050
+            # pgadmin4 image requires root for initialization, then switches to 5050 internally
+            # Removing runAsNonRoot to allow entrypoint script to execute
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
             seccompProfile:
