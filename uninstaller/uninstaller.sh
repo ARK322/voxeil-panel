@@ -674,6 +674,20 @@ delete_namespace() {
     done
   fi
   
+  # In --force mode, aggressively delete any remaining resources that might block deletion
+  if [ "${FORCE}" = "true" ]; then
+    # Delete any remaining resources with finalizers
+    for resource in deployments statefulsets daemonsets jobs cronjobs services ingress networkpolicies; do
+      resources="$(kubectl get "${resource}" -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+      if [ -n "${resources}" ]; then
+        for res in ${resources}; do
+          run "kubectl patch ${resource} \"${res}\" -n \"${namespace}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+          run "kubectl delete ${resource} \"${res}\" -n \"${namespace}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+        done
+      fi
+    done
+  fi
+  
   # Delete namespace (capture stderr to detect webhook failures)
   if [ "${DRY_RUN}" = "true" ]; then
     echo "[DRY-RUN] kubectl delete namespace \"${namespace}\" --ignore-not-found=true --grace-period=0 --force"
@@ -687,10 +701,31 @@ delete_namespace() {
       # Retry deletion after disabling webhooks
       kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force 2>&1 || true
     fi
+    
+    # Immediately check if namespace is stuck in Terminating and remove finalizers if --force
+    sleep 2
+    ns_phase="$(kubectl get namespace "${namespace}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
+    if [ "${ns_phase}" = "Terminating" ] && [ "${FORCE}" = "true" ]; then
+      log_info "Namespace ${namespace} is in Terminating state, immediately removing finalizers..."
+      # Try patch first
+      kubectl patch namespace "${namespace}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      # If still exists, use /finalize endpoint
+      if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+        if command -v python3 >/dev/null 2>&1; then
+          kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+        elif command -v jq >/dev/null 2>&1; then
+          kubectl get namespace "${namespace}" -o json 2>/dev/null | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+        fi
+      fi
+    fi
   fi
   
-  # Wait for namespace deletion
-  wait_ns_deleted "${namespace}" 300
+  # Wait for namespace deletion (with shorter timeout for --force mode)
+  if [ "${FORCE}" = "true" ]; then
+    wait_ns_deleted "${namespace}" 60
+  else
+    wait_ns_deleted "${namespace}" 300
+  fi
 }
 
 # Set KUBECONFIG if provided
