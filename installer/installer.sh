@@ -30,6 +30,43 @@ FLUX_TIMEOUT="${FLUX_TIMEOUT:-600}"
 DEPLOYMENT_ROLLOUT_TIMEOUT="${DEPLOYMENT_ROLLOUT_TIMEOUT:-600}"
 IMAGE_VALIDATION_TIMEOUT="${IMAGE_VALIDATION_TIMEOUT:-120}"
 
+# ========= state registry =========
+STATE_FILE="/var/lib/voxeil/install.state"
+
+# Initialize state registry
+init_state_registry() {
+  mkdir -p "$(dirname "${STATE_FILE}")"
+  touch "${STATE_FILE}"
+  chmod 644 "${STATE_FILE}"
+}
+
+# Write state flag
+write_state_flag() {
+  local flag="$1"
+  init_state_registry
+  if ! grep -q "^${flag}=" "${STATE_FILE}" 2>/dev/null; then
+    echo "${flag}=1" >> "${STATE_FILE}"
+  else
+    sed -i "s/^${flag}=.*/${flag}=1/" "${STATE_FILE}"
+  fi
+}
+
+# Read state flag
+read_state_flag() {
+  local flag="$1"
+  if [ -f "${STATE_FILE}" ]; then
+    grep "^${flag}=" "${STATE_FILE}" 2>/dev/null | cut -d'=' -f2 || echo "0"
+  else
+    echo "0"
+  fi
+}
+
+# Check if component is installed
+is_installed() {
+  local flag="$1"
+  [ "$(read_state_flag "${flag}")" = "1" ]
+}
+
 # ========= helpers =========
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
 rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 || true; }
@@ -1005,6 +1042,72 @@ echo
 echo "== Voxeil Panel Installer =="
 echo ""
 
+# ========= Command-line arguments =========
+DRY_RUN=false
+FORCE=false
+DOCTOR=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --dry-run)
+      DRY_RUN=true
+      shift
+      ;;
+    --force)
+      FORCE=true
+      shift
+      ;;
+    --doctor)
+      DOCTOR=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 [--dry-run] [--force] [--doctor]"
+      exit 1
+      ;;
+  esac
+done
+
+# Doctor mode - check for existing installation
+if [ "${DOCTOR}" = "true" ]; then
+  echo "=== Doctor Mode - Checking Installation State ==="
+  echo ""
+  if [ -f "${STATE_FILE}" ]; then
+    echo "State file found at ${STATE_FILE}:"
+    cat "${STATE_FILE}" | sed 's/^/  /'
+    echo ""
+  else
+    echo "  No state file found (fresh installation or state file removed)"
+    echo ""
+  fi
+  
+  # Check for existing resources
+  if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
+    echo "Checking for existing Voxeil resources..."
+    VOXEIL_NAMESPACES="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager)$' || true)"
+    if [ -n "${VOXEIL_NAMESPACES}" ]; then
+      echo "  Found namespaces:"
+      echo "${VOXEIL_NAMESPACES}" | while read -r ns; do
+        echo "    - ${ns}"
+      done
+    else
+      echo "  No Voxeil namespaces found"
+    fi
+  else
+    echo "  kubectl not available, skipping resource checks"
+  fi
+  echo ""
+  echo "Doctor mode complete. Exiting."
+  exit 0
+fi
+
+# Dry run mode
+if [ "${DRY_RUN}" = "true" ]; then
+  echo "=== DRY RUN MODE - No changes will be made ==="
+  echo ""
+fi
+
 need_cmd curl
 need_cmd sed
 need_cmd mktemp
@@ -1292,6 +1395,14 @@ log_step "Installing k3s (if needed)"
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "Installing k3s..."
   curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+  write_state_flag "K3S_INSTALLED"
+else
+  if is_installed "K3S_INSTALLED"; then
+    echo "k3s already installed (state flag present)"
+  else
+    echo "k3s found but not tracked in state, marking as installed"
+    write_state_flag "K3S_INSTALLED"
+  fi
 fi
 
 need_cmd kubectl
@@ -1343,6 +1454,7 @@ if ! check_storageclass "local-path"; then
   log_error "local-path StorageClass missing. This will cause PVC issues."
   exit 1
 fi
+write_state_flag "STORAGE_INSTALLED"
 
 # ========= Clean up any leftover resources from previous installations =========
 log_step "Cleaning up leftover resources from previous installations"
@@ -1796,6 +1908,7 @@ kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cer
   kubectl get pods -n cert-manager
   exit 1
 }
+write_state_flag "CERT_MANAGER_INSTALLED"
 echo "Applying ClusterIssuers."
 if [[ -f "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" ]]; then
   retry_apply "${SERVICES_DIR}/cert-manager/cluster-issuers.yaml" "ClusterIssuers" 3 || {
@@ -1841,6 +1954,7 @@ kubectl wait --for=condition=Available deployment -n kyverno --all --timeout="${
   kubectl get events -n kyverno --sort-by='.lastTimestamp' | tail -30
   exit 1
 }
+write_state_flag "KYVERNO_INSTALLED"
 
 # Apply policies (idempotent) - wait a bit for Kyverno to be fully ready
 echo "Waiting for Kyverno to be fully operational..."
@@ -1886,6 +2000,7 @@ kubectl wait --for=condition=Available deployment -n flux-system --all --timeout
   kubectl get events -n flux-system --sort-by='.lastTimestamp' | tail -20
   exit 1
 }
+write_state_flag "FLUX_INSTALLED"
 
 log_step "Applying platform base manifests"
 kubectl apply -f "${PLATFORM_DIR}/namespace.yaml"

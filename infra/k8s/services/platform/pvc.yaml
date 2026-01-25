@@ -3,6 +3,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: controller-backups-pvc
   namespace: platform
+  labels:
+    app.kubernetes.io/part-of: voxeil
 spec:
   accessModes:
     - ReadWriteOnce
@@ -16,6 +18,8 @@ kind: PersistentVolumeClaim
 metadata:
   name: controller-config-pvc
   namespace: platform
+  labels:
+    app.kubernetes.io/part-of: voxeil
 spec:
   accessModes:
     - ReadWriteOnce

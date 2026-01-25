@@ -3,11 +3,15 @@ kind: ServiceAccount
 metadata:
   name: controller-sa
   namespace: platform
+  labels:
+    app.kubernetes.io/part-of: voxeil
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: controller-bootstrap
+  labels:
+    app.kubernetes.io/part-of: voxeil
 rules:
   - apiGroups: [""]
     resources: ["namespaces"]
@@ -17,6 +21,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: user-operator
+  labels:
+    app.kubernetes.io/part-of: voxeil
 rules:
   # Namespaces: get, list (for listing and reading namespaces)
   - apiGroups: [""]
@@ -79,6 +85,8 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
   name: controller-bootstrap-binding
+  labels:
+    app.kubernetes.io/part-of: voxeil
 subjects:
   - kind: ServiceAccount
     name: controller-sa
@@ -93,6 +101,8 @@ kind: Role
 metadata:
   name: controller-platform-secrets
   namespace: platform
+  labels:
+    app.kubernetes.io/part-of: voxeil
 rules:
   - apiGroups: [""]
     resources: ["secrets"]
@@ -103,6 +113,8 @@ kind: RoleBinding
 metadata:
   name: controller-platform-secrets-binding
   namespace: platform
+  labels:
+    app.kubernetes.io/part-of: voxeil
 subjects:
   - kind: ServiceAccount
     name: controller-sa
