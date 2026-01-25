@@ -3,13 +3,35 @@ set -euo pipefail
 
 # Nuke script - calls uninstaller with --purge-node --force
 # This is a convenience wrapper for complete node wipe
+# Does NOT require repo clone - downloads uninstaller from GitHub if needed
 
+OWNER="${OWNER:-ARK322}"
+REPO="${REPO:-voxeil-panel}"
+REF="${REF:-main}"
+
+# Try to find uninstaller locally first (if running from repo)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNINSTALLER="${SCRIPT_DIR}/../uninstaller/uninstaller.sh"
 
+# If local uninstaller doesn't exist, download it
 if [ ! -f "${UNINSTALLER}" ]; then
-  echo "=== [ERROR] uninstaller.sh not found at ${UNINSTALLER} ===" >&2
-  exit 1
+  UNINSTALLER_TMP="$(mktemp)"
+  cleanup() { rm -f "${UNINSTALLER_TMP}"; }
+  trap cleanup EXIT
+  
+  if ! command -v curl >/dev/null 2>&1; then
+    echo "=== [ERROR] curl is required but not installed ===" >&2
+    exit 1
+  fi
+  
+  echo "=== [INFO] Downloading uninstaller from GitHub ==="
+  if ! curl -fL --retry 5 --retry-delay 1 --max-time 60 -o "${UNINSTALLER_TMP}" "https://raw.githubusercontent.com/${OWNER}/${REPO}/${REF}/uninstaller/uninstaller.sh"; then
+    echo "=== [ERROR] Failed to download uninstaller ===" >&2
+    exit 1
+  fi
+  
+  chmod +x "${UNINSTALLER_TMP}"
+  UNINSTALLER="${UNINSTALLER_TMP}"
 fi
 
 # ===== VOXEIL logo =====

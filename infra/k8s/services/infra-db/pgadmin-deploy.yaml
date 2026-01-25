@@ -20,7 +20,7 @@ spec:
         runAsGroup: 0
         runAsNonRoot: false
         readOnlyRootFilesystem: false
-        allowPrivilegeEscalation: false
+        allowPrivilegeEscalation: true
         seccompProfile:
           type: RuntimeDefault
       initContainers:
@@ -110,11 +110,12 @@ spec:
           securityContext:
             # pgAdmin container MUST start as root to avoid "Operation not permitted" errors
             # The container runtime may drop privileges internally, but we start as root
+            # allowPrivilegeEscalation must be true for pgAdmin to execute /venv/bin/python3
             runAsUser: 0
             runAsGroup: 0
             runAsNonRoot: false
             readOnlyRootFilesystem: false
-            allowPrivilegeEscalation: false
+            allowPrivilegeEscalation: true
             seccompProfile:
               type: RuntimeDefault
       volumes:

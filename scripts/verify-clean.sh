@@ -138,10 +138,10 @@ run_checks_once() {
     echo "  ✓ No Voxeil-related PVs found"
   fi
   
-  # 4) Check for webhook configs by pattern (kyverno, cert-manager)
+  # 4) Check for webhook configs by pattern (kyverno, cert-manager, flux)
   echo ""
   echo "=== Checking webhook configurations (by pattern) ==="
-  VOXEIL_WEBHOOKS_PATTERN="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager)' || true)"
+  VOXEIL_WEBHOOKS_PATTERN="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux|toolkit)' || true)"
   
   if [ -n "${VOXEIL_WEBHOOKS_PATTERN}" ]; then
     echo "  ⚠ Found Voxeil webhook configurations:"
@@ -172,7 +172,24 @@ run_checks_once() {
     echo "  ✓ No Voxeil CRDs found"
   fi
   
-  # 6) Check for state file
+  # 6) Check for stuck Terminating namespaces
+  echo ""
+  echo "=== Checking for stuck Terminating namespaces ==="
+  TERMINATING_NS="$(kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\n"}{end}' 2>/dev/null | grep -E '\tTerminating$' | cut -f1 || true)"
+  
+  if [ -n "${TERMINATING_NS}" ]; then
+    echo "  ⚠ Found stuck Terminating namespaces:"
+    echo "${TERMINATING_NS}" | while read -r ns; do
+      echo "    - ${ns}"
+    done
+    echo ""
+    ISSUES_FOUND=$((ISSUES_FOUND + 1))
+    EXIT_CODE=1
+  else
+    echo "  ✓ No stuck Terminating namespaces found"
+  fi
+  
+  # 7) Check for state file
   echo ""
   echo "=== Checking filesystem state ==="
   if [ -f /var/lib/voxeil/install.state ]; then
@@ -184,6 +201,30 @@ run_checks_once() {
   fi
   
   return ${EXIT_CODE}
+}
+
+# Wait for resources to be cleaned up with timeout
+wait_for_clean() {
+  local timeout="${1:-180}"
+  local interval="${2:-5}"
+  local start_time=$(date +%s)
+  local elapsed=0
+  
+  while [ ${elapsed} -lt ${timeout} ]; do
+    if run_checks_once; then
+      return 0
+    fi
+    
+    elapsed=$(($(date +%s) - start_time))
+    if [ ${elapsed} -lt ${timeout} ]; then
+      echo ""
+      echo "[INFO] Waiting for cluster to become clean... elapsed=${elapsed}s / timeout=${timeout}s"
+      sleep ${interval}
+      echo ""
+    fi
+  done
+  
+  return 1
 }
 
 # Main execution
@@ -207,38 +248,22 @@ if [ "${NO_WAIT}" = "true" ]; then
     exit 1
   fi
 else
-  # Wait loop
-  START_TIME=$(date +%s)
-  ELAPSED=0
-  LAST_EXIT_CODE=1
-  
-  while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
-    if run_checks_once; then
-      echo ""
-      echo "=== Summary ==="
-      echo "✓ System is clean - no Voxeil resources found"
-      echo ""
-      exit 0
-    fi
-    
-    LAST_EXIT_CODE=$?
-    ELAPSED=$(($(date +%s) - START_TIME))
-    
-    if [ ${ELAPSED} -lt ${TIMEOUT} ]; then
-      echo ""
-      echo "[INFO] waiting for cluster to become clean... elapsed=${ELAPSED}s"
-      sleep ${INTERVAL}
-      echo ""
-    fi
-  done
-  
-  # Timeout reached
-  echo ""
-  echo "=== Summary ==="
-  echo "⚠ Timeout reached (${TIMEOUT}s) - system still has leftover Voxeil resources"
-  echo ""
-  echo "To clean up, run:"
-  echo "  ./uninstaller/uninstaller.sh --force"
-  echo ""
-  exit 1
+  # Wait loop with timeout
+  if wait_for_clean "${TIMEOUT}" "${INTERVAL}"; then
+    echo ""
+    echo "=== Summary ==="
+    echo "✓ System is clean - no Voxeil resources found"
+    echo ""
+    exit 0
+  else
+    # Timeout reached
+    echo ""
+    echo "=== Summary ==="
+    echo "⚠ Timeout reached (${TIMEOUT}s) - system still has leftover Voxeil resources"
+    echo ""
+    echo "To clean up, run:"
+    echo "  bash /tmp/voxeil.sh uninstall --force"
+    echo ""
+    exit 1
+  fi
 fi
