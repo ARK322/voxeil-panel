@@ -593,25 +593,10 @@ diagnose_deployment() {
 ensure_docker() {
   log_step "Ensuring Docker is installed and running"
   
-  # Check if docker command exists
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "Docker command not found, will install..."
-  else
-    # Docker command exists, check if daemon is reachable
-    # Try multiple times as Docker might be starting up
-    local check_attempts=3
-    local check_attempt=0
-    while [ ${check_attempt} -lt ${check_attempts} ]; do
-      if docker info >/dev/null 2>&1; then
-        echo "Docker already installed and running."
-        return 0
-      fi
-      check_attempt=$((check_attempt + 1))
-      if [ ${check_attempt} -lt ${check_attempts} ]; then
-        sleep 1
-      fi
-    done
-    echo "Docker command found but daemon not responding, will attempt to start..."
+  # Check if docker command exists and daemon is reachable
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    echo "Docker already installed and running."
+    return 0
   fi
 
   # Docker missing or daemon not running
@@ -620,83 +605,61 @@ ensure_docker() {
     exit 1
   fi
 
-  # If Docker is installed but not running, try to start it first
-  if command -v docker >/dev/null 2>&1; then
-    echo "Docker installed but daemon not running; attempting to start..."
+  # If Docker is partially installed but not working, completely remove it first
+  if command -v docker >/dev/null 2>&1 || systemctl list-unit-files | grep -q docker.service 2>/dev/null; then
+    echo "Docker partially installed but not working, removing completely..."
+    
+    # Stop Docker service
     if command -v systemctl >/dev/null 2>&1; then
-      systemctl start docker || true
-      systemctl enable docker || true
-      sleep 5
-      # Check if starting worked
-      if docker info >/dev/null 2>&1; then
-        echo "Docker daemon started successfully."
-        return 0
-      fi
+      systemctl stop docker 2>/dev/null || true
+      systemctl stop docker.socket 2>/dev/null || true
+      systemctl stop containerd 2>/dev/null || true
     else
-      service docker start || true
-      sleep 5
-      if docker info >/dev/null 2>&1; then
-        echo "Docker daemon started successfully."
-        return 0
-      fi
+      service docker stop 2>/dev/null || true
     fi
+    
+    # Remove Docker packages
+    apt-get remove -y docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc 2>/dev/null || true
+    apt-get purge -y docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc 2>/dev/null || true
+    
+    # Remove Docker data directories
+    rm -rf /var/lib/docker 2>/dev/null || true
+    rm -rf /var/lib/containerd 2>/dev/null || true
+    rm -rf /etc/docker 2>/dev/null || true
+    
+    # Remove Docker socket
+    rm -f /var/run/docker.sock 2>/dev/null || true
+    rm -f /run/docker.sock 2>/dev/null || true
+    
+    # Clean up apt
+    apt-get autoremove -y 2>/dev/null || true
+    apt-get autoclean 2>/dev/null || true
+    
+    echo "Docker completely removed, will install fresh..."
   fi
 
-  echo "Docker not found or daemon not running; installing..."
+  echo "Installing Docker..."
   apt-get update -y
   apt-get install -y docker.io
 
   # Start and enable docker
   if command -v systemctl >/dev/null 2>&1; then
     systemctl enable --now docker
-    # Wait longer for Docker to fully start
-    sleep 5
+    sleep 3
   else
     service docker start
-    sleep 5
+    sleep 3
   fi
 
-  # Re-check docker daemon with retries
-  # 10 dakika boyunca 10 saniyede bir dene (60 deneme)
-  local max_attempts=60
-  local wait_interval=10
-  local attempt=0
-  while [ ${attempt} -lt ${max_attempts} ]; do
-    # Check if Docker service is active first
-    if command -v systemctl >/dev/null 2>&1; then
-      if ! systemctl is-active --quiet docker 2>/dev/null; then
-        attempt=$((attempt + 1))
-        echo "Waiting for docker service to be active... (attempt ${attempt}/${max_attempts}, next check in ${wait_interval}s)"
-        sleep ${wait_interval}
-        continue
-      fi
-    fi
-    
-    # Check if Docker socket exists and is accessible
-    if [ -S /var/run/docker.sock ] 2>/dev/null || [ -S /run/docker.sock ] 2>/dev/null; then
-      # Socket exists, try docker info
-      if docker info >/dev/null 2>&1; then
-        echo "Docker daemon is running."
-        return 0
-      fi
-    fi
-    
-    attempt=$((attempt + 1))
-    echo "Waiting for docker daemon... (attempt ${attempt}/${max_attempts}, next check in ${wait_interval}s)"
-    sleep ${wait_interval}
-  done
+  # Check if Docker is working
+  if docker info >/dev/null 2>&1; then
+    echo "Docker installed and running successfully."
+    return 0
+  fi
 
-  log_error "Docker installation failed or daemon is not running after ${max_attempts} attempts."
+  log_error "Docker installation failed or daemon is not running."
   echo "Attempting to check docker status:"
   systemctl status docker || service docker status || true
-  echo ""
-  echo "Diagnostic information:"
-  echo "  Docker service status:"
-  systemctl is-active docker 2>/dev/null || echo "    Service not active"
-  echo "  Docker socket:"
-  ls -la /var/run/docker.sock /run/docker.sock 2>/dev/null || echo "    Socket not found"
-  echo "  Docker info test:"
-  docker info 2>&1 | head -5 || echo "    docker info failed"
   exit 1
 }
 
