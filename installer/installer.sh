@@ -614,6 +614,8 @@ ensure_docker() {
       systemctl stop docker 2>/dev/null || true
       systemctl stop docker.socket 2>/dev/null || true
       systemctl stop containerd 2>/dev/null || true
+      systemctl disable docker 2>/dev/null || true
+      systemctl disable docker.socket 2>/dev/null || true
     else
       service docker stop 2>/dev/null || true
     fi
@@ -640,26 +642,101 @@ ensure_docker() {
 
   echo "Installing Docker..."
   apt-get update -y
+  
+  # Install required dependencies first
+  apt-get install -y ca-certificates curl gnupg lsb-release || true
+  
+  # Install Docker
   apt-get install -y docker.io
+
+  # Ensure Docker daemon configuration directory exists
+  mkdir -p /etc/docker
+
+  # Configure Docker daemon with basic settings (helps avoid common startup issues)
+  if [ ! -f /etc/docker/daemon.json ]; then
+    cat > /etc/docker/daemon.json <<EOF
+{
+  "storage-driver": "overlay2",
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+EOF
+  fi
+
+  # Reload systemd to pick up any changes
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload
+  fi
 
   # Start and enable docker
   if command -v systemctl >/dev/null 2>&1; then
-    systemctl enable --now docker
-    sleep 3
+    # Enable docker socket first (required for docker.service)
+    systemctl enable docker.socket 2>/dev/null || true
+    systemctl start docker.socket 2>/dev/null || true
+    sleep 2
+    
+    # Then enable and start docker service
+    systemctl enable docker
+    systemctl start docker
+    sleep 5
+    
+    # Check if service started successfully
+    if ! systemctl is-active --quiet docker; then
+      echo "Docker service failed to start. Checking status and logs..."
+      systemctl status docker --no-pager -l || true
+      echo ""
+      echo "Docker service logs:"
+      journalctl -u docker.service --no-pager -n 50 || true
+      echo ""
+      echo "Checking for common issues..."
+      
+      # Check for AppArmor issues
+      if command -v aa-status >/dev/null 2>&1; then
+        echo "AppArmor status:"
+        aa-status 2>/dev/null | head -5 || true
+      fi
+      
+      # Check for storage driver issues
+      echo "Checking storage driver..."
+      ls -la /var/lib/docker/ 2>/dev/null || echo "Docker data directory missing or inaccessible"
+      
+      # Try to manually start docker daemon to see error
+      echo "Attempting to diagnose issue..."
+      dockerd --debug 2>&1 | head -20 &
+      DOCKERD_PID=$!
+      sleep 3
+      kill $DOCKERD_PID 2>/dev/null || true
+      
+      log_error "Docker service failed to start. Please check the logs above for details."
+      exit 1
+    fi
   else
     service docker start
-    sleep 3
+    sleep 5
   fi
 
   # Check if Docker is working
-  if docker info >/dev/null 2>&1; then
-    echo "Docker installed and running successfully."
-    return 0
-  fi
+  local retries=0
+  local max_retries=10
+  while [ $retries -lt $max_retries ]; do
+    if docker info >/dev/null 2>&1; then
+      echo "Docker installed and running successfully."
+      return 0
+    fi
+    retries=$((retries + 1))
+    echo "Waiting for Docker daemon to be ready... (attempt $retries/$max_retries)"
+    sleep 2
+  done
 
   log_error "Docker installation failed or daemon is not running."
   echo "Attempting to check docker status:"
-  systemctl status docker || service docker status || true
+  systemctl status docker --no-pager -l || service docker status || true
+  echo ""
+  echo "Docker service logs:"
+  journalctl -u docker.service --no-pager -n 50 || true
   exit 1
 }
 

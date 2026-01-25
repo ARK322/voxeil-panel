@@ -4,6 +4,50 @@ set -euo pipefail
 # Voxeil Panel Uninstaller
 # This script removes all Voxeil Panel components from the cluster
 
+# ===== VOXEIL logo (wider spacing + cleaner layout) =====
+ORANGE="\033[38;5;208m"
+GRAY="\033[38;5;252m"
+NC="\033[0m"
+
+INNER=72  # biraz genişlettim (daha ferah)
+strip_ansi() { echo -e "$1" | sed -r 's/\x1B\[[0-9;]*[mK]//g'; }
+
+box_line_center() {
+  local line="$1"
+  local plain len pad_left pad_right
+  plain="$(strip_ansi "$line")"
+  len=${#plain}
+  if (( len > INNER )); then
+    plain="${plain:0:INNER}"
+    line="$plain"
+    len=$INNER
+  fi
+  pad_left=$(( (INNER - len) / 2 ))
+  pad_right=$(( INNER - len - pad_left ))
+  printf "║%*s%b%*s║\n" "$pad_left" "" "$line" "$pad_right" ""
+}
+
+echo
+echo "╔════════════════════════════════════════════════════════════════════════╗"
+printf "║%*s║\n" "$INNER" ""
+printf "║%*s║\n" "$INNER" ""
+
+# V (turuncu) + OXEIL (gri) — harf arası açık, daha geniş görünür
+box_line_center "${ORANGE}██╗   ██╗${GRAY}  ██████╗   ██╗  ██╗  ███████╗  ██╗  ██╗${NC}"
+box_line_center "${ORANGE}██║   ██║${GRAY} ██╔═══██╗  ╚██╗██╔╝  ██╔════╝  ██║  ██║${NC}"
+box_line_center "${ORANGE}██║   ██║${GRAY} ██║   ██║   ╚███╔╝   █████╗    ██║  ██║${NC}"
+box_line_center "${ORANGE}╚██╗ ██╔╝${GRAY} ██║   ██║   ██╔██╗   ██╔══╝    ██║  ██║${NC}"
+box_line_center "${ORANGE} ╚████╔╝ ${GRAY} ╚██████╔╝  ██╔╝ ██╗  ███████╗  ██║   ███████╗${NC}"
+box_line_center "${ORANGE}  ╚═══╝  ${GRAY}  ╚═════╝   ╚═╝  ╚═╝  ╚══════╝  ╚═╝   ╚══════╝${NC}"
+
+printf "║%*s║\n" "$INNER" ""
+box_line_center "${GRAY}VOXEIL PANEL${NC}"
+box_line_center "${GRAY}Kubernetes Hosting Control Panel${NC}"
+printf "║%*s║\n" "$INNER" ""
+box_line_center "${GRAY}Secure • Isolated • Production-Grade Infrastructure${NC}"
+printf "║%*s║\n" "$INNER" ""
+echo "╚════════════════════════════════════════════════════════════════════════╝"
+echo
 echo "== Voxeil Panel Uninstaller - VPS FORMAT MODE =="
 echo ""
 echo "⚠️  WARNING: COMPLETE VPS FORMAT - EVERYTHING WILL BE DELETED ⚠️"
