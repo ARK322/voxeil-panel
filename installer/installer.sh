@@ -649,6 +649,87 @@ ensure_docker() {
   # Install Docker
   apt-get install -y docker.io
 
+  # Verify Docker binaries exist (common issue on Ubuntu where package installs but binaries are missing)
+  echo "Verifying Docker installation..."
+  DOCKERD_PATH=""
+  if [ -f /usr/bin/dockerd ]; then
+    DOCKERD_PATH="/usr/bin/dockerd"
+  elif [ -f /usr/libexec/docker/dockerd ]; then
+    DOCKERD_PATH="/usr/libexec/docker/dockerd"
+  elif command -v dockerd >/dev/null 2>&1; then
+    DOCKERD_PATH="$(command -v dockerd)"
+  else
+    echo "⚠️  Warning: dockerd binary not found after installation"
+    echo "   This is a known issue with docker.io package on some Ubuntu systems"
+    echo "   Attempting to fix by reinstalling Docker..."
+    
+    # Try to fix by reinstalling
+    apt-get remove -y docker.io docker-doc docker-compose docker-compose-v2 2>/dev/null || true
+    apt-get purge -y docker.io docker-doc docker-compose docker-compose-v2 2>/dev/null || true
+    apt-get autoremove -y 2>/dev/null || true
+    
+    # Try installing from official Docker repository instead
+    echo "   Installing Docker from official Docker repository..."
+    
+    # Add Docker's official GPG key
+    install -m 0755 -d /etc/apt/keyrings 2>/dev/null || mkdir -p /etc/apt/keyrings
+    if curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc 2>/dev/null; then
+      chmod a+r /etc/apt/keyrings/docker.asc
+      
+      # Detect distribution
+      if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        DISTRO_CODENAME="${VERSION_CODENAME:-}"
+      fi
+      if [ -z "${DISTRO_CODENAME}" ] && command -v lsb_release >/dev/null 2>&1; then
+        DISTRO_CODENAME="$(lsb_release -cs 2>/dev/null || echo "focal")"
+      fi
+      DISTRO_CODENAME="${DISTRO_CODENAME:-focal}"
+      
+      ARCH="$(dpkg --print-architecture 2>/dev/null || echo "amd64")"
+      echo "deb [arch=${ARCH} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu ${DISTRO_CODENAME} stable" | \
+        tee /etc/apt/sources.list.d/docker.list > /dev/null
+      
+      if apt-get update -y >/dev/null 2>&1; then
+        if apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin >/dev/null 2>&1; then
+          echo "   ✓ Successfully installed Docker from official repository"
+        else
+          echo "   Official Docker repository installation failed, falling back to docker.io..."
+          apt-get install -y docker.io
+        fi
+      else
+        echo "   Failed to update package lists, trying docker.io package again..."
+        apt-get install -y docker.io
+      fi
+    else
+      echo "   Failed to download Docker GPG key, trying docker.io package again..."
+      apt-get install -y docker.io
+    fi
+    
+    # Verify again after reinstall
+    if [ -f /usr/bin/dockerd ]; then
+      DOCKERD_PATH="/usr/bin/dockerd"
+    elif command -v dockerd >/dev/null 2>&1; then
+      DOCKERD_PATH="$(command -v dockerd)"
+    else
+      log_error "dockerd binary still not found after reinstallation attempts"
+      echo "   Please check:"
+      echo "   - dpkg -L docker.io | grep dockerd"
+      echo "   - which dockerd"
+      echo "   - ls -la /usr/bin/dockerd"
+      exit 1
+    fi
+  fi
+  
+  echo "✓ Found dockerd at: ${DOCKERD_PATH}"
+  
+  # Verify docker client also exists
+  if ! command -v docker >/dev/null 2>&1; then
+    log_error "docker client binary not found"
+    exit 1
+  fi
+  echo "✓ Found docker client: $(command -v docker)"
+
   # Ensure Docker daemon configuration directory exists
   mkdir -p /etc/docker
 
@@ -725,6 +806,27 @@ EOF
       
       echo "--- Checking for common issues ---"
       
+      # Check if dockerd binary exists (common issue)
+      echo "Docker binary check:"
+      if [ -f /usr/bin/dockerd ]; then
+        echo "  ✓ /usr/bin/dockerd exists"
+        ls -la /usr/bin/dockerd || true
+      elif command -v dockerd >/dev/null 2>&1; then
+        echo "  ✓ dockerd found at: $(command -v dockerd)"
+        ls -la "$(command -v dockerd)" || true
+      else
+        echo "  ✗ dockerd binary NOT FOUND - this is the problem!"
+        echo "     Docker package may be installed but binaries are missing"
+        echo "     Checking installed Docker packages:"
+        dpkg -l | grep -i docker || echo "     No Docker packages found"
+        echo ""
+        echo "     SOLUTION: Reinstall Docker:"
+        echo "       apt-get remove -y docker.io"
+        echo "       apt-get install -y docker.io"
+        echo "       OR install from official Docker repository"
+      fi
+      echo ""
+      
       # Check for AppArmor issues
       if command -v aa-status >/dev/null 2>&1; then
         echo "AppArmor status:"
@@ -787,18 +889,38 @@ EOF
       echo "TROUBLESHOOTING STEPS:"
       echo "=========================================="
       echo ""
-      echo "1. Check the logs above for specific error messages"
-      echo "2. Ensure you have sufficient disk space"
-      echo "3. Check if AppArmor/SELinux is blocking Docker"
-      echo "4. Verify Docker socket permissions: ls -la /var/run/docker.sock"
-      echo "5. Try manually starting Docker: systemctl start docker"
-      echo "6. Check for conflicting container runtimes"
-      echo "7. Review systemd journal: journalctl -u docker.service -n 100"
-      echo ""
-      echo "If the issue persists, you may need to:"
-      echo "  - Check system logs: journalctl -xe"
-      echo "  - Verify kernel modules: lsmod | grep overlay"
-      echo "  - Check for hardware/VM compatibility issues"
+      
+      # Check for missing dockerd binary
+      if ! command -v dockerd >/dev/null 2>&1 && [ ! -f /usr/bin/dockerd ]; then
+        echo "⚠️  CRITICAL: dockerd binary is missing!"
+        echo ""
+        echo "This is a known issue where docker.io package installs but binaries are missing."
+        echo ""
+        echo "SOLUTION 1 - Reinstall docker.io:"
+        echo "  apt-get remove -y docker.io"
+        echo "  apt-get install -y docker.io"
+        echo "  systemctl start docker"
+        echo ""
+        echo "SOLUTION 2 - Install from official Docker repository:"
+        echo "  apt-get remove -y docker.io"
+        echo "  curl -fsSL https://get.docker.com -o get-docker.sh"
+        echo "  sh get-docker.sh"
+        echo "  systemctl start docker"
+        echo ""
+      else
+        echo "1. Check the logs above for specific error messages"
+        echo "2. Ensure you have sufficient disk space"
+        echo "3. Check if AppArmor/SELinux is blocking Docker"
+        echo "4. Verify Docker socket permissions: ls -la /var/run/docker.sock"
+        echo "5. Try manually starting Docker: systemctl start docker"
+        echo "6. Check for conflicting container runtimes"
+        echo "7. Review systemd journal: journalctl -u docker.service -n 100"
+        echo ""
+        echo "If the issue persists, you may need to:"
+        echo "  - Check system logs: journalctl -xe"
+        echo "  - Verify kernel modules: lsmod | grep overlay"
+        echo "  - Check for hardware/VM compatibility issues"
+      fi
       echo ""
       
       log_error "Docker service failed to start. Please review the diagnostics above."
