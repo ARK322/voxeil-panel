@@ -14,31 +14,27 @@ Self-hosted, Kubernetes-native hosting control panel. API-first with a minimal U
 - Tenant site DBs: per-site database + role/user inside that same shared PostgreSQL cluster.
 - Shared services run in their own namespaces (`infra`, `mail-zone`, `backup`, `dns-zone`); tenant namespaces only host site workloads.
 
-### Installation
+### Quick Start
 
-**Note:** We recommend downloading scripts to a file instead of using `curl | bash` to avoid `curl:(23)` pipe glitches.
+**Note:** Downloading to a file is recommended over `curl | bash` due to occasional `curl:(23)` pipe glitches.
 
-**Download and install:**
+**Download the entrypoint script:**
 ```bash
-# Download installer wrapper (recommended)
-curl -fL -o /tmp/voxeil-install.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/install.sh
-bash /tmp/voxeil-install.sh [flags]
-
-# Or download installer directly
-curl -fL -o /tmp/voxeil-installer.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/installer/installer.sh
-bash /tmp/voxeil-installer.sh [flags]
+curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/voxeil.sh
 ```
 
-**Basic install:**
+### Install
+
+**Basic installation:**
 ```bash
-bash /tmp/voxeil-install.sh
+bash /tmp/voxeil.sh install
 ```
 
 The installer will prompt for:
 - Panel domain (TLS enabled via cert-manager)
 - Let's Encrypt email (required for cert-manager)
 
-**Installer flags:**
+**Install flags:**
 
 | Flag | Description |
 |------|-------------|
@@ -61,52 +57,37 @@ The installer will prompt for:
 **Examples:**
 ```bash
 # Check what's installed (doctor mode)
-bash /tmp/voxeil-install.sh --doctor
+bash /tmp/voxeil.sh doctor
 
 # Minimal install (platform only)
-bash /tmp/voxeil-install.sh --profile minimal
+bash /tmp/voxeil.sh install --profile minimal
 
 # Full install with mail and DNS
-bash /tmp/voxeil-install.sh --profile full --with-mail --with-dns
+bash /tmp/voxeil.sh install --profile full --with-mail --with-dns
 
 # Install on existing cluster (skip k3s)
-bash /tmp/voxeil-install.sh --skip-k3s --kubeconfig ~/.kube/config
+bash /tmp/voxeil.sh install --skip-k3s --kubeconfig ~/.kube/config
+
+# Install specific version
+bash /tmp/voxeil.sh --ref v1.0.0 install
 ```
 
-**Build images (optional):**
-```bash
-# Build images locally
-./scripts/build-images.sh --tag local
-
-# Build and push to GHCR
-./scripts/build-images.sh --push --tag latest
-```
-
-Override `OWNER`, `REPO`, or `REF` env vars to point at a fork/tag if needed.
-
-### Uninstall (Safe / Default)
+### Uninstall (Safe)
 
 **This removes ONLY Voxeil platform resources. It does NOT remove k3s, docker, or system namespaces.**
 
-**Download and uninstall:**
-```bash
-curl -fL -o /tmp/voxeil-uninstall.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/uninstaller/uninstaller.sh
-bash /tmp/voxeil-uninstall.sh [flags]
-```
-
 **Safe uninstall (default):**
 ```bash
-bash /tmp/voxeil-uninstall.sh
+bash /tmp/voxeil.sh uninstall
 ```
 
-**Uninstaller flags:**
+**Uninstall flags:**
 
 | Flag | Description |
 |------|-------------|
 | `--doctor` | Print what exists and recommended next commands, make no changes |
 | `--dry-run` | Show what would be removed without making changes |
 | `--force` | Clean up unlabeled leftovers when state file is missing |
-| `--purge-node` | Remove k3s and rancher directories (requires --force) |
 | `--keep-volumes` | Keep PersistentVolumes (default: delete PVs) |
 | `--kubeconfig <path>` | Use specific kubeconfig file |
 
@@ -126,16 +107,16 @@ bash /tmp/voxeil-uninstall.sh
 **Examples:**
 ```bash
 # Check what exists (doctor mode)
-bash /tmp/voxeil-uninstall.sh --doctor
+bash /tmp/voxeil.sh doctor
 
 # Safe uninstall (uses state registry)
-bash /tmp/voxeil-uninstall.sh
+bash /tmp/voxeil.sh uninstall
 
 # Force cleanup (for leftovers / state missing)
-bash /tmp/voxeil-uninstall.sh --force
+bash /tmp/voxeil.sh uninstall --force
 
 # Uninstall but keep volumes
-bash /tmp/voxeil-uninstall.sh --keep-volumes
+bash /tmp/voxeil.sh uninstall --keep-volumes
 ```
 
 ### Purge Node (Full Reset)
@@ -148,16 +129,44 @@ bash /tmp/voxeil-uninstall.sh --keep-volumes
 - Removes `/var/lib/voxeil` state registry
 - Does NOT remove docker packages (unless k3s-uninstall.sh does)
 
-**Requires explicit flags:**
+**Requires explicit --force flag:**
 ```bash
-bash /tmp/voxeil-uninstall.sh --purge-node --force
+bash /tmp/voxeil.sh purge-node --force
 ```
 
-**Note:** The `--purge-node` flag requires `--force` as a safety measure to prevent accidental node wipe.
+**Note:** The `purge-node` command requires `--force` as a safety measure to prevent accidental node wipe.
+
+### Version Pinning
+
+Use `--ref` to pin a specific version:
+
+```bash
+# Install specific version
+bash /tmp/voxeil.sh --ref v1.0.0 install
+
+# Uninstall using specific version
+bash /tmp/voxeil.sh --ref v1.0.0 uninstall --force
+```
+
+### Build Images (Optional)
+
+For local development or custom builds:
+
+```bash
+# Build images locally
+./scripts/build-images.sh --tag local
+
+# Build and push to GHCR
+./scripts/build-images.sh --push --tag latest
+```
 
 ### Doctor Mode
 
-Both installer and uninstaller support `--doctor` mode to inspect the system without making changes.
+Check installation status without making changes:
+
+```bash
+bash /tmp/voxeil.sh doctor
+```
 
 **What it checks:**
 - State file contents (`/var/lib/voxeil/install.state`)
@@ -166,15 +175,6 @@ Both installer and uninstaller support `--doctor` mode to inspect the system wit
 - PersistentVolumes tied to voxeil namespaces
 - Webhook configurations and CRDs
 
-**Usage:**
-```bash
-# Check installation status
-bash /tmp/voxeil-install.sh --doctor
-
-# Check what would be uninstalled
-bash /tmp/voxeil-uninstall.sh --doctor
-```
-
 Doctor mode **never modifies the system** and shows recommended next commands in its output.
 
 ### Common Scenarios
@@ -182,28 +182,28 @@ Doctor mode **never modifies the system** and shows recommended next commands in
 **I want to reinstall Voxeil:**
 ```bash
 # Uninstall existing installation
-bash /tmp/voxeil-uninstall.sh
+bash /tmp/voxeil.sh uninstall
 
 # Reinstall
-bash /tmp/voxeil-install.sh
+bash /tmp/voxeil.sh install
 ```
 
 **I want to clean leftovers after a failed install:**
 ```bash
 # Check what's left
-bash /tmp/voxeil-uninstall.sh --doctor
+bash /tmp/voxeil.sh doctor
 
 # Force cleanup
-bash /tmp/voxeil-uninstall.sh --force
+bash /tmp/voxeil.sh uninstall --force
 ```
 
 **I want to reuse the node for something else:**
 ```bash
 # Uninstall Voxeil resources
-bash /tmp/voxeil-uninstall.sh
+bash /tmp/voxeil.sh uninstall
 
 # If you also want to remove k3s (full node wipe)
-bash /tmp/voxeil-uninstall.sh --purge-node --force
+bash /tmp/voxeil.sh purge-node --force
 ```
 ### Installation Outputs
 
