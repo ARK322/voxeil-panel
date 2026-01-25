@@ -3,6 +3,7 @@ kind: Namespace
 metadata:
   name: PLACEHOLDER_NAMESPACE
   labels:
+    app.kubernetes.io/part-of: voxeil
     managed-by: controller
     voxeil.io/user: "true"
     voxeil.io/user-id: PLACEHOLDER_USER_ID

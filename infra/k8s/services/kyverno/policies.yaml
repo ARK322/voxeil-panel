@@ -2,6 +2,8 @@ apiVersion: kyverno.io/v1
 kind: ClusterPolicy
 metadata:
   name: restrict-controller-sa
+  labels:
+    app.kubernetes.io/part-of: voxeil
 spec:
   validationFailureAction: Enforce
   background: false

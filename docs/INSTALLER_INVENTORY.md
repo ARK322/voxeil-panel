@@ -337,25 +337,116 @@ Created by controller via templates in `infra/k8s/templates/tenant/`:
 | clamav, clamav-daemon | installer | apt-get remove/purge |
 | fail2ban | installer | apt-get remove/purge |
 
-## Notes
+## State Registry
 
-1. **CRDs must be deleted LAST** - after all instances are removed
-2. **Webhooks must be deleted** before CRDs to avoid blocking
-3. **Namespaces must wait for termination** - use kubectl wait or force finalizer removal
-4. **PVCs block namespace deletion** - must be deleted first or finalizers removed
-5. **Dynamic resources** (user-*, tenant-*) are created by controller at runtime
-6. **k3s default resources** (local-path StorageClass, kube-system namespace) should NOT be deleted
-7. **State registry** at `/var/lib/voxeil/install.state` tracks what was installed
+The installer maintains a state file at `/var/lib/voxeil/install.state` that tracks which components have been installed. This file uses a simple key-value format:
 
-## Labeling
+```
+K3S_INSTALLED=1
+TRAEFIK_INSTALLED=1
+CERT_MANAGER_INSTALLED=1
+KYVERNO_INSTALLED=1
+FLUX_INSTALLED=1
+PLATFORM_INSTALLED=1
+INFRA_DB_INSTALLED=1
+BACKUP_SYSTEM_INSTALLED=1
+STORAGE_INSTALLED=1
+```
 
-All resources MUST have the label:
+The uninstaller uses this state file to determine what to remove. If the state file is missing, use `--force` to remove all detected resources.
+
+### State Registry Functions
+
+Both installer and uninstaller provide these helper functions:
+- `ensure_state_dir()` - Creates `/var/lib/voxeil` directory
+- `state_set KEY VALUE` - Sets a state key=value
+- `state_get KEY default` - Gets a state key with optional default
+- `state_load()` - Safely sources the state file if it exists
+
+## Labeling Strategy
+
+All Kubernetes resources created by the installer MUST have the label:
 ```yaml
 metadata:
   labels:
     app.kubernetes.io/part-of: voxeil
 ```
 
-Exceptions:
-- Resources that cannot be labeled (some CRDs, system resources)
-- Resources from external sources (cert-manager, Kyverno, Flux) - label what we can
+This includes:
+- All namespaces (platform, infra-db, dns-zone, mail-zone, backup-system, kyverno, flux-system, cert-manager)
+- All resources within those namespaces (Deployments, Services, ConfigMaps, Secrets, PVCs, etc.)
+- Cluster-scoped resources (ClusterRoles, ClusterRoleBindings, Webhooks, CRDs)
+
+The label enables:
+- Easy discovery: `kubectl get all -A -l app.kubernetes.io/part-of=voxeil`
+- Targeted cleanup: Uninstaller deletes resources by label
+- Verification: `scripts/verify-clean.sh` checks for labeled resources
+
+### Labeling Exceptions
+
+Some resources may not support labels:
+- Some CRDs (depends on CRD definition)
+- System resources managed by k3s (kube-system namespace, etc.)
+
+For large upstream manifests (cert-manager, Kyverno, Flux), labels are added to:
+- Namespaces (always)
+- Cluster-scoped resources (ClusterRoles, ClusterRoleBindings, Webhooks, CRDs)
+- Key resources where possible
+
+## Uninstall Order
+
+The uninstaller follows this exact reverse order:
+
+1. **Workloads** - Delete all namespace-scoped resources by label
+2. **Namespaces** - Delete in reverse order, wait for termination (300s timeout)
+3. **Webhooks** - Delete ValidatingWebhookConfiguration and MutatingWebhookConfiguration by label
+4. **Cluster Roles** - Delete ClusterRoles and ClusterRoleBindings by label
+5. **CRDs** - Delete CustomResourceDefinitions by label (LAST)
+6. **Storage** - Delete PVCs (already done), then PVs tied to voxeil namespaces
+7. **k3s** - Remove k3s if K3S_INSTALLED=1 or --force
+8. **State** - Remove `/var/lib/voxeil` directory
+
+## Verification
+
+### Doctor Mode
+
+Both installer and uninstaller support `--doctor` mode to check installation state without making changes:
+
+```bash
+./installer/installer.sh --doctor
+./uninstaller/uninstaller.sh --doctor
+```
+
+Doctor mode reports:
+- State file contents
+- Resources labeled `app.kubernetes.io/part-of=voxeil`
+- Unlabeled namespaces that might be leftovers
+- PersistentVolumes tied to voxeil namespaces
+
+### Verify Clean Script
+
+After uninstallation, verify the system is clean:
+
+```bash
+./scripts/verify-clean.sh
+```
+
+This script:
+- Checks for all resources with the voxeil label
+- Checks for unlabeled voxeil namespaces
+- Checks for PersistentVolumes tied to voxeil namespaces
+- Checks for state file
+- Exits 0 only if system is completely clean
+
+## Notes
+
+1. **CRDs must be deleted LAST** - after all instances are removed
+2. **Webhooks must be deleted** before CRDs to avoid blocking
+3. **Namespaces must wait for termination** - use `wait_ns_deleted()` with 300s timeout, force finalizer removal if stuck
+4. **PVCs block namespace deletion** - must be deleted first or finalizers removed
+5. **Dynamic resources** (user-*, tenant-*) are created by controller at runtime and should be labeled
+6. **k3s default resources** (local-path StorageClass, kube-system namespace) should NOT be deleted
+7. **State registry** at `/var/lib/voxeil/install.state` tracks what was installed
+8. **Idempotency** - Installer can be re-run safely; it checks state and skips already-installed components
+9. **Dry-run mode** - Both scripts support `--dry-run` to preview changes without executing
+10. **Force mode** - Uninstaller supports `--force` to remove all resources even if state file is missing

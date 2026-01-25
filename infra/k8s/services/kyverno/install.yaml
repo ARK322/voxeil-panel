@@ -5,7 +5,7 @@ metadata:
   name: kyverno
   labels:
     app.kubernetes.io/instance: kyverno
-    app.kubernetes.io/part-of: kyverno
+    app.kubernetes.io/part-of: voxeil
     app.kubernetes.io/version: v1.11.0
 ---
 apiVersion: v1

@@ -1,207 +1,122 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Voxeil Panel Clean Verification Script
-# Detects leftover resources and exits non-zero if anything remains
+# Verify that no Voxeil artifacts remain in the cluster
+# Exit 0 only if NO voxeil artifacts remain
+
+echo "=== Voxeil Clean Verification Script ==="
+echo ""
+echo "Checking for leftover Voxeil resources..."
+echo ""
 
 EXIT_CODE=0
-
-echo "=== Voxeil Panel Clean Verification ==="
-echo ""
+ISSUES_FOUND=0
 
 # Check kubectl availability
 if ! command -v kubectl >/dev/null 2>&1 || ! kubectl cluster-info >/dev/null 2>&1; then
   echo "⚠ kubectl not available or cluster not accessible"
-  echo "  Skipping Kubernetes resource checks..."
-  KUBECTL_AVAILABLE=false
-else
-  KUBECTL_AVAILABLE=true
+  echo "  Cannot verify cluster resources"
+  exit 1
 fi
 
-# Check for leftover namespaces
-echo "Checking namespaces..."
-if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-  VOXEIL_NAMESPACES="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
-  if [ -n "${VOXEIL_NAMESPACES}" ]; then
-    echo "  ✗ Found Voxeil namespaces:"
-    echo "${VOXEIL_NAMESPACES}" | while read -r ns; do
-      echo "    - ${ns}"
-    done
-    EXIT_CODE=1
+# Function to check and report resources
+check_resources() {
+  local resource_type="$1"
+  local label_selector="${2:-app.kubernetes.io/part-of=voxeil}"
+  local namespace_flag="${3:-}"
+  
+  local count
+  count="$(kubectl get "${resource_type}" ${namespace_flag} -l "${label_selector}" --no-headers 2>/dev/null | wc -l || echo "0")"
+  
+  if [ "${count}" -gt 0 ]; then
+    echo "  ⚠ Found ${count} ${resource_type} with label ${label_selector}:"
+    kubectl get "${resource_type}" ${namespace_flag} -l "${label_selector}" 2>/dev/null || true
+    echo ""
+    ISSUES_FOUND=$((ISSUES_FOUND + 1))
+    return 1
   else
-    echo "  ✓ No Voxeil namespaces found"
+    echo "  ✓ No ${resource_type} found"
+    return 0
   fi
-else
-  echo "  ⚠ Skipped (kubectl not available)"
-fi
+}
 
-# Check for leftover CRDs
-echo ""
-echo "Checking CRDs..."
-if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-  VOXEIL_CRDS="$(kubectl get crd -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '(cert-manager|kyverno|flux)' || true)"
-  if [ -n "${VOXEIL_CRDS}" ]; then
-    echo "  ✗ Found Voxeil CRDs:"
-    echo "${VOXEIL_CRDS}" | while read -r crd; do
-      echo "    - ${crd}"
-    done
-    EXIT_CODE=1
-  else
-    echo "  ✓ No Voxeil CRDs found"
-  fi
-else
-  echo "  ⚠ Skipped (kubectl not available)"
-fi
+# 1) Check labeled resources
+echo "=== Checking resources labeled app.kubernetes.io/part-of=voxeil ==="
 
-# Check for leftover ClusterRoles
-echo ""
-echo "Checking ClusterRoles..."
-if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-  VOXEIL_CLUSTERROLES="$(kubectl get clusterrole -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '(controller-bootstrap|user-operator)' || true)"
-  if [ -n "${VOXEIL_CLUSTERROLES}" ]; then
-    echo "  ✗ Found Voxeil ClusterRoles:"
-    echo "${VOXEIL_CLUSTERROLES}" | while read -r cr; do
-      echo "    - ${cr}"
-    done
-    EXIT_CODE=1
-  else
-    echo "  ✓ No Voxeil ClusterRoles found"
-  fi
-else
-  echo "  ⚠ Skipped (kubectl not available)"
-fi
+check_resources "all" "app.kubernetes.io/part-of=voxeil" "-A" || EXIT_CODE=1
+check_resources "cm,secret,sa,role,rolebinding,ingress,networkpolicy" "app.kubernetes.io/part-of=voxeil" "-A" || EXIT_CODE=1
+check_resources "clusterrole,clusterrolebinding" "app.kubernetes.io/part-of=voxeil" "" || EXIT_CODE=1
+check_resources "validatingwebhookconfiguration,mutatingwebhookconfiguration" "app.kubernetes.io/part-of=voxeil" "" || EXIT_CODE=1
+check_resources "crd" "app.kubernetes.io/part-of=voxeil" "" || EXIT_CODE=1
+check_resources "pvc" "app.kubernetes.io/part-of=voxeil" "-A" || EXIT_CODE=1
 
-# Check for leftover ClusterRoleBindings
+# 2) Check namespace leftovers
 echo ""
-echo "Checking ClusterRoleBindings..."
-if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-  VOXEIL_CLUSTERROLEBINDINGS="$(kubectl get clusterrolebinding -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E 'controller-bootstrap-binding' || true)"
-  if [ -n "${VOXEIL_CLUSTERROLEBINDINGS}" ]; then
-    echo "  ✗ Found Voxeil ClusterRoleBindings:"
-    echo "${VOXEIL_CLUSTERROLEBINDINGS}" | while read -r crb; do
-      echo "    - ${crb}"
-    done
-    EXIT_CODE=1
-  else
-    echo "  ✓ No Voxeil ClusterRoleBindings found"
-  fi
-else
-  echo "  ⚠ Skipped (kubectl not available)"
-fi
+echo "=== Checking for Voxeil namespaces ==="
+VOXEIL_NAMESPACES="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
 
-# Check for leftover webhooks
-echo ""
-echo "Checking webhooks..."
-if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-  VOXEIL_WEBHOOKS="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux)' || true)"
-  if [ -n "${VOXEIL_WEBHOOKS}" ]; then
-    echo "  ✗ Found Voxeil webhooks:"
-    echo "${VOXEIL_WEBHOOKS}" | while read -r wh; do
-      echo "    - ${wh}"
-    done
-    EXIT_CODE=1
-  else
-    echo "  ✓ No Voxeil webhooks found"
-  fi
-else
-  echo "  ⚠ Skipped (kubectl not available)"
-fi
-
-# Check for leftover PVCs
-echo ""
-echo "Checking PVCs..."
-if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-  VOXEIL_PVCS="$(kubectl get pvc -A -o jsonpath='{range .items[*]}{.metadata.namespace}{"/"}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|user-|tenant-)/' || true)"
-  if [ -n "${VOXEIL_PVCS}" ]; then
-    echo "  ✗ Found Voxeil PVCs:"
-    echo "${VOXEIL_PVCS}" | while read -r pvc; do
-      echo "    - ${pvc}"
-    done
-    EXIT_CODE=1
-  else
-    echo "  ✓ No Voxeil PVCs found"
-  fi
-else
-  echo "  ⚠ Skipped (kubectl not available)"
-fi
-
-# Check for leftover PersistentVolumes
-echo ""
-echo "Checking PersistentVolumes..."
-if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-  # Check for PVs that might be from Voxeil (by checking if they're Released/Available and have local-path storage class)
-  VOXEIL_PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.storageClassName}{"\t"}{.status.phase}{"\n"}{end}' 2>/dev/null | grep -E 'local-path.*(Released|Available)' | cut -f1 || true)"
-  if [ -n "${VOXEIL_PVS}" ]; then
-    echo "  ⚠ Found potentially orphaned PVs (local-path, Released/Available):"
-    echo "${VOXEIL_PVS}" | while read -r pv; do
-      echo "    - ${pv}"
-    done
-    # Don't fail on this - these might be from other applications
-  else
-    echo "  ✓ No orphaned PVs found"
-  fi
-else
-  echo "  ⚠ Skipped (kubectl not available)"
-fi
-
-# Check for leftover filesystem files
-echo ""
-echo "Checking filesystem files..."
-FILES_FOUND=0
-if [ -d /etc/voxeil ]; then
-  echo "  ✗ Found /etc/voxeil directory"
-  FILES_FOUND=1
-  EXIT_CODE=1
-fi
-if [ -f /usr/local/bin/voxeil-ufw-apply ]; then
-  echo "  ✗ Found /usr/local/bin/voxeil-ufw-apply"
-  FILES_FOUND=1
-  EXIT_CODE=1
-fi
-if [ -f /var/lib/voxeil/install.state ]; then
-  echo "  ✗ Found /var/lib/voxeil/install.state"
-  FILES_FOUND=1
-  EXIT_CODE=1
-fi
-if [ ${FILES_FOUND} -eq 0 ]; then
-  echo "  ✓ No Voxeil filesystem files found"
-fi
-
-# Check for leftover ClusterIssuers
-echo ""
-echo "Checking ClusterIssuers..."
-if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-  VOXEIL_CLUSTERISSUERS="$(kubectl get clusterissuer -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '(letsencrypt-prod|letsencrypt-staging)' || true)"
-  if [ -n "${VOXEIL_CLUSTERISSUERS}" ]; then
-    echo "  ✗ Found Voxeil ClusterIssuers:"
-    echo "${VOXEIL_CLUSTERISSUERS}" | while read -r ci; do
-      echo "    - ${ci}"
-    done
-    EXIT_CODE=1
-  else
-    echo "  ✓ No Voxeil ClusterIssuers found"
-  fi
-else
-  echo "  ⚠ Skipped (kubectl not available)"
-fi
-
-# Check for leftover HelmChartConfig
-echo ""
-echo "Checking HelmChartConfig..."
-if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
-  if kubectl get helmchartconfig traefik -n kube-system >/dev/null 2>&1; then
-    # Check if it has the voxeil label
-    if kubectl get helmchartconfig traefik -n kube-system -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q "voxeil"; then
-      echo "  ✗ Found Voxeil HelmChartConfig: traefik"
-      EXIT_CODE=1
+if [ -n "${VOXEIL_NAMESPACES}" ]; then
+  echo "  ⚠ Found Voxeil-related namespaces:"
+  echo "${VOXEIL_NAMESPACES}" | while read -r ns; do
+    # Check if namespace is labeled
+    if kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
+      echo "    - ${ns} (labeled)"
     else
-      echo "  ✓ No Voxeil HelmChartConfig found"
+      echo "    - ${ns} (unlabeled - potential leftover)"
     fi
-  else
-    echo "  ✓ No Voxeil HelmChartConfig found"
-  fi
+  done
+  echo ""
+  ISSUES_FOUND=$((ISSUES_FOUND + 1))
+  EXIT_CODE=1
 else
-  echo "  ⚠ Skipped (kubectl not available)"
+  echo "  ✓ No Voxeil namespaces found"
+fi
+
+# 3) Check PV leftovers
+echo ""
+echo "=== Checking PersistentVolumes ==="
+VOXEIL_PVS=0
+VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
+
+for ns in ${VOXEIL_NS_LIST}; do
+  # Check if namespace exists
+  if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+    # Find PVs for this namespace
+    local pvs
+    if command -v python3 >/dev/null 2>&1; then
+      pvs="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
+    elif command -v jq >/dev/null 2>&1; then
+      pvs="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
+    else
+      # Fallback: get all PVs and check claimRef manually
+      pvs="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
+    fi
+    
+    if [ -n "${pvs}" ]; then
+      echo "  ⚠ Found PVs for namespace ${ns}:"
+      echo "${pvs}" | while read -r pv; do
+        echo "    - ${pv}"
+      done
+      VOXEIL_PVS=1
+      ISSUES_FOUND=$((ISSUES_FOUND + 1))
+      EXIT_CODE=1
+    fi
+  fi
+done
+
+if [ ${VOXEIL_PVS} -eq 0 ]; then
+  echo "  ✓ No Voxeil-related PVs found"
+fi
+
+# 4) Check for state file
+echo ""
+echo "=== Checking filesystem state ==="
+if [ -f /var/lib/voxeil/install.state ]; then
+  echo "  ⚠ State file found at /var/lib/voxeil/install.state"
+  ISSUES_FOUND=$((ISSUES_FOUND + 1))
+  EXIT_CODE=1
+else
+  echo "  ✓ No state file found"
 fi
 
 # Summary
@@ -209,11 +124,13 @@ echo ""
 echo "=== Summary ==="
 if [ ${EXIT_CODE} -eq 0 ]; then
   echo "✓ System is clean - no Voxeil resources found"
+  echo ""
   exit 0
 else
-  echo "✗ System has leftover Voxeil resources"
+  echo "⚠ System has ${ISSUES_FOUND} type(s) of leftover Voxeil resources"
   echo ""
-  echo "Run the uninstaller to clean up:"
-  echo "  ./uninstaller/uninstaller.sh"
+  echo "To clean up, run:"
+  echo "  ./uninstaller/uninstaller.sh --force"
+  echo ""
   exit 1
 fi

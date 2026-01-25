@@ -33,32 +33,68 @@ IMAGE_VALIDATION_TIMEOUT="${IMAGE_VALIDATION_TIMEOUT:-120}"
 # ========= state registry =========
 STATE_FILE="/var/lib/voxeil/install.state"
 
+# Ensure state directory exists
+ensure_state_dir() {
+  mkdir -p "$(dirname "${STATE_FILE}")"
+}
+
 # Initialize state registry
 init_state_registry() {
-  mkdir -p "$(dirname "${STATE_FILE}")"
+  ensure_state_dir
   touch "${STATE_FILE}"
   chmod 644 "${STATE_FILE}"
 }
 
-# Write state flag
-write_state_flag() {
-  local flag="$1"
+# Set state key=value
+state_set() {
+  local key="$1"
+  local value="$2"
   init_state_registry
-  if ! grep -q "^${flag}=" "${STATE_FILE}" 2>/dev/null; then
-    echo "${flag}=1" >> "${STATE_FILE}"
+  if ! grep -q "^${key}=" "${STATE_FILE}" 2>/dev/null; then
+    echo "${key}=${value}" >> "${STATE_FILE}"
   else
-    sed -i "s/^${flag}=.*/${flag}=1/" "${STATE_FILE}"
+    if command -v sed >/dev/null 2>&1; then
+      sed -i "s/^${key}=.*/${key}=${value}/" "${STATE_FILE}"
+    else
+      # Fallback if sed -i not available
+      local temp_file
+      temp_file="$(mktemp)"
+      grep -v "^${key}=" "${STATE_FILE}" > "${temp_file}" 2>/dev/null || true
+      echo "${key}=${value}" >> "${temp_file}"
+      mv "${temp_file}" "${STATE_FILE}"
+    fi
   fi
 }
 
-# Read state flag
-read_state_flag() {
-  local flag="$1"
+# Get state key with default
+state_get() {
+  local key="$1"
+  local default="${2:-0}"
   if [ -f "${STATE_FILE}" ]; then
-    grep "^${flag}=" "${STATE_FILE}" 2>/dev/null | cut -d'=' -f2 || echo "0"
+    grep "^${key}=" "${STATE_FILE}" 2>/dev/null | cut -d'=' -f2- || echo "${default}"
   else
-    echo "0"
+    echo "${default}"
   fi
+}
+
+# Load state file safely (source if exists)
+state_load() {
+  if [ -f "${STATE_FILE}" ]; then
+    # shellcheck disable=SC1090
+    set +u
+    source "${STATE_FILE}" 2>/dev/null || true
+    set -u
+  fi
+}
+
+# Write state flag (backward compatibility)
+write_state_flag() {
+  state_set "$1" "1"
+}
+
+# Read state flag (backward compatibility)
+read_state_flag() {
+  state_get "$1" "0"
 }
 
 # Check if component is installed
@@ -1069,37 +1105,163 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# Run wrapper for dry-run support
+run() {
+  local cmd="$1"
+  if [ "${DRY_RUN}" = "true" ]; then
+    echo "[DRY-RUN] ${cmd}"
+  else
+    eval "${cmd}"
+  fi
+}
+
 # Doctor mode - check for existing installation
 if [ "${DOCTOR}" = "true" ]; then
-  echo "=== Doctor Mode - Checking Installation State ==="
+  echo "=== Voxeil Panel Installer - Doctor Mode ==="
   echo ""
+  echo "Scanning for installed components and leftover resources..."
+  echo ""
+  
+  EXIT_CODE=0
+  
+  # Check state file
+  echo "=== State Registry ==="
   if [ -f "${STATE_FILE}" ]; then
     echo "State file found at ${STATE_FILE}:"
     cat "${STATE_FILE}" | sed 's/^/  /'
     echo ""
   else
-    echo "  No state file found (fresh installation or state file removed)"
+    echo "  ⚠ No state file found"
+    EXIT_CODE=1
     echo ""
   fi
   
-  # Check for existing resources
-  if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
-    echo "Checking for existing Voxeil resources..."
-    VOXEIL_NAMESPACES="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager)$' || true)"
-    if [ -n "${VOXEIL_NAMESPACES}" ]; then
-      echo "  Found namespaces:"
-      echo "${VOXEIL_NAMESPACES}" | while read -r ns; do
-        echo "    - ${ns}"
-      done
-    else
-      echo "  No Voxeil namespaces found"
-    fi
-  else
-    echo "  kubectl not available, skipping resource checks"
+  # Check kubectl availability
+  if ! command -v kubectl >/dev/null 2>&1 || ! kubectl cluster-info >/dev/null 2>&1; then
+    echo "⚠ kubectl not available or cluster not accessible"
+    echo "  Skipping Kubernetes resource checks"
+    echo ""
+    exit ${EXIT_CODE}
   fi
+  
+  # Check labeled resources
+  echo "=== Resources with app.kubernetes.io/part-of=voxeil ==="
+  
+  echo "Namespaces:"
+  VOXEIL_NS="$(kubectl get namespaces -l app.kubernetes.io/part-of=voxeil -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' || true)"
+  if [ -n "${VOXEIL_NS}" ]; then
+    echo "${VOXEIL_NS}" | while read -r ns; do
+      echo "  - ${ns}"
+    done
+    EXIT_CODE=1
+  else
+    echo "  ✓ None found"
+  fi
+  
   echo ""
-  echo "Doctor mode complete. Exiting."
-  exit 0
+  echo "All resources (pods, services, etc.):"
+  VOXEIL_ALL="$(kubectl get all -A -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  if [ "${VOXEIL_ALL}" -gt 0 ]; then
+    kubectl get all -A -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    EXIT_CODE=1
+  else
+    echo "  ✓ None found"
+  fi
+  
+  echo ""
+  echo "ConfigMaps, Secrets, ServiceAccounts, Roles, RoleBindings, Ingresses, NetworkPolicies:"
+  VOXEIL_OTHER="$(kubectl get cm,secret,sa,role,rolebinding,ingress,networkpolicy -A -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  if [ "${VOXEIL_OTHER}" -gt 0 ]; then
+    kubectl get cm,secret,sa,role,rolebinding,ingress,networkpolicy -A -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    EXIT_CODE=1
+  else
+    echo "  ✓ None found"
+  fi
+  
+  echo ""
+  echo "ClusterRoles and ClusterRoleBindings:"
+  VOXEIL_CLUSTER="$(kubectl get clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  if [ "${VOXEIL_CLUSTER}" -gt 0 ]; then
+    kubectl get clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    EXIT_CODE=1
+  else
+    echo "  ✓ None found"
+  fi
+  
+  echo ""
+  echo "Webhooks:"
+  VOXEIL_WEBHOOKS="$(kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  if [ "${VOXEIL_WEBHOOKS}" -gt 0 ]; then
+    kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    EXIT_CODE=1
+  else
+    echo "  ✓ None found"
+  fi
+  
+  echo ""
+  echo "CRDs:"
+  VOXEIL_CRDS="$(kubectl get crd -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  if [ "${VOXEIL_CRDS}" -gt 0 ]; then
+    kubectl get crd -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    EXIT_CODE=1
+  else
+    echo "  ✓ None found"
+  fi
+  
+  echo ""
+  echo "PVCs:"
+  VOXEIL_PVCS="$(kubectl get pvc -A -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  if [ "${VOXEIL_PVCS}" -gt 0 ]; then
+    kubectl get pvc -A -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    EXIT_CODE=1
+  else
+    echo "  ✓ None found"
+  fi
+  
+  # Check for unlabeled namespaces that might be voxeil-related
+  echo ""
+  echo "=== Unlabeled Namespaces (potential leftovers) ==="
+  UNLABELED_NS="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
+  if [ -n "${UNLABELED_NS}" ]; then
+    echo "${UNLABELED_NS}" | while read -r ns; do
+      if ! kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
+        echo "  ⚠ ${ns} (not labeled)"
+        EXIT_CODE=1
+      fi
+    done
+  else
+    echo "  ✓ None found"
+  fi
+  
+  # Check PVs tied to voxeil namespaces
+  echo ""
+  echo "=== PersistentVolumes (checking claimRef) ==="
+  VOXEIL_PVS=0
+  for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
+    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+      PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
+      if [ -n "${PVS}" ]; then
+        echo "  ⚠ PVs for namespace ${ns}:"
+        echo "${PVS}" | while read -r pv; do
+          echo "    - ${pv}"
+        done
+        VOXEIL_PVS=1
+        EXIT_CODE=1
+      fi
+    fi
+  done
+  if [ ${VOXEIL_PVS} -eq 0 ]; then
+    echo "  ✓ None found"
+  fi
+  
+  echo ""
+  if [ ${EXIT_CODE} -eq 0 ]; then
+    echo "✓ System appears clean - no Voxeil resources detected"
+  else
+    echo "⚠ System has Voxeil resources or potential leftovers"
+  fi
+  
+  exit ${EXIT_CODE}
 fi
 
 # Dry run mode
@@ -1786,6 +1948,7 @@ if [[ ! -d "${SERVICES_DIR}/traefik" ]]; then
   exit 1
 fi
 kubectl apply -f "${SERVICES_DIR}/traefik"
+write_state_flag "TRAEFIK_INSTALLED"
 
 log_step "Installing cert-manager (cluster-wide)"
 if [[ ! -f "${SERVICES_DIR}/cert-manager/cert-manager.yaml" ]]; then
@@ -2191,6 +2354,7 @@ if ! kubectl wait --for=condition=Available deployment/pgadmin -n infra-db --tim
   exit 1
 fi
 echo "pgadmin Deployment is ready"
+write_state_flag "INFRA_DB_INSTALLED"
 
 # Now apply platform workloads after postgres is ready
 log_step "Applying platform workloads"
@@ -2198,6 +2362,7 @@ kubectl apply -f "${PLATFORM_DIR}/controller-deploy.yaml"
 kubectl apply -f "${PLATFORM_DIR}/controller-svc.yaml"
 kubectl apply -f "${PLATFORM_DIR}/panel-deploy.yaml"
 kubectl apply -f "${PLATFORM_DIR}/panel-svc.yaml"
+write_state_flag "PLATFORM_INSTALLED"
 
 log_step "Applying DNS (bind9) manifests"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
@@ -2295,6 +2460,20 @@ log_step "Applying backup-system manifests"
 backup_apply "${BACKUP_SYSTEM_DIR}/namespace.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-scripts-configmap.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
+# Apply remaining backup-system manifests if they exist
+if [ -f "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml" ]; then
+  backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml"
+fi
+if [ -f "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml" ]; then
+  backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml"
+fi
+if [ -f "${BACKUP_SYSTEM_DIR}/rbac.yaml" ]; then
+  backup_apply "${BACKUP_SYSTEM_DIR}/rbac.yaml"
+fi
+if [ -f "${BACKUP_SYSTEM_DIR}/serviceaccount.yaml" ]; then
+  backup_apply "${BACKUP_SYSTEM_DIR}/serviceaccount.yaml"
+fi
+write_state_flag "BACKUP_SYSTEM_INSTALLED"
 
 log_step "Applying ingresses"
 kubectl apply -f "${PLATFORM_DIR}/panel-ingress.yaml"
@@ -2647,6 +2826,7 @@ echo "- Deploy a site image via POST /sites/:slug/deploy."
 echo "- Point DNS to this server and enable TLS per site via PATCH /sites/:slug/tls."
 echo "- Configure Mailcow DNS (MX/SPF/DKIM) before enabling mail."
 echo "- Verify backups in user namespace PVCs (pvc-user-backup)."
+echo ""
 echo ""
 echo ""
 echo ""
