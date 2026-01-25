@@ -604,12 +604,125 @@ echo ""
 echo "=== VPS FORMAT COMPLETE ==="
 echo "All Kubernetes resources have been deleted."
 echo ""
-echo "To completely remove k3s and Docker (optional):"
-echo "  1. Remove k3s: /usr/local/bin/k3s-uninstall.sh"
-echo "  2. Remove Docker: apt-get remove -y docker.io containerd"
-echo "  3. Remove k3s data: rm -rf /var/lib/rancher/k3s"
+
+# VPS FORMAT MODE: Automatically remove k3s and Docker
+echo "=== Removing k3s and Docker (VPS format mode) ==="
+
+# Remove k3s - comprehensive cleanup
+echo "Removing k3s (complete cleanup)..."
+# Stop k3s service first
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop k3s 2>/dev/null || true
+  systemctl stop k3s-agent 2>/dev/null || true
+  systemctl disable k3s 2>/dev/null || true
+  systemctl disable k3s-agent 2>/dev/null || true
+fi
+
+# Run k3s uninstall script if exists
+if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
+  /usr/local/bin/k3s-uninstall.sh >/dev/null 2>&1 || true
+fi
+
+# Remove k3s binaries
+rm -f /usr/local/bin/k3s 2>/dev/null || true
+rm -f /usr/local/bin/k3s-uninstall.sh 2>/dev/null || true
+rm -f /usr/local/bin/kubectl 2>/dev/null || true
+rm -f /usr/local/bin/crictl 2>/dev/null || true
+rm -f /usr/local/bin/ctr 2>/dev/null || true
+
+# Remove k3s data and config directories
+rm -rf /var/lib/rancher/k3s 2>/dev/null || true
+rm -rf /var/lib/rancher 2>/dev/null || true
+rm -rf /etc/rancher/k3s 2>/dev/null || true
+rm -rf /etc/rancher 2>/dev/null || true
+
+# Remove k3s systemd service files
+rm -f /etc/systemd/system/k3s.service 2>/dev/null || true
+rm -f /etc/systemd/system/k3s-agent.service 2>/dev/null || true
+rm -f /etc/systemd/system/multi-user.target.wants/k3s.service 2>/dev/null || true
+rm -f /etc/systemd/system/multi-user.target.wants/k3s-agent.service 2>/dev/null || true
+
+# Remove k3s log files
+rm -rf /var/log/k3s 2>/dev/null || true
+
+# Reload systemd
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload 2>/dev/null || true
+fi
+
+echo "  ✓ k3s completely removed"
+
+# Remove Docker - comprehensive cleanup
+echo "Removing Docker (complete cleanup)..."
+# Stop Docker services first
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl stop docker 2>/dev/null || true
+  systemctl stop docker.socket 2>/dev/null || true
+  systemctl stop containerd 2>/dev/null || true
+  systemctl stop containerd-shim 2>/dev/null || true
+  systemctl disable docker 2>/dev/null || true
+  systemctl disable docker.socket 2>/dev/null || true
+  systemctl disable containerd 2>/dev/null || true
+fi
+
+# Remove Docker packages (if apt-get available)
+if command -v apt-get >/dev/null 2>&1; then
+  apt-get remove -y docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc 2>/dev/null || true
+  apt-get purge -y docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc 2>/dev/null || true
+  apt-get autoremove -y 2>/dev/null || true
+  apt-get autoclean 2>/dev/null || true
+fi
+
+# Remove Docker data directories (comprehensive)
+rm -rf /var/lib/docker 2>/dev/null || true
+rm -rf /var/lib/containerd 2>/dev/null || true
+rm -rf /var/lib/dockershim 2>/dev/null || true
+rm -rf /etc/docker 2>/dev/null || true
+rm -rf /etc/containerd 2>/dev/null || true
+
+# Remove Docker sockets and runtime directories
+rm -f /var/run/docker.sock 2>/dev/null || true
+rm -f /var/run/docker.pid 2>/dev/null || true
+rm -f /run/docker.sock 2>/dev/null || true
+rm -f /run/docker.pid 2>/dev/null || true
+rm -rf /var/run/docker 2>/dev/null || true
+rm -rf /run/docker 2>/dev/null || true
+rm -rf /var/run/containerd 2>/dev/null || true
+rm -rf /run/containerd 2>/dev/null || true
+
+# Remove Docker systemd service files
+rm -f /etc/systemd/system/docker.service 2>/dev/null || true
+rm -f /etc/systemd/system/docker.socket 2>/dev/null || true
+rm -f /etc/systemd/system/containerd.service 2>/dev/null || true
+rm -f /etc/systemd/system/multi-user.target.wants/docker.service 2>/dev/null || true
+rm -f /etc/systemd/system/sockets.target.wants/docker.socket 2>/dev/null || true
+rm -f /etc/systemd/system/multi-user.target.wants/containerd.service 2>/dev/null || true
+
+# Remove Docker binaries (if still exist after package removal)
+rm -f /usr/bin/docker 2>/dev/null || true
+rm -f /usr/bin/dockerd 2>/dev/null || true
+rm -f /usr/bin/docker-init 2>/dev/null || true
+rm -f /usr/bin/docker-proxy 2>/dev/null || true
+rm -f /usr/bin/containerd 2>/dev/null || true
+rm -f /usr/bin/containerd-shim 2>/dev/null || true
+rm -f /usr/bin/containerd-shim-runc-v2 2>/dev/null || true
+rm -f /usr/bin/runc 2>/dev/null || true
+
+# Remove Docker log files
+rm -rf /var/log/docker 2>/dev/null || true
+
+# Reload systemd
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload 2>/dev/null || true
+fi
+
+echo "  ✓ Docker completely removed"
+
 echo ""
-echo "⚠️  WARNING: k3s system namespaces have been deleted."
-echo "   k3s may be in an unstable state. Consider running k3s-uninstall.sh"
+echo "✓ VPS FORMAT COMPLETE - Everything has been wiped:"
+echo "  ✓ All Kubernetes resources deleted"
+echo "  ✓ k3s removed (if was installed)"
+echo "  ✓ Docker removed (if was installed)"
+echo "  ✓ All filesystem files cleaned"
 echo ""
-echo "✓ VPS FORMAT COMPLETE - Everything has been wiped."
+echo "System is now completely clean - ready for fresh installation."
