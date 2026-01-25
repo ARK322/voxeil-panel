@@ -105,9 +105,17 @@ spec:
             runAsUser: 5050
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
+            seccompProfile:
+              type: RuntimeDefault
             capabilities:
               drop:
                 - ALL
+              add:
+                - CHOWN
+                - FOWNER
+                - DAC_OVERRIDE
+                - SETGID
+                - SETUID
       volumes:
         - name: pgadmin-data
           persistentVolumeClaim:

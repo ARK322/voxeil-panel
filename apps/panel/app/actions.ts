@@ -8,6 +8,8 @@ import {
   deployGithub,
   disableGithub,
   enableGithub,
+  saveRegistryCredentials,
+  deleteRegistryCredentials,
   updateAllowlist,
   createUser,
   setUserActive,
@@ -142,6 +144,35 @@ export async function deployGithubAction(formData: FormData) {
     registryServer: registryServer || undefined,
     registryEmail: registryEmail || undefined
   });
+  revalidatePath("/");
+}
+
+export async function saveRegistryCredentialsAction(formData: FormData) {
+  await requireSession();
+  const slug = String(formData.get("slug") ?? "").trim();
+  const registryUsername = String(formData.get("registryUsername") ?? "").trim();
+  const registryToken = String(formData.get("registryToken") ?? "").trim();
+  const registryServer = String(formData.get("registryServer") ?? "").trim();
+  const registryEmail = String(formData.get("registryEmail") ?? "").trim();
+  if (!slug) throw new Error("slug is required.");
+  if (!registryUsername || !registryToken) {
+    throw new Error("registryUsername and registryToken are required.");
+  }
+  await saveRegistryCredentials({
+    slug,
+    registryUsername,
+    registryToken,
+    registryServer: registryServer || undefined,
+    registryEmail: registryEmail || undefined
+  });
+  revalidatePath("/");
+}
+
+export async function deleteRegistryCredentialsAction(formData: FormData) {
+  await requireSession();
+  const slug = String(formData.get("slug") ?? "").trim();
+  if (!slug) throw new Error("slug is required.");
+  await deleteRegistryCredentials(slug);
   revalidatePath("/");
 }
 

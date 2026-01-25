@@ -135,6 +135,30 @@ export async function deployGithub(input: {
   });
 }
 
+export async function saveRegistryCredentials(input: {
+  slug: string;
+  registryUsername: string;
+  registryToken: string;
+  registryServer?: string;
+  registryEmail?: string;
+}) {
+  await controllerFetch(`/sites/${input.slug}/registry/credentials`, {
+    method: "POST",
+    body: JSON.stringify({
+      registryUsername: input.registryUsername,
+      registryToken: input.registryToken,
+      registryServer: input.registryServer,
+      registryEmail: input.registryEmail
+    })
+  });
+}
+
+export async function deleteRegistryCredentials(slug: string) {
+  await controllerFetch(`/sites/${slug}/registry/credentials`, {
+    method: "DELETE"
+  });
+}
+
 export async function getAllowlist(): Promise<string[]> {
   const res = await controllerFetch("/security/allowlist", { method: "GET" });
   const payload = await res.json();

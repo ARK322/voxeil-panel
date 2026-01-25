@@ -53,6 +53,12 @@ export const GithubDeploySchema = z.object({
     registryServer: z.string().min(1).optional(),
     registryEmail: z.string().min(1).optional()
 });
+export const RegistryCredentialsSchema = z.object({
+    registryUsername: z.string().min(1),
+    registryToken: z.string().min(1),
+    registryServer: z.string().min(1).optional(),
+    registryEmail: z.string().min(1).optional()
+});
 export const DbEnableSchema = z.object({
     dbName: z.string().min(1).optional()
 });

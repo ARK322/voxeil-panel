@@ -326,10 +326,29 @@ validate_image() {
     fi
   fi
   
-  # For remote images, try to pull (with timeout and retry)
+  # For remote images, first try manifest inspect (lighter weight, just checks existence)
+  # This is much faster than a full pull and doesn't download the image
+  echo "Checking if image manifest exists..."
+  local manifest_output=""
+  if command -v timeout >/dev/null 2>&1; then
+    manifest_output="$(timeout 10 docker manifest inspect "${image}" 2>&1)" && {
+      echo "✓ Image ${image} validated (manifest exists)"
+      return 0
+    } || true
+  else
+    manifest_output="$(docker manifest inspect "${image}" 2>&1)" && {
+      echo "✓ Image ${image} validated (manifest exists)"
+      return 0
+    } || true
+  fi
+  
+  # If manifest inspect failed, try to pull (with timeout and retry)
+  # This is more expensive but works for some registries that don't support manifest inspect
   local pull_success=false
   local pull_output=""
   local max_retries=2
+  
+  echo "Manifest check failed, attempting to pull image..."
   
   for attempt in $(seq 1 ${max_retries}); do
     if [ ${attempt} -gt 1 ]; then
@@ -353,26 +372,34 @@ validate_image() {
     fi
   done
   
-  # If we get here, pull failed
-  log_error "Failed to pull image ${image} after ${max_retries} attempts"
+  # If we get here, both manifest and pull failed
+  log_error "Failed to validate image ${image} after ${max_retries} attempts"
   
   # Analyze the error output for common issues
-  if echo "${pull_output}" | grep -qi "unauthorized\|authentication required\|401"; then
-    echo "Authentication error detected. This image may be private."
-    echo "  - Set GHCR_USERNAME and GHCR_TOKEN environment variables"
-    echo "  - Or use public images"
-  elif echo "${pull_output}" | grep -qi "not found\|404\|manifest unknown"; then
+  local combined_output="${manifest_output}${pull_output}"
+  if echo "${combined_output}" | grep -qi "unauthorized\|authentication required\|401\|denied"; then
+    echo "Authentication/access error detected. This image may be private or not exist."
+    echo "  - If this is a first-time installation, images may need to be built first"
+    echo "  - Set GHCR_USERNAME and GHCR_TOKEN if the image is private"
+    echo "  - Or build images locally: ./scripts/build-images.sh --tag local"
+  elif echo "${combined_output}" | grep -qi "not found\|404\|manifest unknown\|name unknown"; then
     echo "Image not found at ${image}"
     echo "  - The image may not exist at this registry/tag"
-    echo "  - Check if the image was built and pushed"
-  elif echo "${pull_output}" | grep -qi "timeout\|connection.*refused\|no route to host"; then
+    echo "  - This is normal for first-time installations"
+    echo "  - Build images: ./scripts/build-images.sh --tag local"
+    echo "  - Or push to registry: ./scripts/build-images.sh --push --tag latest"
+  elif echo "${combined_output}" | grep -qi "timeout\|connection.*refused\|no route to host"; then
     echo "Network/connection error detected"
     echo "  - Check internet connectivity"
     echo "  - Check firewall rules"
     echo "  - Check DNS resolution"
   else
-    echo "Pull failed. Error details:"
-    echo "${pull_output}" | tail -5 | sed 's/^/  /'
+    echo "Validation failed. Error details:"
+    if [ -n "${pull_output}" ]; then
+      echo "${pull_output}" | tail -5 | sed 's/^/  /'
+    elif [ -n "${manifest_output}" ]; then
+      echo "${manifest_output}" | tail -5 | sed 's/^/  /'
+    fi
   fi
   
   echo ""
@@ -1468,15 +1495,17 @@ fi
 if [[ "${SKIP_IMAGE_VALIDATION:-false}" != "true" ]]; then
   log_step "Validating controller image"
   if ! validate_image "${CONTROLLER_IMAGE}"; then
-    echo "WARNING: Controller image validation failed: ${CONTROLLER_IMAGE}"
-    echo "Continuing anyway - k3s will attempt to pull the image during deployment."
     echo ""
-    echo "If the image doesn't exist, the deployment will fail. To fix this:"
-    echo "  1. Build images locally: ./scripts/build-images.sh --tag local"
-    echo "     Then set: export CONTROLLER_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-controller:local"
-    echo "  2. Or build and push to GHCR: ./scripts/build-images.sh --push"
-    echo "  3. Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
-    echo "  4. Or skip validation: export SKIP_IMAGE_VALIDATION=true"
+    echo "⚠️  Controller image validation failed: ${CONTROLLER_IMAGE}"
+    echo "   This is normal for first-time installations if images haven't been built yet."
+    echo "   Continuing installation - k3s will attempt to pull the image during deployment."
+    echo ""
+    echo "   If deployment fails due to missing image, you can:"
+    echo "   1. Build images locally: ./scripts/build-images.sh --tag local"
+    echo "      Then re-run installer with: export CONTROLLER_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-controller:local"
+    echo "   2. Build and push to GHCR: ./scripts/build-images.sh --push --tag latest"
+    echo "   3. Set GHCR_USERNAME and GHCR_TOKEN if using private images"
+    echo "   4. Skip validation: export SKIP_IMAGE_VALIDATION=true"
     echo ""
   fi
 else
@@ -1487,15 +1516,17 @@ fi
 if [[ "${SKIP_IMAGE_VALIDATION:-false}" != "true" ]]; then
   log_step "Validating panel image"
   if ! validate_image "${PANEL_IMAGE}"; then
-    echo "WARNING: Panel image validation failed: ${PANEL_IMAGE}"
-    echo "Continuing anyway - k3s will attempt to pull the image during deployment."
     echo ""
-    echo "If the image doesn't exist, the deployment will fail. To fix this:"
-    echo "  1. Build images locally: ./scripts/build-images.sh --tag local"
-    echo "     Then set: export PANEL_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-panel:local"
-    echo "  2. Or build and push to GHCR: ./scripts/build-images.sh --push"
-    echo "  3. Or set GHCR_USERNAME and GHCR_TOKEN if the image is private"
-    echo "  4. Or skip validation: export SKIP_IMAGE_VALIDATION=true"
+    echo "⚠️  Panel image validation failed: ${PANEL_IMAGE}"
+    echo "   This is normal for first-time installations if images haven't been built yet."
+    echo "   Continuing installation - k3s will attempt to pull the image during deployment."
+    echo ""
+    echo "   If deployment fails due to missing image, you can:"
+    echo "   1. Build images locally: ./scripts/build-images.sh --tag local"
+    echo "      Then re-run installer with: export PANEL_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-panel:local"
+    echo "   2. Build and push to GHCR: ./scripts/build-images.sh --push --tag latest"
+    echo "   3. Set GHCR_USERNAME and GHCR_TOKEN if using private images"
+    echo "   4. Skip validation: export SKIP_IMAGE_VALIDATION=true"
     echo ""
   fi
 else

@@ -19,6 +19,7 @@ import {
     DnsEnableSchema,
     GithubEnableSchema,
     GithubDeploySchema,
+    RegistryCredentialsSchema,
     DbEnableSchema,
     MailboxCreateSchema,
     AliasCreateSchema
@@ -48,6 +49,8 @@ import {
     enableSiteGithub,
     disableSiteGithub,
     triggerSiteGithubDeploy,
+    saveSiteRegistryCredentials,
+    deleteSiteRegistryCredentials,
     enableSiteBackup,
     disableSiteBackup,
     updateSiteBackupConfig,
@@ -636,6 +639,27 @@ export function registerRoutes(app) {
         }
         const body = GithubDeploySchema.parse(req.body ?? {});
         const result = await triggerSiteGithubDeploy(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.post("/sites/:slug/registry/credentials", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const body = RegistryCredentialsSchema.parse(req.body ?? {});
+        const result = await saveSiteRegistryCredentials(slug, body);
+        return reply.send({ ok: true, ...result });
+    });
+
+    app.delete("/sites/:slug/registry/credentials", async (req, reply) => {
+        const user = requireUser(req);
+        const slug = String(req.params.slug ?? "");
+        if (!slug) {
+            throw new HttpError(400, "Site slug is required.");
+        }
+        const result = await deleteSiteRegistryCredentials(slug);
         return reply.send({ ok: true, ...result });
     });
 

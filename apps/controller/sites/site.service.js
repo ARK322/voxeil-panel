@@ -1378,14 +1378,14 @@ export async function triggerSiteGithubDeploy(slug, input) {
     if (!token) {
         throw new HttpError(409, "GitHub token missing.");
     }
-    const registryUsername = input.registryUsername?.trim();
-    const registryToken = input.registryToken?.trim();
-    const registryEmail = input.registryEmail?.trim();
-    const registryServer = input.registryServer?.trim() || DEFAULT_REGISTRY_SERVER;
-    const wantsRegistry = Boolean(registryUsername || registryToken || registryEmail);
-    if (wantsRegistry && (!registryUsername || !registryToken)) {
-        throw new HttpError(400, "registryUsername and registryToken are required.");
-    }
+    // Check for persistent registry credentials first
+    const existingPullSecret = await readSecret(namespace, GHCR_PULL_SECRET_NAME);
+    let registryUsername = input.registryUsername?.trim();
+    let registryToken = input.registryToken?.trim();
+    let registryEmail = input.registryEmail?.trim() || undefined;
+    let registryServer = input.registryServer?.trim() || DEFAULT_REGISTRY_SERVER;
+    
+    // If new credentials provided in deploy, save them as persistent
     if (registryUsername && registryToken) {
         await upsertRegistryPullSecret({
             namespace,
@@ -1396,6 +1396,8 @@ export async function triggerSiteGithubDeploy(slug, input) {
             email: registryEmail
         });
     }
+    // Note: If no credentials provided and persistent ones exist, they will be used
+    // automatically via imagePullSecret in the deployment (handled by resolveImagePullSecretName)
     const repoInfo = parseRepo(repoValue);
     const ref = input.ref?.trim() || branch;
     await dispatchWorkflow({
@@ -1414,6 +1416,46 @@ export async function triggerSiteGithubDeploy(slug, input) {
         [SITE_ANNOTATIONS.githubBranch]: ref
     });
     return { ok: true, slug: normalized, dispatched: true, ref, image };
+}
+export async function saveSiteRegistryCredentials(slug, input) {
+    let normalized;
+    try {
+        normalized = validateSlug(slug);
+    }
+    catch (error) {
+        throw new HttpError(400, error?.message ?? "Invalid slug.");
+    }
+    const namespaceEntry = await readSiteMetadata(normalized);
+    const namespace = namespaceEntry.name;
+    const registryUsername = input.registryUsername?.trim();
+    const registryToken = input.registryToken?.trim();
+    const registryEmail = input.registryEmail?.trim() || undefined;
+    const registryServer = input.registryServer?.trim() || DEFAULT_REGISTRY_SERVER;
+    if (!registryUsername || !registryToken) {
+        throw new HttpError(400, "registryUsername and registryToken are required.");
+    }
+    await upsertRegistryPullSecret({
+        namespace,
+        slug: normalized,
+        server: registryServer,
+        username: registryUsername,
+        token: registryToken,
+        email: registryEmail
+    });
+    return { ok: true, slug: normalized };
+}
+export async function deleteSiteRegistryCredentials(slug) {
+    let normalized;
+    try {
+        normalized = validateSlug(slug);
+    }
+    catch (error) {
+        throw new HttpError(400, error?.message ?? "Invalid slug.");
+    }
+    const namespaceEntry = await readSiteMetadata(normalized);
+    const namespace = namespaceEntry.name;
+    await deleteSecret(namespace, GHCR_PULL_SECRET_NAME);
+    return { ok: true, slug: normalized };
 }
 export async function getSiteGithubStatus(slug) {
     let normalized;

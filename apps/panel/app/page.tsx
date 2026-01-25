@@ -4,6 +4,8 @@ import {
   deployGithubAction,
   disableGithubAction,
   enableGithubAction,
+  saveRegistryCredentialsAction,
+  deleteRegistryCredentialsAction,
   logoutAction,
   updateAllowlistAction,
   createUserAction,
@@ -304,6 +306,36 @@ export default async function HomePage() {
                       <input type="hidden" name="slug" value={site.slug} />
                       <button type="submit" style={{ color: "crimson" }}>Disable GitHub</button>
                     </form>
+                    <div style={{ marginTop: 16, paddingTop: 16, borderTop: "1px solid #e2e8f0" }}>
+                      <h4 style={{ margin: "0 0 8px 0", fontSize: 14, fontWeight: 600 }}>Registry Credentials (Persistent)</h4>
+                      <p style={{ margin: "0 0 12px 0", fontSize: 12, color: "#64748b" }}>
+                        Save registry credentials once, use them for all future deploys. If not set, you'll need to provide them on each deploy.
+                      </p>
+                      <form action={saveRegistryCredentialsAction} style={{ display: "grid", gap: 8 }}>
+                        <input type="hidden" name="slug" value={site.slug} />
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span>Registry username</span>
+                          <input name="registryUsername" placeholder="ghcr-username" required />
+                        </label>
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span>Registry token</span>
+                          <input name="registryToken" type="password" placeholder="ghp_..." required />
+                        </label>
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span>Registry server (optional)</span>
+                          <input name="registryServer" placeholder="ghcr.io" defaultValue="ghcr.io" />
+                        </label>
+                        <label style={{ display: "grid", gap: 6 }}>
+                          <span>Registry email (optional)</span>
+                          <input name="registryEmail" type="email" placeholder="you@example.com" />
+                        </label>
+                        <button type="submit">Save Registry Credentials</button>
+                      </form>
+                      <form action={deleteRegistryCredentialsAction} style={{ marginTop: 8 }}>
+                        <input type="hidden" name="slug" value={site.slug} />
+                        <button type="submit" style={{ color: "crimson", fontSize: 12 }}>Delete Registry Credentials</button>
+                      </form>
+                    </div>
                   </div>
                 </details>
                 <details style={{ marginTop: 12 }}>
