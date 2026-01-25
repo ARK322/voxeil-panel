@@ -4,13 +4,35 @@ set -euo pipefail
 # Verify that no Voxeil artifacts remain in the cluster
 # Exit 0 only if NO voxeil artifacts remain
 
+# CLI flags
+TIMEOUT=180
+INTERVAL=5
+NO_WAIT=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --timeout)
+      TIMEOUT="$2"
+      shift 2
+      ;;
+    --interval)
+      INTERVAL="$2"
+      shift 2
+      ;;
+    --no-wait)
+      NO_WAIT=true
+      shift
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Usage: $0 [--timeout <seconds>] [--interval <seconds>] [--no-wait]"
+      exit 1
+      ;;
+  esac
+done
+
 echo "=== Voxeil Clean Verification Script ==="
 echo ""
-echo "Checking for leftover Voxeil resources..."
-echo ""
-
-EXIT_CODE=0
-ISSUES_FOUND=0
 
 # Check kubectl availability
 if ! command -v kubectl >/dev/null 2>&1 || ! kubectl cluster-info >/dev/null 2>&1; then
@@ -40,94 +62,146 @@ check_resources() {
   fi
 }
 
-# 1) Check labeled resources
-echo "=== Checking resources labeled app.kubernetes.io/part-of=voxeil ==="
-
-check_resources "all" "app.kubernetes.io/part-of=voxeil" "-A" || EXIT_CODE=1
-check_resources "cm,secret,sa,role,rolebinding,ingress,networkpolicy" "app.kubernetes.io/part-of=voxeil" "-A" || EXIT_CODE=1
-check_resources "clusterrole,clusterrolebinding" "app.kubernetes.io/part-of=voxeil" "" || EXIT_CODE=1
-check_resources "validatingwebhookconfiguration,mutatingwebhookconfiguration" "app.kubernetes.io/part-of=voxeil" "" || EXIT_CODE=1
-check_resources "crd" "app.kubernetes.io/part-of=voxeil" "" || EXIT_CODE=1
-check_resources "pvc" "app.kubernetes.io/part-of=voxeil" "-A" || EXIT_CODE=1
-
-# 2) Check namespace leftovers
-echo ""
-echo "=== Checking for Voxeil namespaces ==="
-VOXEIL_NAMESPACES="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
-
-if [ -n "${VOXEIL_NAMESPACES}" ]; then
-  echo "  ⚠ Found Voxeil-related namespaces:"
-  echo "${VOXEIL_NAMESPACES}" | while read -r ns; do
-    # Check if namespace is labeled
-    if kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
-      echo "    - ${ns} (labeled)"
-    else
-      echo "    - ${ns} (unlabeled - potential leftover)"
+# Function to run all checks once
+run_checks_once() {
+  EXIT_CODE=0
+  ISSUES_FOUND=0
+  
+  echo "Checking for leftover Voxeil resources..."
+  echo ""
+  
+  # 1) Check labeled resources
+  echo "=== Checking resources labeled app.kubernetes.io/part-of=voxeil ==="
+  
+  check_resources "all" "app.kubernetes.io/part-of=voxeil" "-A" || EXIT_CODE=1
+  check_resources "cm,secret,sa,role,rolebinding,ingress,networkpolicy" "app.kubernetes.io/part-of=voxeil" "-A" || EXIT_CODE=1
+  check_resources "clusterrole,clusterrolebinding" "app.kubernetes.io/part-of=voxeil" "" || EXIT_CODE=1
+  check_resources "validatingwebhookconfiguration,mutatingwebhookconfiguration" "app.kubernetes.io/part-of=voxeil" "" || EXIT_CODE=1
+  check_resources "crd" "app.kubernetes.io/part-of=voxeil" "" || EXIT_CODE=1
+  check_resources "pvc" "app.kubernetes.io/part-of=voxeil" "-A" || EXIT_CODE=1
+  
+  # 2) Check namespace leftovers
+  echo ""
+  echo "=== Checking for Voxeil namespaces ==="
+  VOXEIL_NAMESPACES="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
+  
+  if [ -n "${VOXEIL_NAMESPACES}" ]; then
+    echo "  ⚠ Found Voxeil-related namespaces:"
+    echo "${VOXEIL_NAMESPACES}" | while read -r ns; do
+      # Check if namespace is labeled
+      if kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
+        echo "    - ${ns} (labeled)"
+      else
+        echo "    - ${ns} (unlabeled - potential leftover)"
+      fi
+    done
+    echo ""
+    ISSUES_FOUND=$((ISSUES_FOUND + 1))
+    EXIT_CODE=1
+  else
+    echo "  ✓ No Voxeil namespaces found"
+  fi
+  
+  # 3) Check PV leftovers
+  echo ""
+  echo "=== Checking PersistentVolumes ==="
+  VOXEIL_PVS=0
+  VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
+  
+  for ns in ${VOXEIL_NS_LIST}; do
+    # Check if namespace exists
+    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+      # Find PVs for this namespace
+      pvs=""
+      if command -v python3 >/dev/null 2>&1; then
+        pvs="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
+      elif command -v jq >/dev/null 2>&1; then
+        pvs="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
+      else
+        # Fallback: get all PVs and check claimRef manually
+        pvs="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
+      fi
+      
+      if [ -n "${pvs}" ]; then
+        echo "  ⚠ Found PVs for namespace ${ns}:"
+        echo "${pvs}" | while read -r pv; do
+          echo "    - ${pv}"
+        done
+        VOXEIL_PVS=1
+        ISSUES_FOUND=$((ISSUES_FOUND + 1))
+        EXIT_CODE=1
+      fi
     fi
   done
+  
+  if [ ${VOXEIL_PVS} -eq 0 ]; then
+    echo "  ✓ No Voxeil-related PVs found"
+  fi
+  
+  # 4) Check for state file
   echo ""
-  ISSUES_FOUND=$((ISSUES_FOUND + 1))
-  EXIT_CODE=1
+  echo "=== Checking filesystem state ==="
+  if [ -f /var/lib/voxeil/install.state ]; then
+    echo "  ⚠ State file found at /var/lib/voxeil/install.state"
+    ISSUES_FOUND=$((ISSUES_FOUND + 1))
+    EXIT_CODE=1
+  else
+    echo "  ✓ No state file found"
+  fi
+  
+  return ${EXIT_CODE}
+}
+
+# Main execution
+if [ "${NO_WAIT}" = "true" ]; then
+  # Run once and exit
+  run_checks_once
+  EXIT_CODE=$?
+  
+  echo ""
+  echo "=== Summary ==="
+  if [ ${EXIT_CODE} -eq 0 ]; then
+    echo "✓ System is clean - no Voxeil resources found"
+    echo ""
+    exit 0
+  else
+    echo "⚠ System has leftover Voxeil resources"
+    echo ""
+    echo "To clean up, run:"
+    echo "  ./uninstaller/uninstaller.sh --force"
+    echo ""
+    exit 1
+  fi
 else
-  echo "  ✓ No Voxeil namespaces found"
-fi
-
-# 3) Check PV leftovers
-echo ""
-echo "=== Checking PersistentVolumes ==="
-VOXEIL_PVS=0
-VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
-
-for ns in ${VOXEIL_NS_LIST}; do
-  # Check if namespace exists
-  if kubectl get namespace "${ns}" >/dev/null 2>&1; then
-    # Find PVs for this namespace
-    local pvs
-    if command -v python3 >/dev/null 2>&1; then
-      pvs="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
-    elif command -v jq >/dev/null 2>&1; then
-      pvs="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
-    else
-      # Fallback: get all PVs and check claimRef manually
-      pvs="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
+  # Wait loop
+  START_TIME=$(date +%s)
+  ELAPSED=0
+  LAST_EXIT_CODE=1
+  
+  while [ ${ELAPSED} -lt ${TIMEOUT} ]; do
+    if run_checks_once; then
+      echo ""
+      echo "=== Summary ==="
+      echo "✓ System is clean - no Voxeil resources found"
+      echo ""
+      exit 0
     fi
     
-    if [ -n "${pvs}" ]; then
-      echo "  ⚠ Found PVs for namespace ${ns}:"
-      echo "${pvs}" | while read -r pv; do
-        echo "    - ${pv}"
-      done
-      VOXEIL_PVS=1
-      ISSUES_FOUND=$((ISSUES_FOUND + 1))
-      EXIT_CODE=1
+    LAST_EXIT_CODE=$?
+    ELAPSED=$(($(date +%s) - START_TIME))
+    
+    if [ ${ELAPSED} -lt ${TIMEOUT} ]; then
+      echo ""
+      echo "[INFO] waiting for cluster to become clean... elapsed=${ELAPSED}s"
+      sleep ${INTERVAL}
+      echo ""
     fi
-  fi
-done
-
-if [ ${VOXEIL_PVS} -eq 0 ]; then
-  echo "  ✓ No Voxeil-related PVs found"
-fi
-
-# 4) Check for state file
-echo ""
-echo "=== Checking filesystem state ==="
-if [ -f /var/lib/voxeil/install.state ]; then
-  echo "  ⚠ State file found at /var/lib/voxeil/install.state"
-  ISSUES_FOUND=$((ISSUES_FOUND + 1))
-  EXIT_CODE=1
-else
-  echo "  ✓ No state file found"
-fi
-
-# Summary
-echo ""
-echo "=== Summary ==="
-if [ ${EXIT_CODE} -eq 0 ]; then
-  echo "✓ System is clean - no Voxeil resources found"
+  done
+  
+  # Timeout reached
   echo ""
-  exit 0
-else
-  echo "⚠ System has ${ISSUES_FOUND} type(s) of leftover Voxeil resources"
+  echo "=== Summary ==="
+  echo "⚠ Timeout reached (${TIMEOUT}s) - system still has leftover Voxeil resources"
   echo ""
   echo "To clean up, run:"
   echo "  ./uninstaller/uninstaller.sh --force"

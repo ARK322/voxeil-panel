@@ -11,6 +11,18 @@ log_step() {
   echo "=== [STEP] ${STEP_COUNTER}: $1 ==="
 }
 
+log_info() {
+  echo "=== [INFO] $1 ==="
+}
+
+log_warn() {
+  echo "=== [WARN] $1 ==="
+}
+
+log_ok() {
+  echo "=== [OK]   $1 ==="
+}
+
 log_error() {
   echo "=== [ERROR] $1 ===" >&2
 }
@@ -1550,7 +1562,7 @@ if ! docker image inspect backup-runner:local >/dev/null 2>&1; then
   log_error "backup-runner:local image not found after build"
   exit 1
 fi
-echo "Backup images built successfully"
+log_ok "Backup images built successfully"
 
 # ========= install k3s if needed =========
 log_step "Installing k3s (if needed)"
@@ -1576,7 +1588,7 @@ wait_for_k3s_api
 check_kubectl_context
 
 log_step "Waiting for node to be registered and ready"
-echo "Waiting for node to be registered..."
+log_info "Waiting for node to be registered..."
 NODE_REGISTERED=false
 for i in {1..60}; do
   if kubectl get nodes >/dev/null 2>&1 && [[ "$(kubectl get nodes --no-headers 2>/dev/null | wc -l)" -gt 0 ]]; then
@@ -1592,7 +1604,7 @@ if [[ "${NODE_REGISTERED}" != "true" ]]; then
   exit 1
 fi
 
-echo "Node registered, waiting for Ready condition..."
+log_info "Node registered, waiting for Ready condition..."
 # Poll first to ensure node resource exists before wait
 for i in {1..30}; do
   if kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
@@ -1711,7 +1723,7 @@ for ns in platform infra-db dns-zone mail-zone backup-system; do
   fi
 done
 
-echo "Cleanup completed. Proceeding with installation..."
+log_ok "Cleanup completed. Proceeding with installation..."
 
 # ========= render manifests to temp dir =========
 RENDER_DIR="$(mktemp -d)"
@@ -1989,17 +2001,17 @@ if kubectl get namespace kyverno >/dev/null 2>&1; then
       echo "⚠ Kyverno main deployment not ready yet (proceeding anyway)"
     fi
   fi
-  echo "Proceeding with cert-manager installation..."
+  log_info "Proceeding with cert-manager installation..."
 else
-  echo "Kyverno namespace not found (will be installed later)"
+  log_info "Kyverno namespace not found (will be installed later)"
   # Check for orphaned Kyverno webhooks (namespace deleted but webhooks remain)
-  echo "Checking for orphaned Kyverno webhooks..."
+  log_info "Checking for orphaned Kyverno webhooks..."
   orphaned_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
   orphaned_mutating="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
   
   if [ -n "${orphaned_webhooks}" ] || [ -n "${orphaned_mutating}" ]; then
-    echo "⚠ Found orphaned Kyverno webhooks (namespace deleted but webhooks remain)"
-    echo "  Cleaning up orphaned webhooks to prevent cert-manager installation issues..."
+    log_warn "Found orphaned Kyverno webhooks (namespace deleted but webhooks remain)"
+    log_info "Cleaning up orphaned webhooks to prevent cert-manager installation issues..."
     
     for webhook in ${orphaned_webhooks}; do
       echo "  Deleting validating webhook: ${webhook}"
@@ -2011,7 +2023,7 @@ else
       kubectl delete mutatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
     done
     
-    echo "  ✓ Orphaned webhooks cleaned up"
+    log_ok "Orphaned webhooks cleaned up"
     sleep 2
   else
     echo "  No orphaned webhooks found"
@@ -2028,7 +2040,7 @@ retry_apply "${SERVICES_DIR}/cert-manager/cert-manager.yaml" "cert-manager manif
 }
 
 # Wait for CRDs with polling
-echo "Waiting for cert-manager CRDs..."
+log_info "Waiting for cert-manager CRDs..."
 for i in {1..30}; do
   if kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
     break
@@ -2048,7 +2060,7 @@ kubectl wait --for=condition=Established crd/issuers.cert-manager.io --timeout="
 kubectl wait --for=condition=Established crd/orders.acme.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
 
 # Wait for deployments with polling
-echo "Waiting for cert-manager deployments..."
+log_info "Waiting for cert-manager deployments..."
 for i in {1..30}; do
   if kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
     break
@@ -2091,14 +2103,14 @@ kubectl apply --server-side --force-conflicts -f "${KYVERNO_MANIFEST}" || {
   log_error "Failed to apply Kyverno manifests"
   exit 1
 }
-echo "Kyverno resources applied successfully"
+log_ok "Kyverno resources applied successfully"
 
 # Immediately fix cleanup jobs to ensure they use correct images
 # This prevents old bitnami/kubectl images from being used
 fix_kyverno_cleanup_jobs
 
 # Wait for Kyverno deployments with proper polling
-echo "Waiting for Kyverno deployments to be available..."
+log_info "Waiting for Kyverno deployments to be available..."
 # Poll first to ensure deployments exist
 for i in {1..30}; do
   if kubectl get deployments -n kyverno --no-headers 2>/dev/null | grep -q .; then
@@ -2120,13 +2132,13 @@ kubectl wait --for=condition=Available deployment -n kyverno --all --timeout="${
 write_state_flag "KYVERNO_INSTALLED"
 
 # Apply policies (idempotent) - wait a bit for Kyverno to be fully ready
-echo "Waiting for Kyverno to be fully operational..."
+log_info "Waiting for Kyverno to be fully operational..."
 sleep 5
 echo "Applying Kyverno policies..."
 kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
 
 # Wait a moment for policies to be active
-echo "Waiting for policies to be active..."
+log_info "Waiting for policies to be active..."
 sleep 3
 
 # Fix any failed cleanup jobs (e.g., ImagePullBackOff from old bitnami/kubectl images)
@@ -2149,7 +2161,7 @@ kubectl apply -f "${SERVICES_DIR}/flux-system/install.yaml" || {
 }
 
 # Poll for deployments before wait
-echo "Waiting for Flux deployments..."
+log_info "Waiting for Flux deployments..."
 for i in {1..30}; do
   if kubectl get deployments -n flux-system --no-headers 2>/dev/null | grep -q .; then
     break
@@ -2245,7 +2257,7 @@ kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-auth.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-svc.yaml"
 
 # Ensure pgadmin PVC is ready before deploying pgadmin
-echo "Ensuring pgadmin PVC is ready..."
+log_info "Ensuring pgadmin PVC is ready..."
 # Wait for any terminating PVCs to be cleaned up
 for i in {1..30}; do
   terminating_pvc="$(kubectl get pvc pgadmin-pvc -n infra-db -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || echo "")"
@@ -2261,7 +2273,7 @@ kubectl apply -f "${SERVICES_DIR}/infra-db/pgadmin-deploy.yaml"
 
 # Wait for postgres StatefulSet to be ready (PVC will bind when pod is scheduled)
 # This is critical because controller depends on postgres
-echo "Waiting for postgres StatefulSet to be ready..."
+log_info "Waiting for postgres StatefulSet to be ready..."
 # Poll first to ensure StatefulSet exists
 for i in {1..30}; do
   if kubectl get statefulset postgres -n infra-db >/dev/null 2>&1; then
@@ -2293,7 +2305,7 @@ fi
 echo "postgres StatefulSet is ready"
 
 # Wait for pgadmin Deployment to be ready
-echo "Waiting for pgadmin Deployment to be ready..."
+log_info "Waiting for pgadmin Deployment to be ready..."
 # Poll first to ensure Deployment exists
 for i in {1..30}; do
   if kubectl get deployment pgadmin -n infra-db >/dev/null 2>&1; then
@@ -2353,7 +2365,7 @@ if ! kubectl wait --for=condition=Available deployment/pgadmin -n infra-db --tim
   kubectl get events -n infra-db --sort-by='.lastTimestamp' | tail -20 || true
   exit 1
 fi
-echo "pgadmin Deployment is ready"
+log_ok "pgadmin Deployment is ready"
 write_state_flag "INFRA_DB_INSTALLED"
 
 # Now apply platform workloads after postgres is ready
@@ -2371,7 +2383,7 @@ kubectl apply -f "${SERVICES_DIR}/dns-zone/pvc.yaml"
 kubectl apply -f "${SERVICES_DIR}/dns-zone/bind9.yaml"
 
 # Wait for bind9 Deployment to be ready (PVC will bind when pod is scheduled)
-echo "Waiting for bind9 Deployment to be ready..."
+log_info "Waiting for bind9 Deployment to be ready..."
 # Poll first to ensure Deployment exists
 for i in {1..30}; do
   if kubectl get deployment bind9 -n dns-zone >/dev/null 2>&1; then
@@ -2391,7 +2403,7 @@ if ! kubectl wait --for=condition=Available deployment/bind9 -n dns-zone --timeo
   kubectl get pvc -n dns-zone || true
   exit 1
 fi
-echo "bind9 Deployment is ready"
+log_ok "bind9 Deployment is ready"
 
 log_step "Applying mailcow manifests"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
@@ -2402,7 +2414,7 @@ kubectl apply -f "${SERVICES_DIR}/mail-zone/networkpolicy.yaml"
 
 # Wait for mailcow-mysql StatefulSet to be ready (PVC will bind when pod is scheduled)
 # This is critical because other mailcow components (php-fpm, postfix, dovecot) depend on mysql
-echo "Waiting for mailcow-mysql StatefulSet to be ready..."
+log_info "Waiting for mailcow-mysql StatefulSet to be ready..."
 # Poll first to ensure StatefulSet exists
 for i in {1..30}; do
   if kubectl get statefulset mailcow-mysql -n mail-zone >/dev/null 2>&1; then
@@ -2422,7 +2434,7 @@ if ! kubectl wait --for=condition=Ready pod -l app=mailcow,component=mysql -n ma
   kubectl get pvc -n mail-zone || true
   exit 1
 fi
-echo "mailcow-mysql StatefulSet is ready"
+log_ok "mailcow-mysql StatefulSet is ready"
 
 log_step "Importing backup images to k3s"
 # Images were already built before k3s installation
@@ -2637,7 +2649,7 @@ fi
 log_step "Waiting for controller and panel to become available"
 
 # Wait for controller with proper polling and diagnostic on failure
-echo "Waiting for controller deployment..."
+log_info "Waiting for controller deployment..."
 # Poll first to ensure deployment exists
 for i in {1..30}; do
   if kubectl get deployment controller -n platform >/dev/null 2>&1; then
@@ -2648,7 +2660,7 @@ for i in {1..30}; do
 done
 
 # Wait for deployment with periodic image pull error checks
-echo "Waiting for controller to become available (checking for image pull errors every 30s)..."
+log_info "Waiting for controller to become available (checking for image pull errors every 30s)..."
 CONTROLLER_WAIT_START=$(date +%s)
 CONTROLLER_LAST_CHECK=${CONTROLLER_WAIT_START}
 CONTROLLER_CHECK_INTERVAL=30
@@ -2682,10 +2694,10 @@ while ! kubectl wait --for=condition=Available deployment/controller -n platform
   fi
 done
 
-echo "Controller deployment is available"
+log_ok "Controller deployment is available"
 
 # Additional pod-level readiness check
-echo "Verifying controller pods are ready..."
+log_info "Verifying controller pods are ready..."
 CONTROLLER_PODS="$(kubectl get pods -n platform -l app=controller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
 if [ -z "${CONTROLLER_PODS}" ]; then
   log_error "No controller pods found"
@@ -2708,10 +2720,10 @@ for pod in ${CONTROLLER_PODS}; do
     exit 1
   fi
 done
-echo "All controller pods are ready"
+log_ok "All controller pods are ready"
 
 # Wait for panel with proper polling
-echo "Waiting for panel deployment..."
+log_info "Waiting for panel deployment..."
 for i in {1..30}; do
   if kubectl get deployment panel -n platform >/dev/null 2>&1; then
     break
@@ -2721,7 +2733,7 @@ for i in {1..30}; do
 done
 
 # Wait for deployment with periodic image pull error checks
-echo "Waiting for panel to become available (checking for image pull errors every 30s)..."
+log_info "Waiting for panel to become available (checking for image pull errors every 30s)..."
 PANEL_WAIT_START=$(date +%s)
 PANEL_LAST_CHECK=${PANEL_WAIT_START}
 PANEL_CHECK_INTERVAL=30
@@ -2755,10 +2767,10 @@ while ! kubectl wait --for=condition=Available deployment/panel -n platform --ti
   fi
 done
 
-echo "Panel deployment is available"
+log_ok "Panel deployment is available"
 
 # Additional pod-level readiness check for panel
-echo "Verifying panel pods are ready..."
+log_info "Verifying panel pods are ready..."
 PANEL_PODS="$(kubectl get pods -n platform -l app=panel -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
 if [ -z "${PANEL_PODS}" ]; then
   log_error "No panel pods found"
@@ -2781,18 +2793,18 @@ for pod in ${PANEL_PODS}; do
     exit 1
   fi
 done
-echo "All panel pods are ready"
+log_ok "All panel pods are ready"
 
 # Health check verification
 log_step "Verifying health endpoints"
-echo "Checking controller health endpoint..."
+log_info "Checking controller health endpoint..."
 CONTROLLER_POD="$(kubectl get pod -n platform -l app=controller -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
 if [ -n "${CONTROLLER_POD}" ]; then
   # Try wget first, fallback to curl if wget not available
   if kubectl exec -n platform "${CONTROLLER_POD}" -- sh -c "command -v wget >/dev/null 2>&1 && wget -q -O- http://localhost:8080/health || (command -v curl >/dev/null 2>&1 && curl -sf http://localhost:8080/health || exit 1)" >/dev/null 2>&1; then
-    echo "Controller health endpoint is responding"
+    log_ok "Controller health endpoint is responding"
   else
-    echo "WARNING: Controller health endpoint check failed (may be starting up or wget/curl not available)"
+    log_warn "Controller health endpoint check failed (may be starting up or wget/curl not available)"
   fi
 fi
 
@@ -2808,7 +2820,7 @@ echo "PVC status in platform namespace:"
 kubectl get pvc -n platform
 
 echo ""
-echo "Done."
+log_ok "Installation complete"
 echo "Panel: https://${PANEL_DOMAIN}"
 echo "Panel admin username: ${PANEL_ADMIN_USERNAME}"
 echo "Panel admin password: ${PANEL_ADMIN_PASSWORD}"
