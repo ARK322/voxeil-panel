@@ -35,7 +35,9 @@ trap 'LAST_COMMAND="${BASH_COMMAND}"; LAST_LINE="${LINENO}"' DEBUG
 # Track overall time spent (in seconds)
 OVERALL_START_TIME=$(date +%s)
 OVERALL_TIMEOUT_UNINSTALL=600  # 10 minutes max for uninstall
-OVERALL_TIMEOUT_PURGE_NODE=300  # 5 minutes max for purge-node
+# Purge-node includes uninstall first, so needs more time
+# Uninstall can take up to 10 min, k3s cleanup can take up to 5 min
+OVERALL_TIMEOUT_PURGE_NODE=900  # 15 minutes max for purge-node (includes uninstall + k3s cleanup)
 
 # Check if overall timeout exceeded
 check_overall_timeout() {
@@ -703,6 +705,21 @@ wait_ns_deleted() {
   fi
   
   while [ ${waited} -lt ${timeout} ]; do
+    # Check overall timeout every 10 seconds
+    if [ $((waited % 10)) -eq 0 ] && [ ${waited} -gt 0 ]; then
+      if [ "${PURGE_NODE}" = "true" ]; then
+        if ! check_overall_timeout ${OVERALL_TIMEOUT_PURGE_NODE}; then
+          log_warn "Overall timeout reached, applying force cleanup..."
+          return 1
+        fi
+      else
+        if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
+          log_warn "Overall timeout reached, applying force cleanup..."
+          return 1
+        fi
+      fi
+    fi
+    
     if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
       log_ok "Namespace ${namespace} deleted"
       return 0
@@ -918,6 +935,21 @@ delete_namespace() {
   local waited=0
   local timeout=90
   while [ ${waited} -lt ${timeout} ]; do
+    # Check overall timeout every 10 seconds
+    if [ $((waited % 10)) -eq 0 ] && [ ${waited} -gt 0 ]; then
+      if [ "${PURGE_NODE}" = "true" ]; then
+        if ! check_overall_timeout ${OVERALL_TIMEOUT_PURGE_NODE}; then
+          log_warn "Overall timeout reached during namespace deletion, proceeding to force cleanup..."
+          break
+        fi
+      else
+        if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
+          log_warn "Overall timeout reached during namespace deletion, proceeding to force cleanup..."
+          break
+        fi
+      fi
+    fi
+    
     if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
       log_ok "Namespace ${namespace} deleted"
       return 0
@@ -939,13 +971,26 @@ delete_namespace() {
     local final_waited=0
     local final_timeout=30
     while [ ${final_waited} -lt ${final_timeout} ]; do
+      # Check overall timeout every 5 seconds
+      if [ $((final_waited % 5)) -eq 0 ] && [ ${final_waited} -gt 0 ]; then
+        if [ "${PURGE_NODE}" = "true" ]; then
+          if ! check_overall_timeout ${OVERALL_TIMEOUT_PURGE_NODE}; then
+            log_warn "Overall timeout reached during final cleanup, continuing..."
+            break
+          fi
+        else
+          if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
+            log_warn "Overall timeout reached during final cleanup, continuing..."
+            break
+          fi
+        fi
+        force_remove_namespace_finalizers "${namespace}"
+        kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+      fi
+      
       if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
         log_ok "Namespace ${namespace} deleted after force cleanup"
         return 0
-      fi
-      if [ $((final_waited % 5)) -eq 0 ] && [ ${final_waited} -gt 0 ]; then
-        force_remove_namespace_finalizers "${namespace}"
-        kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       fi
       sleep 1
       final_waited=$((final_waited + 1))
@@ -1305,10 +1350,10 @@ if [ "${PURGE_NODE}" = "true" ]; then
   if [ "${DRY_RUN}" = "true" ]; then
     echo "[DRY RUN] Would remove k3s and rancher directories"
   else
-    # Check overall timeout for purge-node
-    if ! check_overall_timeout ${OVERALL_TIMEOUT_PURGE_NODE}; then
-      log_warn "Overall timeout reached, proceeding with filesystem cleanup..."
-    fi
+    # Reset timeout check for purge-node phase (uninstall already completed)
+    # Purge-node phase itself should be quick (k3s cleanup only)
+    PURGE_NODE_PHASE_START=$(date +%s)
+    PURGE_NODE_PHASE_TIMEOUT=300  # 5 minutes for k3s cleanup phase only
     
     # Stop and disable k3s service with timeout
     if command -v systemctl >/dev/null 2>&1; then
