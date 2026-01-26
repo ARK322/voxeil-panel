@@ -2516,7 +2516,12 @@ fi
 if [ "${PROFILE}" = "full" ]; then
   log_step "Installing Kyverno (idempotent)"
 # Idempotent namespace creation
-kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
+# Check if namespace exists before creating
+if kubectl get namespace kyverno >/dev/null 2>&1; then
+  echo "  Namespace kyverno already exists, skipping creation"
+else
+  kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
+fi
 
 # Idempotent Kyverno installation: use server-side apply with force-conflicts
 KYVERNO_MANIFEST="${SERVICES_DIR}/kyverno/install.yaml"
@@ -2578,7 +2583,12 @@ fi
 # Install Flux only if profile is full
 if [ "${PROFILE}" = "full" ]; then
   log_step "Installing Flux controllers"
-kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
+# Check if namespace exists before creating
+if kubectl get namespace flux-system >/dev/null 2>&1; then
+  echo "  Namespace flux-system already exists, skipping creation"
+else
+  kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
+fi
 FLUX_INSTALL_URL="https://github.com/fluxcd/flux2/releases/download/v2.3.0/install.yaml"
 if ! curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"; then
   log_error "Failed to download Flux install.yaml from ${FLUX_INSTALL_URL}"
@@ -2619,7 +2629,12 @@ else
 fi
 
 log_step "Applying platform base manifests"
-kubectl apply -f "${PLATFORM_DIR}/namespace.yaml"
+# Check if namespace exists before creating
+if kubectl get namespace platform >/dev/null 2>&1; then
+  echo "  Namespace platform already exists, skipping creation"
+else
+  kubectl apply -f "${PLATFORM_DIR}/namespace.yaml"
+fi
 label_namespace "platform"
 kubectl apply -f "${PLATFORM_DIR}/rbac.yaml"
 # Ensure serviceAccount exists before applying deployment (required for Kyverno policies)
@@ -2688,7 +2703,12 @@ else
 fi
 
 log_step "Applying infra DB manifests"
-kubectl apply -f "${SERVICES_DIR}/infra-db/namespace.yaml"
+# Check if namespace exists before creating
+if kubectl get namespace infra-db >/dev/null 2>&1; then
+  echo "  Namespace infra-db already exists, skipping creation"
+else
+  kubectl apply -f "${SERVICES_DIR}/infra-db/namespace.yaml"
+fi
 label_namespace "infra-db"
 kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
 kubectl apply -f "${SERVICES_DIR}/infra-db/pvc.yaml"
@@ -2831,7 +2851,12 @@ write_state_flag "PLATFORM_INSTALLED"
 # Install DNS only if --with-dns flag is set
 if [ "${WITH_DNS}" = "true" ]; then
   log_step "Applying DNS (bind9) manifests"
-  kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
+  # Check if namespace exists before creating
+  if kubectl get namespace dns-zone >/dev/null 2>&1; then
+    echo "  Namespace dns-zone already exists, skipping creation"
+  else
+    kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
+  fi
   label_namespace "dns-zone"
   kubectl apply -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
   kubectl apply -f "${SERVICES_DIR}/dns-zone/pvc.yaml"
@@ -2869,7 +2894,12 @@ fi
 
 # Install mail only if --with-mail flag is set
 if [ "${WITH_MAIL}" = "true" ]; then
-    kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
+    # Check if namespace exists before creating
+    if kubectl get namespace mail-zone >/dev/null 2>&1; then
+      echo "  Namespace mail-zone already exists, skipping creation"
+    else
+      kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
+    fi
   label_namespace "mail-zone"
   kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-secrets.yaml"
 kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-auth.yaml"
