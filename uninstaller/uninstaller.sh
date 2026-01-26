@@ -643,8 +643,8 @@ wait_ns_deleted() {
       log_info "Waiting for namespace ${namespace} to be deleted... (${waited}/${timeout}s)"
     fi
     # Force remove finalizers if stuck (more aggressive in --force mode)
-    if [ $((waited % 30)) -eq 0 ] && [ ${waited} -gt 0 ]; then
-      log_info "Attempting to force remove finalizers..."
+    if [ $((waited % 10)) -eq 0 ] && [ ${waited} -gt 0 ]; then
+      log_info "Attempting to force remove finalizers (${waited}s elapsed)..."
       # Try kubectl patch first
       kubectl patch namespace "${namespace}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
       # If that doesn't work and --force is set, use raw API /finalize endpoint
@@ -690,16 +690,44 @@ delete_namespace() {
   # Delete all PVCs first (they block namespace deletion)
   pvcs="$(kubectl get pvc -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
   if [ -n "${pvcs}" ]; then
+    log_info "Deleting PVCs in ${namespace}..."
     for pvc in ${pvcs}; do
+      # Remove finalizers first
       run "kubectl patch pvc \"${pvc}\" -n \"${namespace}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+      # Delete PVC
       run "kubectl delete pvc \"${pvc}\" -n \"${namespace}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      # Wait a moment and check if still exists, force remove again
+      sleep 1
+      if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
+        log_info "PVC ${pvc} still exists, forcing removal..."
+        run "kubectl patch pvc \"${pvc}\" -n \"${namespace}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        run "kubectl delete pvc \"${pvc}\" -n \"${namespace}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      fi
     done
+    # Wait for PVCs to be fully deleted
+    sleep 2
   fi
   
   # In --force mode, aggressively delete any remaining resources that might block deletion
   if [ "${FORCE}" = "true" ]; then
+    log_info "Force mode: deleting all resources in ${namespace}..."
+    # Scale down StatefulSets and Deployments first
+    statefulsets="$(kubectl get statefulsets -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+    if [ -n "${statefulsets}" ]; then
+      for sts in ${statefulsets}; do
+        run "kubectl scale statefulset \"${sts}\" -n \"${namespace}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+      done
+    fi
+    deployments="$(kubectl get deployments -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
+    if [ -n "${deployments}" ]; then
+      for deploy in ${deployments}; do
+        run "kubectl scale deployment \"${deploy}\" -n \"${namespace}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+      done
+    fi
+    sleep 3
+    
     # Delete any remaining resources with finalizers
-    for resource in deployments statefulsets daemonsets jobs cronjobs services ingress networkpolicies; do
+    for resource in deployments statefulsets daemonsets jobs cronjobs services ingress networkpolicies configmaps secrets; do
       resources="$(kubectl get "${resource}" -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
       if [ -n "${resources}" ]; then
         for res in ${resources}; do
@@ -708,6 +736,7 @@ delete_namespace() {
         done
       fi
     done
+    sleep 2
   fi
   
   # Delete namespace (capture stderr to detect webhook failures)
@@ -725,18 +754,32 @@ delete_namespace() {
     fi
     
     # Immediately check if namespace is stuck in Terminating and remove finalizers if --force
-    sleep 2
+    sleep 3
     ns_phase="$(kubectl get namespace "${namespace}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")"
     if [ "${ns_phase}" = "Terminating" ] && [ "${FORCE}" = "true" ]; then
       log_info "Namespace ${namespace} is in Terminating state, immediately removing finalizers..."
       # Try patch first
       kubectl patch namespace "${namespace}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      sleep 1
       # If still exists, use /finalize endpoint
       if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+        log_info "Using /finalize endpoint to force remove finalizers..."
         if command -v python3 >/dev/null 2>&1; then
           kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
         elif command -v jq >/dev/null 2>&1; then
           kubectl get namespace "${namespace}" -o json 2>/dev/null | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+        else
+          # Fallback: try direct API call with curl
+          kubectl proxy --port=8001 >/dev/null 2>&1 &
+          PROXY_PID=$!
+          sleep 2
+          NS_JSON="$(kubectl get namespace "${namespace}" -o json 2>/dev/null || echo '{}')"
+          if [ -n "${NS_JSON}" ] && [ "${NS_JSON}" != "{}" ]; then
+            if command -v python3 >/dev/null 2>&1; then
+              echo "${NS_JSON}" | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | curl -s -X PUT "http://127.0.0.1:8001/api/v1/namespaces/${namespace}/finalize" -H "Content-Type: application/json" --data-binary @- >/dev/null 2>&1 || true
+            fi
+          fi
+          kill $PROXY_PID 2>/dev/null || true
         fi
       fi
     fi
@@ -969,22 +1012,23 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     # PVs might not have labels. Detect PVs whose claimRef.namespace is one of voxeil namespaces
     VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
     for ns in ${VOXEIL_NS_LIST}; do
-      if [ "${FORCE}" = "true" ] || kubectl get namespace "${ns}" >/dev/null 2>&1 2>&1; then
-        # Find PVs for this namespace
-        if command -v python3 >/dev/null 2>&1; then
-          PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
-        elif command -v jq >/dev/null 2>&1; then
-          PVS="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
-        else
-          # Fallback: get all PVs and check claimRef manually
-          PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
-        fi
+      # Check PVs even if namespace doesn't exist (leftover PVs)
+      # Find PVs for this namespace
+      if command -v python3 >/dev/null 2>&1; then
+        PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
+      elif command -v jq >/dev/null 2>&1; then
+        PVS="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
+      else
+        # Fallback: get all PVs and check claimRef manually
+        PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
+      fi
       if [ -n "${PVS}" ]; then
         log_info "Deleting PVs for namespace ${ns}..."
         for pv in ${PVS}; do
-            run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-          done
-        fi
+          # Remove finalizers from PV first
+          run "kubectl patch pv \"${pv}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+          run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+        done
       fi
     done
   else
