@@ -1,5 +1,5 @@
-import { api } from "../../src/lib/api";
-import { env } from "../../src/lib/env";
+import { api } from "../../../src/lib/api";
+import { env } from "../../../src/lib/env";
 
 async function DbPage() {
   const db = await api.db.get();

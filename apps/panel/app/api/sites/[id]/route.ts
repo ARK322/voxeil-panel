@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import sitesData from "../../../mock-data/sites.json";
+import sitesData from "../../../../mock-data/sites.json";
 import type { SiteDetail } from "../../../../src/lib/types";
 
 export async function GET(

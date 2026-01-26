@@ -1,4 +1,4 @@
-import { api } from "../../src/lib/api";
+import { api } from "../../../src/lib/api";
 
 async function BackupsPage() {
   const backups = await api.backups.get();

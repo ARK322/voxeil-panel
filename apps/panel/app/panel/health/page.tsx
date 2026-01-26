@@ -1,4 +1,4 @@
-import { api } from "../../src/lib/api";
+import { api } from "../../../src/lib/api";
 
 function StatusBadge({ status }: { status: string }) {
   const colors =

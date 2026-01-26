@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { api } from "../../src/lib/api";
+import { api } from "../../../src/lib/api";
 
 async function UsersPage() {
   const tenants = await api.tenants.list();
