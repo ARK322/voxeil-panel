@@ -780,60 +780,51 @@ delete_namespace() {
     force_remove_namespace_finalizers "${namespace}"
   fi
   
-  # Delete all PVCs first (they block namespace deletion)
+  # Delete all PVCs first (they block namespace deletion) - with timeout
   pvcs="$(kubectl get pvc -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
   if [ -n "${pvcs}" ]; then
-    log_info "Deleting PVCs in ${namespace}..."
+    log_info "Deleting PVCs in ${namespace} (timeout: 60s per PVC)..."
+    local pvc_start_time=$(date +%s)
     for pvc in ${pvcs}; do
-      echo "  Processing PVC: ${pvc}..."
-      # Method 1: Try merge patch
-      kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-      sleep 0.5
-      
-      # Method 2: Try JSON patch
-      kubectl patch pvc "${pvc}" -n "${namespace}" -p '[{"op": "remove", "path": "/metadata/finalizers"}]' --type=json >/dev/null 2>&1 || true
-      sleep 0.5
-      
-      # Method 3: Try direct JSON replace (most aggressive)
-      if command -v python3 >/dev/null 2>&1; then
-        kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
-      elif command -v jq >/dev/null 2>&1; then
-        kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | jq 'del(.metadata.finalizers)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+      # Check overall timeout
+      if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
+        log_warn "Overall timeout reached, skipping remaining PVCs..."
+        break
       fi
-      sleep 0.5
       
-      # Delete PVC
+      echo "  Processing PVC: ${pvc}..."
+      local pvc_item_start=$(date +%s)
+      # Quick attempt: remove finalizers and delete (max 10s per PVC)
+      kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
       kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-      sleep 1
       
-      # Check if still exists and try more aggressive methods
+      # Wait max 10 seconds for this PVC
+      local pvc_waited=0
+      while [ ${pvc_waited} -lt 10 ] && kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; do
+        sleep 1
+        pvc_waited=$((pvc_waited + 1))
+      done
+      
+      # If still exists, try one more aggressive attempt
       if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
-        echo "  PVC ${pvc} still exists, using most aggressive removal..."
-        # Try all methods again
-        kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-        kubectl patch pvc "${pvc}" -n "${namespace}" -p '[{"op": "remove", "path": "/metadata/finalizers"}]' --type=json >/dev/null 2>&1 || true
-        if command -v python3 >/dev/null 2>&1; then
-          kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
-        elif command -v jq >/dev/null 2>&1; then
+        echo "  PVC ${pvc} still exists, using aggressive removal..."
+        if command -v jq >/dev/null 2>&1; then
           kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | jq 'del(.metadata.finalizers)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+        elif command -v python3 >/dev/null 2>&1; then
+          kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
         fi
         kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-        sleep 1
-        # Final check
+        sleep 2
         if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
-          echo "  Warning: PVC ${pvc} may still exist - may require manual cleanup"
-          echo "    Try: kubectl patch pvc ${pvc} -n ${namespace} -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge"
+          echo "  Warning: PVC ${pvc} may still exist - continuing with namespace deletion"
         fi
       fi
     done
-    # Wait for PVCs to be fully deleted
-    echo "  Waiting for PVCs to be deleted..."
-    sleep 3
   fi
   
-  # Delete PVs associated with this namespace (they also block namespace deletion)
+  # Delete PVs associated with this namespace (they also block namespace deletion) - with timeout
   if [ "${KEEP_VOLUMES}" != "true" ]; then
-    log_info "Deleting PVs for namespace ${namespace}..."
+    log_info "Deleting PVs for namespace ${namespace} (timeout: 60s total)..."
     # Find PVs for this namespace
     if command -v python3 >/dev/null 2>&1; then
       PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${namespace}']" 2>/dev/null || true)"
@@ -844,82 +835,90 @@ delete_namespace() {
       PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${namespace}$" | cut -f1 || true)"
     fi
     if [ -n "${PVS}" ]; then
+      local pv_start_time=$(date +%s)
       for pv in ${PVS}; do
-        echo "  Processing PV: ${pv}..."
-        # Method 1: Try patch with both finalizers and claimRef removal
-        kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
-        sleep 0.5
-        
-        # Method 2: Try JSON patch
-        kubectl patch pv "${pv}" -p '[{"op": "remove", "path": "/metadata/finalizers"},{"op": "remove", "path": "/spec/claimRef"}]' --type=json >/dev/null 2>&1 || true
-        sleep 0.5
-        
-        # Method 3: Try direct JSON replace (most aggressive)
-        if command -v python3 >/dev/null 2>&1; then
-          kubectl get pv "${pv}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; data['spec']['claimRef']=None; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
-        elif command -v jq >/dev/null 2>&1; then
-          kubectl get pv "${pv}" -o json 2>/dev/null | jq 'del(.metadata.finalizers) | del(.spec.claimRef)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+        # Check overall timeout
+        if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
+          log_warn "Overall timeout reached, skipping remaining PVs..."
+          break
         fi
-        sleep 0.5
         
-        # Delete PV
+        echo "  Processing PV: ${pv}..."
+        # Quick attempt: remove finalizers and claimRef, then delete (max 10s per PV)
+        kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
         kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-        sleep 1
         
-        # Check if still exists and try more aggressive methods
+        # Wait max 10 seconds for this PV
+        local pv_waited=0
+        while [ ${pv_waited} -lt 10 ] && kubectl get pv "${pv}" >/dev/null 2>&1; do
+          sleep 1
+          pv_waited=$((pv_waited + 1))
+        done
+        
+        # If still exists, try one more aggressive attempt
         if kubectl get pv "${pv}" >/dev/null 2>&1; then
-          echo "  PV ${pv} still exists, using most aggressive removal..."
-          # Try all methods again
-          kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
-          kubectl patch pv "${pv}" -p '[{"op": "remove", "path": "/metadata/finalizers"},{"op": "remove", "path": "/spec/claimRef"}]' --type=json >/dev/null 2>&1 || true
-          if command -v python3 >/dev/null 2>&1; then
-            kubectl get pv "${pv}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; data['spec']['claimRef']=None; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
-          elif command -v jq >/dev/null 2>&1; then
+          echo "  PV ${pv} still exists, using aggressive removal..."
+          if command -v jq >/dev/null 2>&1; then
             kubectl get pv "${pv}" -o json 2>/dev/null | jq 'del(.metadata.finalizers) | del(.spec.claimRef)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+          elif command -v python3 >/dev/null 2>&1; then
+            kubectl get pv "${pv}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; data['spec']['claimRef']=None; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
           fi
           kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-          sleep 1
-          # Final check
+          sleep 2
           if kubectl get pv "${pv}" >/dev/null 2>&1; then
-            echo "  Warning: PV ${pv} may still exist - may require manual cleanup"
-            echo "    Try: kubectl patch pv ${pv} -p '{\"metadata\":{\"finalizers\":[]},\"spec\":{\"claimRef\":null}}' --type=merge"
+            echo "  Warning: PV ${pv} may still exist - continuing with namespace deletion"
           fi
         fi
       done
-      echo "  Waiting for PVs to be deleted..."
-      sleep 3
     fi
   fi
   
-  # In --force mode, aggressively delete any remaining resources that might block deletion
+  # In --force mode, aggressively delete any remaining resources that might block deletion (with timeout)
   if [ "${FORCE}" = "true" ]; then
-    log_info "Force mode: deleting all resources in ${namespace}..."
-    # Scale down StatefulSets and Deployments first
+    log_info "Force mode: deleting all resources in ${namespace} (timeout: 30s)..."
+    local force_start_time=$(date +%s)
+    local force_timeout=30
+    
+    # Scale down StatefulSets and Deployments first (quick, no wait)
     statefulsets="$(kubectl get statefulsets -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
     if [ -n "${statefulsets}" ]; then
       for sts in ${statefulsets}; do
-        run "kubectl scale statefulset \"${sts}\" -n \"${namespace}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+        kubectl scale statefulset "${sts}" -n "${namespace}" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true
       done
     fi
     deployments="$(kubectl get deployments -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
     if [ -n "${deployments}" ]; then
       for deploy in ${deployments}; do
-        run "kubectl scale deployment \"${deploy}\" -n \"${namespace}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+        kubectl scale deployment "${deploy}" -n "${namespace}" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true
       done
     fi
-    sleep 3
     
-    # Delete any remaining resources with finalizers
+    # Delete any remaining resources with finalizers (quick, no wait, with timeout check)
     for resource in deployments statefulsets daemonsets jobs cronjobs services ingress networkpolicies configmaps secrets; do
+      # Check timeout before processing each resource type
+      local elapsed=$(($(date +%s) - force_start_time))
+      if [ ${elapsed} -ge ${force_timeout} ]; then
+        log_warn "Force cleanup timeout reached (${elapsed}s), proceeding to namespace deletion..."
+        break
+      fi
+      
       resources="$(kubectl get "${resource}" -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
       if [ -n "${resources}" ]; then
+        # Process resources quickly without waiting
         for res in ${resources}; do
-          run "kubectl patch ${resource} \"${res}\" -n \"${namespace}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
-          run "kubectl delete ${resource} \"${res}\" -n \"${namespace}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+          # Check timeout before each resource
+          local elapsed=$(($(date +%s) - force_start_time))
+          if [ ${elapsed} -ge ${force_timeout} ]; then
+            log_warn "Force cleanup timeout reached, proceeding to namespace deletion..."
+            break 2  # Break out of both loops
+          fi
+          # Quick patch and delete (no wait)
+          kubectl patch "${resource}" "${res}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+          kubectl delete "${resource}" "${res}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
         done
       fi
     done
-    sleep 2
+    log_info "Force cleanup completed, proceeding to namespace deletion..."
   fi
   
   # Delete namespace (capture stderr to detect webhook failures)
