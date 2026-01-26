@@ -793,19 +793,12 @@ delete_namespace() {
       fi
       
       echo "  Processing PVC: ${pvc}..."
-      local pvc_item_start=$(date +%s)
-      # Quick attempt: remove finalizers and delete (max 10s per PVC)
+      # Quick attempt: remove finalizers and delete (no wait - fire and forget)
       kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
       kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       
-      # Wait max 10 seconds for this PVC
-      local pvc_waited=0
-      while [ ${pvc_waited} -lt 10 ] && kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; do
-        sleep 1
-        pvc_waited=$((pvc_waited + 1))
-      done
-      
-      # If still exists, try one more aggressive attempt
+      # Quick check after 2 seconds - if still exists, try aggressive removal once more
+      sleep 2
       if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
         echo "  PVC ${pvc} still exists, using aggressive removal..."
         if command -v jq >/dev/null 2>&1; then
@@ -814,10 +807,7 @@ delete_namespace() {
           kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
         fi
         kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-        sleep 2
-        if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
-          echo "  Warning: PVC ${pvc} may still exist - continuing with namespace deletion"
-        fi
+        echo "  Continuing - PVC ${pvc} will be cleaned up by namespace deletion"
       fi
     done
   fi
@@ -844,18 +834,12 @@ delete_namespace() {
         fi
         
         echo "  Processing PV: ${pv}..."
-        # Quick attempt: remove finalizers and claimRef, then delete (max 10s per PV)
+        # Quick attempt: remove finalizers and claimRef, then delete (no wait - fire and forget)
         kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
         kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
         
-        # Wait max 10 seconds for this PV
-        local pv_waited=0
-        while [ ${pv_waited} -lt 10 ] && kubectl get pv "${pv}" >/dev/null 2>&1; do
-          sleep 1
-          pv_waited=$((pv_waited + 1))
-        done
-        
-        # If still exists, try one more aggressive attempt
+        # Quick check after 2 seconds - if still exists, try aggressive removal once more
+        sleep 2
         if kubectl get pv "${pv}" >/dev/null 2>&1; then
           echo "  PV ${pv} still exists, using aggressive removal..."
           if command -v jq >/dev/null 2>&1; then
@@ -864,10 +848,7 @@ delete_namespace() {
             kubectl get pv "${pv}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; data['spec']['claimRef']=None; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
           fi
           kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-          sleep 2
-          if kubectl get pv "${pv}" >/dev/null 2>&1; then
-            echo "  Warning: PV ${pv} may still exist - continuing with namespace deletion"
-          fi
+          echo "  Continuing - PV ${pv} will be cleaned up separately"
         fi
       done
     fi
