@@ -708,6 +708,32 @@ delete_namespace() {
     sleep 2
   fi
   
+  # Delete PVs associated with this namespace (they also block namespace deletion)
+  if [ "${KEEP_VOLUMES}" != "true" ]; then
+    log_info "Deleting PVs for namespace ${namespace}..."
+    # Find PVs for this namespace
+    if command -v python3 >/dev/null 2>&1; then
+      PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${namespace}']" 2>/dev/null || true)"
+    elif command -v jq >/dev/null 2>&1; then
+      PVS="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${namespace}'") | .metadata.name' 2>/dev/null || true)"
+    else
+      # Fallback: get all PVs and check claimRef manually
+      PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${namespace}$" | cut -f1 || true)"
+    fi
+    if [ -n "${PVS}" ]; then
+      for pv in ${PVS}; do
+        log_info "Deleting PV ${pv} (claimRef namespace: ${namespace})..."
+        # Remove finalizers from PV first
+        run "kubectl patch pv \"${pv}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        # Also remove claimRef to release the PV
+        run "kubectl patch pv \"${pv}\" -p '{\"spec\":{\"claimRef\":null}}' --type=merge >/dev/null 2>&1 || true"
+        # Delete PV
+        run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      done
+      sleep 2
+    fi
+  fi
+  
   # In --force mode, aggressively delete any remaining resources that might block deletion
   if [ "${FORCE}" = "true" ]; then
     log_info "Force mode: deleting all resources in ${namespace}..."
@@ -1007,8 +1033,9 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   fi
   
   # G) Storage cleanup - PVs (unless --keep-volumes)
+  # This is a final cleanup pass for any PVs that might have been missed
   if [ "${KEEP_VOLUMES}" != "true" ]; then
-    log_step "Cleaning up PersistentVolumes"
+    log_step "Final cleanup: PersistentVolumes (leftover check)"
     # PVs might not have labels. Detect PVs whose claimRef.namespace is one of voxeil namespaces
     VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
     for ns in ${VOXEIL_NS_LIST}; do
@@ -1023,10 +1050,13 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
         PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
       fi
       if [ -n "${PVS}" ]; then
-        log_info "Deleting PVs for namespace ${ns}..."
+        log_info "Deleting leftover PVs for namespace ${ns}..."
         for pv in ${PVS}; do
           # Remove finalizers from PV first
           run "kubectl patch pv \"${pv}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+          # Also remove claimRef to release the PV
+          run "kubectl patch pv \"${pv}\" -p '{\"spec\":{\"claimRef\":null}}' --type=merge >/dev/null 2>&1 || true"
+          # Delete PV
           run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
         done
       fi
