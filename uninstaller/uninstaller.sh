@@ -93,6 +93,14 @@ run_with_timeout() {
   fi
 }
 
+# ========= kubectl safe wrapper =========
+# Ensures kubectl calls never hang indefinitely (common during terminating PVC/PV or API webhook issues).
+kubectl_safe() {
+  local timeout_s="${1:-10}"
+  shift || true
+  run_with_timeout "${timeout_s}" "kubectl $*"
+}
+
 # ========= State Registry =========
 STATE_FILE="/var/lib/voxeil/install.state"
 
@@ -796,21 +804,35 @@ delete_namespace() {
       fi
       
       echo "  Processing PVC: ${pvc}..."
-      # Quick attempt: remove finalizers and delete (fire and forget, no wait)
-      kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-      kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-      
+
+      # Capture the bound PV name early (helps when PVC is stuck in Terminating)
+      volume_name="$(kubectl_safe 5 get pvc "${pvc}" -n "${namespace}" -o jsonpath='{.spec.volumeName}' 2>/dev/null || true)"
+
+      # Quick attempt: remove finalizers and delete (never hang)
+      kubectl_safe 5 patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      kubectl_safe 8 delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+
       # One quick check after 1 second, then move on
       sleep 1
-      if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
+      if kubectl_safe 3 get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
         echo "  PVC ${pvc} still exists, trying aggressive removal once..."
-        # Try one aggressive removal attempt
+
+        # Try one aggressive removal attempt (and still avoid hangs)
         if command -v jq >/dev/null 2>&1; then
-          kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | jq 'del(.metadata.finalizers)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+          kubectl_safe 8 get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | jq 'del(.metadata.finalizers)' 2>/dev/null | kubectl_safe 8 replace -f - >/dev/null 2>&1 || true
         elif command -v python3 >/dev/null 2>&1; then
-          kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+          kubectl_safe 8 get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl_safe 8 replace -f - >/dev/null 2>&1 || true
         fi
-        kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+
+        kubectl_safe 8 delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+
+        # If still present and we know the PV, delete PV immediately (this often unblocks Terminating PVCs)
+        if [ "${KEEP_VOLUMES}" != "true" ] && [ -n "${volume_name}" ]; then
+          echo "  PVC ${pvc} still exists; attempting to delete bound PV: ${volume_name}..."
+          kubectl_safe 5 patch pv "${volume_name}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
+          kubectl_safe 8 delete pv "${volume_name}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        fi
+
         echo "  Continuing - PVC ${pvc} will be cleaned up during namespace deletion"
       fi
     done
