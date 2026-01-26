@@ -3019,12 +3019,47 @@ if ! command -v ufw >/dev/null 2>&1; then
   exit 0
 fi
 
+# Retry function for UFW operations (handles xtables lock)
+ufw_retry() {
+  local cmd="$1"
+  local max_retries=3
+  local retry_delay=2
+  local attempt=1
+  
+  while [ ${attempt} -le ${max_retries} ]; do
+    # Use ufw -w (wait mode) if available to handle xtables lock
+    # Check if ufw supports -w flag (available in newer versions)
+    if ufw --help 2>&1 | grep -qE "\-w|--wait"; then
+      if ufw -w ${cmd} 2>/dev/null; then
+        return 0
+      fi
+    fi
+    
+    # Fallback: try without wait flag
+    if ufw ${cmd} 2>/dev/null; then
+      return 0
+    fi
+    
+    if [ ${attempt} -lt ${max_retries} ]; then
+      echo "UFW operation failed (attempt ${attempt}/${max_retries}), retrying in ${retry_delay}s..."
+      sleep ${retry_delay}
+      retry_delay=$((retry_delay * 2))  # Exponential backoff
+    fi
+    attempt=$((attempt + 1))
+  done
+  
+  echo "Warning: UFW operation failed after ${max_retries} attempts: ${cmd}"
+  echo "  This may be due to xtables lock. Continuing anyway..."
+  return 1
+}
+
 ports_tcp=(22 80 443 25 465 587 143 993 110 995 53)
 ports_udp=(53)
 
-ufw --force reset
-ufw default deny incoming
-ufw default allow outgoing
+# Use retry for reset
+ufw_retry "--force reset" || true
+ufw_retry "default deny incoming" || true
+ufw_retry "default allow outgoing" || true
 
 allow_all=true
 if [[ -s "${ALLOWLIST_FILE}" ]]; then
@@ -3033,10 +3068,10 @@ fi
 
 if [[ "${allow_all}" == "true" ]]; then
   for port in "${ports_tcp[@]}"; do
-    ufw allow "${port}/tcp"
+    ufw_retry "allow ${port}/tcp" || true
   done
   for port in "${ports_udp[@]}"; do
-    ufw allow "${port}/udp"
+    ufw_retry "allow ${port}/udp" || true
   done
 else
   while IFS= read -r line; do
@@ -3044,10 +3079,10 @@ else
     [[ -z "${entry}" ]] && continue
     [[ "${entry}" == \#* ]] && continue
     for port in "${ports_tcp[@]}"; do
-      ufw allow from "${entry}" to any port "${port}" proto tcp
+      ufw_retry "allow from ${entry} to any port ${port} proto tcp" || true
     done
     for port in "${ports_udp[@]}"; do
-      ufw allow from "${entry}" to any port "${port}" proto udp
+      ufw_retry "allow from ${entry} to any port ${port} proto udp" || true
     done
   done < "${ALLOWLIST_FILE}"
 fi
@@ -3056,7 +3091,8 @@ if [[ "${EXPOSE_CONTROLLER}" =~ ^[Yy]$ ]]; then
   echo "Controller exposure is disabled by default."
 fi
 
-ufw --force enable
+# Use retry for enable
+ufw_retry "--force enable" || true
 EOF
 chmod +x /usr/local/bin/voxeil-ufw-apply
 /usr/local/bin/voxeil-ufw-apply || true

@@ -31,6 +31,66 @@ log_error() {
 # Trap to log failed commands (but don't exit - we handle errors manually with || true)
 trap 'LAST_COMMAND="${BASH_COMMAND}"; LAST_LINE="${LINENO}"' DEBUG
 
+# ========= Timeout Management =========
+# Track overall time spent (in seconds)
+OVERALL_START_TIME=$(date +%s)
+OVERALL_TIMEOUT_UNINSTALL=600  # 10 minutes max for uninstall
+OVERALL_TIMEOUT_PURGE_NODE=300  # 5 minutes max for purge-node
+
+# Check if overall timeout exceeded
+check_overall_timeout() {
+  local max_time="${1:-600}"
+  local elapsed=$(($(date +%s) - OVERALL_START_TIME))
+  if [ ${elapsed} -ge ${max_time} ]; then
+    log_warn "Overall timeout reached (${elapsed}s >= ${max_time}s), proceeding to fallback cleanup..."
+    return 1
+  fi
+  return 0
+}
+
+# Run command with timeout
+run_with_timeout() {
+  local timeout="${1}"
+  shift
+  local cmd="$*"
+  local start_time=$(date +%s)
+  
+  if [ "${DRY_RUN}" = "true" ]; then
+    echo "[DRY-RUN] ${cmd}"
+    return 0
+  fi
+  
+  # Use timeout command if available
+  if command -v timeout >/dev/null 2>&1; then
+    if timeout "${timeout}" bash -c "${cmd}" 2>/dev/null; then
+      return 0
+    else
+      local elapsed=$(($(date +%s) - start_time))
+      if [ ${elapsed} -ge ${timeout} ]; then
+        log_warn "Command timed out after ${timeout}s: ${cmd}"
+        return 1
+      fi
+      return $?
+    fi
+  else
+    # Fallback: run in background and kill after timeout
+    bash -c "${cmd}" &
+    local pid=$!
+    local waited=0
+    while kill -0 ${pid} 2>/dev/null && [ ${waited} -lt ${timeout} ]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    if kill -0 ${pid} 2>/dev/null; then
+      log_warn "Command timed out after ${timeout}s, killing: ${cmd}"
+      kill -9 ${pid} 2>/dev/null || true
+      return 1
+    fi
+    wait ${pid} 2>/dev/null || true
+    return $?
+  fi
+}
+
 # ========= State Registry =========
 STATE_FILE="/var/lib/voxeil/install.state"
 
@@ -635,7 +695,7 @@ disable_admission_webhooks_preflight() {
 # Wait for namespace deletion with timeout (simplified - finalizer removal handled in delete_namespace)
 wait_ns_deleted() {
   local namespace="$1"
-  local timeout="${2:-300}"
+  local timeout="${2:-90}"
   local waited=0
   
   if [ "${DRY_RUN}" = "true" ]; then
@@ -654,7 +714,7 @@ wait_ns_deleted() {
     fi
   done
   
-  log_warn "Namespace ${namespace} still exists after ${timeout}s"
+  log_warn "Namespace ${namespace} still exists after ${timeout}s, applying force cleanup..."
   return 1
 }
 
@@ -678,6 +738,9 @@ force_remove_namespace_finalizers() {
       kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
     elif command -v jq >/dev/null 2>&1; then
       kubectl get namespace "${namespace}" -o json 2>/dev/null | jq '.spec.finalizers=[]' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+    elif command -v sed >/dev/null 2>&1; then
+      # Fallback: use sed to remove finalizers array
+      kubectl get namespace "${namespace}" -o json 2>/dev/null | sed 's/"finalizers":\[[^]]*\]/"finalizers":[]/g' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
     fi
     sleep 0.5
   fi
@@ -694,6 +757,9 @@ force_remove_namespace_finalizers() {
       kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
     elif command -v jq >/dev/null 2>&1; then
       kubectl get namespace "${namespace}" -o json 2>/dev/null | jq '.spec.finalizers=[]' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+    elif command -v sed >/dev/null 2>&1; then
+      # Fallback: use sed to remove finalizers array
+      kubectl get namespace "${namespace}" -o json 2>/dev/null | sed 's/"finalizers":\[[^]]*\]/"finalizers":[]/g' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
     fi
   fi
 }
@@ -888,48 +954,50 @@ delete_namespace() {
     fi
   fi
   
-  # Wait for namespace deletion (with shorter timeout for --force mode)
-  if [ "${FORCE}" = "true" ]; then
-    # In force mode, use very short timeout and immediately force finalizers
-    local waited=0
-    local timeout=60
-    while [ ${waited} -lt ${timeout} ]; do
+  # Wait for namespace deletion with timeout (90 seconds default, then force cleanup)
+  local waited=0
+  local timeout=90
+  while [ ${waited} -lt ${timeout} ]; do
+    if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+      log_ok "Namespace ${namespace} deleted"
+      return 0
+    fi
+    sleep 1
+    waited=$((waited + 1))
+    if [ $((waited % 10)) -eq 0 ]; then
+      log_info "Waiting for namespace ${namespace} to be deleted... (${waited}/${timeout}s)"
+    fi
+  done
+  
+  # Timeout reached - apply force cleanup
+  if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+    log_warn "Namespace stuck terminating, removing finalizers..."
+    force_remove_namespace_finalizers "${namespace}"
+    kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+    
+    # Wait additional 30 seconds with aggressive finalizer removal
+    local final_waited=0
+    local final_timeout=30
+    while [ ${final_waited} -lt ${final_timeout} ]; do
       if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
-        log_ok "Namespace ${namespace} deleted"
+        log_ok "Namespace ${namespace} deleted after force cleanup"
         return 0
       fi
-      # Every 3 seconds, try to remove finalizers and show progress
-      if [ $((waited % 3)) -eq 0 ] && [ ${waited} -gt 0 ]; then
-        echo "  Still waiting for ${namespace} to be deleted... (${waited}/${timeout}s)"
+      if [ $((final_waited % 5)) -eq 0 ] && [ ${final_waited} -gt 0 ]; then
         force_remove_namespace_finalizers "${namespace}"
         kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       fi
       sleep 1
-      waited=$((waited + 1))
+      final_waited=$((final_waited + 1))
     done
     
-    # Final attempt with multiple retries
+    # Final check - if still exists, log warning but continue
     if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
-      log_warn "Namespace ${namespace} still exists after ${timeout}s, final aggressive cleanup..."
-      for i in {1..5}; do
-        force_remove_namespace_finalizers "${namespace}"
-        kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-        sleep 1
-        if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
-          log_ok "Namespace ${namespace} deleted after final cleanup attempt ${i}"
-          return 0
-        fi
-      done
-      # Last check
-      if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
-        log_warn "Namespace ${namespace} may still exist - manual cleanup may be required"
-        echo "  Try: kubectl get namespace ${namespace} -o json | jq '.spec.finalizers=[]' | kubectl replace --raw \"/api/v1/namespaces/${namespace}/finalize\" -f -"
-      else
-        log_ok "Namespace ${namespace} deleted"
-      fi
+      log_warn "Namespace ${namespace} may still exist - continuing with cleanup"
+      echo "  Manual cleanup may be required: kubectl get namespace ${namespace} -o json | jq '.spec.finalizers=[]' | kubectl replace --raw \"/api/v1/namespaces/${namespace}/finalize\" -f -"
+    else
+      log_ok "Namespace ${namespace} deleted"
     fi
-  else
-    wait_ns_deleted "${namespace}" 300
   fi
 }
 
@@ -951,6 +1019,11 @@ fi
 # ========= Deletion Order (Reverse of Installation) =========
 
 if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
+  # Check overall timeout for uninstall
+  if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
+    log_warn "Overall timeout reached, proceeding to fallback cleanup..."
+  fi
+  
   # Preflight: Disable admission webhooks BEFORE any deletions to prevent API lock
   # Call if FORCE=true OR if webhookconfigs exist (self-heal)
   if [ "${FORCE}" = "true" ]; then
@@ -959,8 +1032,8 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     disable_admission_webhooks_preflight
   fi
   
-  # A) Ingresses first (reverse of installer: ingresses are applied last)
-  log_step "Deleting ingresses and routes"
+  # A) Delete ingresses/services/deployments/statefulsets in voxeil namespaces first
+  log_step "Deleting ingresses, services, and workloads"
   log_info "Deleting ingresses..."
   run "kubectl delete ingress -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   # Also delete by name patterns (backward compatibility)
@@ -970,8 +1043,29 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   # Delete Traefik TCP routes (IngressRouteTCP)
   run "kubectl delete ingressroutetcp -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
-  # B) Workloads - delete all resources by label (but not ingresses, already deleted)
-  log_step "Deleting workloads and namespace-scoped resources"
+  log_info "Deleting services..."
+  run "kubectl delete svc -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  
+  log_info "Scaling down deployments and statefulsets..."
+  for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
+    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+      run "kubectl scale deployment --all -n \"${ns}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+      run "kubectl scale statefulset --all -n \"${ns}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+    fi
+  done
+  sleep 2
+  
+  log_info "Deleting deployments and statefulsets..."
+  run "kubectl delete deployment,statefulset -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  
+  # B) Delete webhook configurations for kyverno/cert-manager/flux if they exist
+  log_step "Deleting webhook configurations"
+  log_info "Deleting validating/mutating webhook configurations for kyverno/cert-manager/flux..."
+  # This is idempotent and safe to run even if webhooks are already deleted
+  disable_admission_webhooks_preflight
+  
+  # C) Workloads - delete all remaining resources by label
+  log_step "Deleting remaining namespace-scoped resources"
   log_info "Deleting all resources labeled app.kubernetes.io/part-of=voxeil..."
   run "kubectl delete all,cm,secret,sa,role,rolebinding,networkpolicy -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
@@ -979,8 +1073,13 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   log_info "Deleting PVCs..."
   run "kubectl delete pvc -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
-  # C) Namespaces next (REVERSE order of installation), and WAIT
+  # D) Namespaces next (REVERSE order of installation), and WAIT
   log_step "Deleting namespaces (reverse order of installation)"
+  
+  # Check timeout before starting namespace deletion
+  if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
+    log_warn "Overall timeout reached, applying force cleanup for namespaces..."
+  fi
   
   # Delete user and tenant namespaces first (dynamically created, depend on platform)
   log_info "Deleting user namespaces..."
@@ -1035,20 +1134,20 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     delete_namespace "cert-manager"
   fi
   
-  # D) Traefik middlewares and HelmChartConfig (reverse of installer: Traefik config is applied first)
+  # E) Traefik middlewares and HelmChartConfig (reverse of installer: Traefik config is applied first)
   log_step "Deleting Traefik resources"
   log_info "Deleting Traefik security middlewares..."
   run "kubectl delete middleware security-headers rate-limit sql-injection-protection request-size-limit -n kube-system -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   log_info "Deleting HelmChartConfig (Traefik entrypoints)..."
   run "kubectl delete helmchartconfig traefik -n kube-system --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
-  # E) ClusterIssuers (reverse of installer: ClusterIssuers are applied after cert-manager)
+  # F) ClusterIssuers (reverse of installer: ClusterIssuers are applied after cert-manager)
   if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
     log_info "Deleting ClusterIssuers..."
     run "kubectl delete clusterissuer --all --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
-  # F) Remaining webhooks (cluster-scoped) by label (cert-manager, Flux, etc.)
+  # G) Remaining webhooks (cluster-scoped) by label (cert-manager, Flux, etc.)
   # Note: Kyverno webhooks are handled in preflight to prevent API lock
   log_step "Deleting remaining webhooks"
   run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
@@ -1070,7 +1169,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     done
   fi
   
-  # G) ClusterRoles / ClusterRoleBindings by label (reverse of installer: RBAC is applied in platform base)
+  # H) ClusterRoles / ClusterRoleBindings by label (reverse of installer: RBAC is applied in platform base)
   log_step "Deleting ClusterRoles and ClusterRoleBindings"
   run "kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
@@ -1099,7 +1198,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     fi
   done
   
-  # H) CRDs LAST by label (reverse of installer: CRDs are installed first for cert-manager/Kyverno/Flux)
+  # I) CRDs LAST by label (reverse of installer: CRDs are installed first for cert-manager/Kyverno/Flux)
   log_step "Deleting CRDs"
   run "kubectl delete crd -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
@@ -1122,7 +1221,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     run "kubectl delete crd -l app.kubernetes.io/name=flux --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
-  # F) Force-mode fallback cleanup for unlabeled leftovers (state missing)
+  # J) Force-mode fallback cleanup for unlabeled leftovers (state missing)
   if [ "${FORCE}" = "true" ]; then
     log_step "Force-mode fallback cleanup (unlabeled leftovers)"
     
@@ -1187,7 +1286,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     run "kubectl delete crd -l app.kubernetes.io/name=flux --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
-  # G) Storage cleanup - PVs (unless --keep-volumes)
+  # K) Storage cleanup - PVs (unless --keep-volumes)
   # This is a final cleanup pass for any PVs that might have been missed
   if [ "${KEEP_VOLUMES}" != "true" ]; then
     log_step "Final cleanup: PersistentVolumes (leftover check)"
@@ -1231,7 +1330,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   fi
 fi
 
-# H) Node purge (--purge-node AND --force required)
+# L) Node purge (--purge-node AND --force required)
 if [ "${PURGE_NODE}" = "true" ]; then
   if [ "${FORCE}" != "true" ]; then
     log_error "--purge-node requires --force flag"
@@ -1246,22 +1345,42 @@ if [ "${PURGE_NODE}" = "true" ]; then
   if [ "${DRY_RUN}" = "true" ]; then
     echo "[DRY RUN] Would remove k3s and rancher directories"
   else
-    # Stop and disable k3s service
+    # Check overall timeout for purge-node
+    if ! check_overall_timeout ${OVERALL_TIMEOUT_PURGE_NODE}; then
+      log_warn "Overall timeout reached, proceeding with filesystem cleanup..."
+    fi
+    
+    # Stop and disable k3s service with timeout
     if command -v systemctl >/dev/null 2>&1; then
-      systemctl stop k3s 2>/dev/null || true
+      log_info "Stopping k3s service..."
+      run_with_timeout 30 "systemctl stop k3s" 2>/dev/null || {
+        log_warn "k3s service stop timed out or failed, continuing..."
+        # Try to kill k3s processes directly
+        pkill -9 k3s 2>/dev/null || true
+      }
       systemctl disable k3s 2>/dev/null || true
     fi
     
-    # Run k3s uninstall script if available
+    # Run k3s uninstall script if available (with timeout)
     if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
-      log_info "Running k3s-uninstall.sh..."
-      /usr/local/bin/k3s-uninstall.sh >/dev/null 2>&1 || true
+      log_info "Running k3s-uninstall.sh (timeout: 120s)..."
+      run_with_timeout 120 "/usr/local/bin/k3s-uninstall.sh" >/dev/null 2>&1 || {
+        log_warn "k3s-uninstall.sh timed out or failed, continuing with filesystem cleanup..."
+      }
     fi
     
-    # Remove k3s binaries and directories
+    # Run k3s-killall.sh if available (with timeout)
+    if [ -f /usr/local/bin/k3s-killall.sh ]; then
+      log_info "Running k3s-killall.sh (timeout: 60s)..."
+      run_with_timeout 60 "/usr/local/bin/k3s-killall.sh" >/dev/null 2>&1 || {
+        log_warn "k3s-killall.sh timed out or failed, continuing with filesystem cleanup..."
+      }
+    fi
+    
+    # Remove k3s binaries and directories (fallback if scripts hang)
     log_info "Removing k3s binaries and directories..."
     rm -f /usr/local/bin/k3s /usr/local/bin/kubectl /usr/local/bin/crictl /usr/local/bin/ctr 2>/dev/null || true
-    rm -rf /var/lib/rancher /etc/rancher /var/log/k3s 2>/dev/null || true
+    rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /opt/cni /run/flannel /var/log/k3s 2>/dev/null || true
     rm -f /etc/systemd/system/k3s.service 2>/dev/null || true
     
     if command -v systemctl >/dev/null 2>&1; then
@@ -1272,11 +1391,13 @@ if [ "${PURGE_NODE}" = "true" ]; then
     log_info "Removing /var/lib/voxeil..."
     rm -rf /var/lib/voxeil 2>/dev/null || true
     
-    log_ok "Node purge complete"
+    echo ""
+    log_ok "Node purge complete - k3s and all Voxeil files removed"
+    echo ""
   fi
 fi
 
-# I) Clean up filesystem files (unless --purge-node, which handles /var/lib/voxeil)
+# M) Clean up filesystem files (unless --purge-node, which handles /var/lib/voxeil)
 # NOTE: /tmp/voxeil.sh is NOT deleted - it is ephemeral and user-managed
 log_step "Cleaning up filesystem files"
 run "rm -rf /etc/voxeil 2>/dev/null || true"
@@ -1317,6 +1438,8 @@ if [ "${DRY_RUN}" != "true" ] && [ "${KUBECTL_AVAILABLE}" = "true" ]; then
           kubectl get namespace "${ns}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
         elif command -v jq >/dev/null 2>&1; then
           kubectl get namespace "${ns}" -o json 2>/dev/null | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+        elif command -v sed >/dev/null 2>&1; then
+          kubectl get namespace "${ns}" -o json 2>/dev/null | sed 's/"finalizers":\[[^]]*\]/"finalizers":[]/g' | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
         fi
         kubectl delete namespace "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       fi
