@@ -3063,33 +3063,6 @@ EOF
     systemctl enable fail2ban || true
     systemctl restart fail2ban || true
   fi
-  
-  # Disable SSH root login for security
-  echo "Configuring SSH security..."
-  if [ -f /etc/ssh/sshd_config ]; then
-    # Backup original config
-    cp /etc/ssh/sshd_config /etc/ssh/sshd_config.voxeil-backup.$(date +%Y%m%d_%H%M%S) || true
-    
-    # Disable root login
-    if grep -q "^PermitRootLogin" /etc/ssh/sshd_config; then
-      sed -i 's/^PermitRootLogin.*/PermitRootLogin no/' /etc/ssh/sshd_config
-    else
-      echo "PermitRootLogin no" >> /etc/ssh/sshd_config
-    fi
-    
-    # Ensure password authentication is still enabled (for non-root users)
-    if grep -q "^PasswordAuthentication" /etc/ssh/sshd_config; then
-      sed -i 's/^PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config
-    else
-      echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config
-    fi
-    
-    # Reload SSH config if systemctl is available
-    if command -v systemctl >/dev/null 2>&1; then
-      systemctl reload sshd || systemctl reload ssh || true
-      echo "SSH root login disabled. Please ensure you have a non-root user with sudo access."
-    fi
-  fi
 fi
 
 # ========= wait for readiness =========
