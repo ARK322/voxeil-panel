@@ -667,11 +667,28 @@ force_remove_namespace_finalizers() {
   
   log_info "Force removing finalizers from namespace ${namespace}..."
   
-  # Try patch first
+  # Try multiple methods to remove finalizers
+  # Method 1: Patch with merge
   kubectl patch namespace "${namespace}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-  sleep 1
+  sleep 0.5
   
-  # If still exists, use /finalize endpoint
+  # Method 2: Use /finalize endpoint (more aggressive)
+  if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+    if command -v python3 >/dev/null 2>&1; then
+      kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+    elif command -v jq >/dev/null 2>&1; then
+      kubectl get namespace "${namespace}" -o json 2>/dev/null | jq '.spec.finalizers=[]' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+    fi
+    sleep 0.5
+  fi
+  
+  # Method 3: Try JSON patch directly
+  if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+    kubectl patch namespace "${namespace}" -p '[{"op": "replace", "path": "/spec/finalizers", "value": []}]' --type=json >/dev/null 2>&1 || true
+    sleep 0.5
+  fi
+  
+  # Method 4: Final attempt with /finalize (retry)
   if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
     if command -v python3 >/dev/null 2>&1; then
       kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
@@ -693,6 +710,7 @@ delete_namespace() {
   
   # In force mode, immediately remove finalizers to prevent stuck deletion
   if [ "${FORCE}" = "true" ]; then
+    echo "  Removing finalizers before deletion..."
     force_remove_namespace_finalizers "${namespace}"
   fi
   
@@ -810,14 +828,15 @@ delete_namespace() {
   if [ "${FORCE}" = "true" ]; then
     # In force mode, use very short timeout and immediately force finalizers
     local waited=0
-    local timeout=30
+    local timeout=60
     while [ ${waited} -lt ${timeout} ]; do
       if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
         log_ok "Namespace ${namespace} deleted"
         return 0
       fi
-      # Every 5 seconds, try to remove finalizers
-      if [ $((waited % 5)) -eq 0 ] && [ ${waited} -gt 0 ]; then
+      # Every 3 seconds, try to remove finalizers and show progress
+      if [ $((waited % 3)) -eq 0 ] && [ ${waited} -gt 0 ]; then
+        echo "  Still waiting for ${namespace} to be deleted... (${waited}/${timeout}s)"
         force_remove_namespace_finalizers "${namespace}"
         kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       fi
@@ -825,15 +844,24 @@ delete_namespace() {
       waited=$((waited + 1))
     done
     
-    # Final attempt
+    # Final attempt with multiple retries
     if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
       log_warn "Namespace ${namespace} still exists after ${timeout}s, final aggressive cleanup..."
-      force_remove_namespace_finalizers "${namespace}"
-      kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-      # Give it one more moment
-      sleep 3
+      for i in {1..5}; do
+        force_remove_namespace_finalizers "${namespace}"
+        kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        sleep 1
+        if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+          log_ok "Namespace ${namespace} deleted after final cleanup attempt ${i}"
+          return 0
+        fi
+      done
+      # Last check
       if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
         log_warn "Namespace ${namespace} may still exist - manual cleanup may be required"
+        echo "  Try: kubectl get namespace ${namespace} -o json | jq '.spec.finalizers=[]' | kubectl replace --raw \"/api/v1/namespaces/${namespace}/finalize\" -f -"
+      else
+        log_ok "Namespace ${namespace} deleted"
       fi
     fi
   else
