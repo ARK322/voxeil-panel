@@ -61,10 +61,12 @@ fi
 
 CONTROLLER_IMAGE="ghcr.io/${GHCR_OWNER}/voxeil-controller:${TAG}"
 PANEL_IMAGE="ghcr.io/${GHCR_OWNER}/voxeil-panel:${TAG}"
+BACKUP_SERVICE_IMAGE="ghcr.io/${GHCR_OWNER}/voxeil-backup-service:${TAG}"
 
 echo "=== Building Voxeil Panel Images ==="
 echo "Controller image: ${CONTROLLER_IMAGE}"
 echo "Panel image: ${PANEL_IMAGE}"
+echo "Backup service image: ${BACKUP_SERVICE_IMAGE}"
 echo "Push to registry: ${PUSH}"
 echo ""
 
@@ -80,12 +82,19 @@ cd "${REPO_ROOT}/apps/panel"
 docker build -t "${PANEL_IMAGE}" .
 echo "✓ Panel image built: ${PANEL_IMAGE}"
 
+# Build backup-service image
+echo "Building backup-service image..."
+cd "${REPO_ROOT}/infra/docker/images/backup-service"
+docker build -t "${BACKUP_SERVICE_IMAGE}" .
+echo "✓ Backup service image built: ${BACKUP_SERVICE_IMAGE}"
+
 # Optionally create local tags for testing
 if [ "$TAG" != "local" ]; then
   echo ""
   echo "Creating local tags for testing..."
   docker tag "${CONTROLLER_IMAGE}" "ghcr.io/${GHCR_OWNER}/voxeil-controller:local" || true
   docker tag "${PANEL_IMAGE}" "ghcr.io/${GHCR_OWNER}/voxeil-panel:local" || true
+  docker tag "${BACKUP_SERVICE_IMAGE}" "backup-service:local" || true
   echo "✓ Local tags created"
 fi
 
@@ -97,15 +106,19 @@ if [ "$PUSH" = true ]; then
   echo "✓ Controller image pushed"
   docker push "${PANEL_IMAGE}"
   echo "✓ Panel image pushed"
+  docker push "${BACKUP_SERVICE_IMAGE}"
+  echo "✓ Backup service image pushed"
   echo ""
   echo "Images are now available at:"
   echo "  - ${CONTROLLER_IMAGE}"
   echo "  - ${PANEL_IMAGE}"
+  echo "  - ${BACKUP_SERVICE_IMAGE}"
 else
   echo ""
   echo "Images built locally. To push to GHCR, run:"
   echo "  docker push ${CONTROLLER_IMAGE}"
   echo "  docker push ${PANEL_IMAGE}"
+  echo "  docker push ${BACKUP_SERVICE_IMAGE}"
   echo ""
   echo "Or use this script with --push flag:"
   echo "  $0 --push --tag ${TAG}"

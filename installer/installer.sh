@@ -1758,12 +1758,26 @@ if [ "${BUILD_IMAGES}" = "true" ]; then
   fi
 
   # Fetch backup-runner Dockerfile and build context
-  BACKUP_BUILD_DIR="${RENDER_DIR}/backup-runner"
-  mkdir -p "${BACKUP_BUILD_DIR}"
+  BACKUP_RUNNER_BUILD_DIR="${RENDER_DIR}/backup-runner"
+  mkdir -p "${BACKUP_RUNNER_BUILD_DIR}"
 
   log_info "Fetching backup-runner build context..."
-  if ! fetch_file "infra/docker/images/backup-runner/Dockerfile" "${BACKUP_BUILD_DIR}/Dockerfile" "backup-runner Dockerfile"; then
+  if ! fetch_file "infra/docker/images/backup-runner/Dockerfile" "${BACKUP_RUNNER_BUILD_DIR}/Dockerfile" "backup-runner Dockerfile"; then
     log_error "Failed to fetch backup-runner Dockerfile. Cannot build backup images."
+    exit 1
+  fi
+
+  # Fetch backup-service Dockerfile and build context
+  BACKUP_SERVICE_BUILD_DIR="${RENDER_DIR}/backup-service"
+  mkdir -p "${BACKUP_SERVICE_BUILD_DIR}"
+
+  log_info "Fetching backup-service build context..."
+  if ! fetch_file "infra/docker/images/backup-service/Dockerfile" "${BACKUP_SERVICE_BUILD_DIR}/Dockerfile" "backup-service Dockerfile"; then
+    log_error "Failed to fetch backup-service Dockerfile. Cannot build backup images."
+    exit 1
+  fi
+  if ! fetch_file "infra/docker/images/backup-service/server.js" "${BACKUP_SERVICE_BUILD_DIR}/server.js" "backup-service server.js"; then
+    log_error "Failed to fetch backup-service server.js. Cannot build backup images."
     exit 1
   fi
 
@@ -1776,19 +1790,34 @@ if [ "${BUILD_IMAGES}" = "true" ]; then
     log_info "Using legacy docker build (buildx not available)"
   fi
 
-  # Build images with explicit tags (no spaces, proper naming)
+  # Build backup-runner image
   log_info "Building backup-runner:local..."
-  if ${BUILD_CMD} -t backup-runner:local "${BACKUP_BUILD_DIR}" >/dev/null 2>&1; then
-    # Verify images exist after build
+  if ${BUILD_CMD} -t backup-runner:local "${BACKUP_RUNNER_BUILD_DIR}" >/dev/null 2>&1; then
+    # Verify image exists after build
     if docker image inspect backup-runner:local >/dev/null 2>&1; then
-      log_ok "Backup images built successfully"
-      SKIP_BACKUP_BUILD=false
+      log_ok "backup-runner:local built successfully"
     else
       log_error "backup-runner:local image not found after build"
       exit 1
     fi
   else
     log_error "Failed to build backup-runner image."
+    exit 1
+  fi
+
+  # Build backup-service image
+  log_info "Building backup-service:local..."
+  if ${BUILD_CMD} -t backup-service:local "${BACKUP_SERVICE_BUILD_DIR}" >/dev/null 2>&1; then
+    # Verify image exists after build
+    if docker image inspect backup-service:local >/dev/null 2>&1; then
+      log_ok "backup-service:local built successfully"
+      SKIP_BACKUP_BUILD=false
+    else
+      log_error "backup-service:local image not found after build"
+      exit 1
+    fi
+  else
+    log_error "Failed to build backup-service image."
     exit 1
   fi
 else
@@ -2881,33 +2910,52 @@ fi
 log_step "Importing backup images to k3s"
 # Images were already built before k3s installation (if build succeeded)
 # Verify images exist before import
-if docker image inspect backup-runner:local >/dev/null 2>&1; then
+BACKUP_IMAGES_IMPORTED=0
+if docker image inspect backup-runner:local >/dev/null 2>&1 || docker image inspect backup-service:local >/dev/null 2>&1; then
   # Check k3s command exists
   if ! command -v k3s >/dev/null 2>&1; then
-    log_warn "k3s command not found. Cannot import images. Backup image will be pulled when needed."
+    log_warn "k3s command not found. Cannot import images. Backup images will be pulled when needed."
   else
-    # Check if images already imported (idempotent)
-    if k3s ctr images list 2>/dev/null | grep -q "backup-runner:local"; then
-      log_info "backup-runner:local already imported, skipping..."
-    else
-      log_info "Importing backup-runner:local to k3s..."
-      if docker save backup-runner:local | k3s ctr images import - >/dev/null 2>&1; then
-        log_ok "Backup image imported successfully"
+    # Import backup-runner:local
+    if docker image inspect backup-runner:local >/dev/null 2>&1; then
+      if k3s ctr images list 2>/dev/null | grep -q "backup-runner:local"; then
+        log_info "backup-runner:local already imported, skipping..."
       else
-        log_warn "Failed to import backup-runner:local to k3s. Image will be pulled when needed."
+        log_info "Importing backup-runner:local to k3s..."
+        if docker save backup-runner:local | k3s ctr images import - >/dev/null 2>&1; then
+          log_ok "backup-runner:local imported successfully"
+          BACKUP_IMAGES_IMPORTED=$((BACKUP_IMAGES_IMPORTED + 1))
+        else
+          log_warn "Failed to import backup-runner:local to k3s. Image will be pulled when needed."
+        fi
+      fi
+    fi
+    
+    # Import backup-service:local
+    if docker image inspect backup-service:local >/dev/null 2>&1; then
+      if k3s ctr images list 2>/dev/null | grep -q "backup-service:local"; then
+        log_info "backup-service:local already imported, skipping..."
+      else
+        log_info "Importing backup-service:local to k3s..."
+        if docker save backup-service:local | k3s ctr images import - >/dev/null 2>&1; then
+          log_ok "backup-service:local imported successfully"
+          BACKUP_IMAGES_IMPORTED=$((BACKUP_IMAGES_IMPORTED + 1))
+        else
+          log_warn "Failed to import backup-service:local to k3s. Image will be pulled when needed."
+        fi
       fi
     fi
     
     # Verify images in k3s
-    if k3s ctr images list 2>/dev/null | grep -E "backup-runner" >/dev/null 2>&1; then
+    if k3s ctr images list 2>/dev/null | grep -E "backup-(runner|service)" >/dev/null 2>&1; then
       log_ok "Backup images verified in k3s"
     else
       log_warn "Backup images not found in k3s. Will be pulled when needed."
     fi
   fi
 else
-  log_warn "backup-runner:local image not found. Backup functionality may be limited."
-  log_info "Backup image will need to be built or pulled separately."
+  log_warn "backup-runner:local or backup-service:local images not found. Backup functionality may be limited."
+  log_info "Backup images will need to be built or pulled separately."
 fi
 
 log_step "Applying backup-system manifests"
