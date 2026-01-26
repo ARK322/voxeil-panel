@@ -719,20 +719,32 @@ delete_namespace() {
   if [ -n "${pvcs}" ]; then
     log_info "Deleting PVCs in ${namespace}..."
     for pvc in ${pvcs}; do
-      # Remove finalizers first
-      kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      echo "  Processing PVC: ${pvc}..."
+      # Remove finalizers first (multiple attempts)
+      for attempt in {1..3}; do
+        kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+        sleep 0.5
+      done
       # Delete PVC
       kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-      # Wait a moment and check if still exists, force remove again
+      # Wait and check if still exists, force remove again
       sleep 1
       if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
-        log_info "PVC ${pvc} still exists, forcing removal..."
+        echo "  PVC ${pvc} still exists, forcing aggressive removal..."
+        # Try multiple patch methods
         kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+        kubectl patch pvc "${pvc}" -n "${namespace}" -p '[{"op": "replace", "path": "/metadata/finalizers", "value": []}]' --type=json >/dev/null 2>&1 || true
         kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        sleep 1
+        # Final check
+        if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
+          echo "  Warning: PVC ${pvc} may still exist"
+        fi
       fi
     done
     # Wait for PVCs to be fully deleted
-    sleep 2
+    echo "  Waiting for PVCs to be deleted..."
+    sleep 3
   fi
   
   # Delete PVs associated with this namespace (they also block namespace deletion)
@@ -749,15 +761,30 @@ delete_namespace() {
     fi
     if [ -n "${PVS}" ]; then
       for pv in ${PVS}; do
-        log_info "Deleting PV ${pv} (claimRef namespace: ${namespace})..."
-        # Remove finalizers from PV first
-        run "kubectl patch pv \"${pv}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
-        # Also remove claimRef to release the PV
-        run "kubectl patch pv \"${pv}\" -p '{\"spec\":{\"claimRef\":null}}' --type=merge >/dev/null 2>&1 || true"
+        echo "  Processing PV: ${pv}..."
+        # Remove finalizers from PV first (multiple attempts)
+        for attempt in {1..3}; do
+          kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+          sleep 0.5
+        done
+        # Also remove claimRef to release the PV (multiple attempts)
+        for attempt in {1..3}; do
+          kubectl patch pv "${pv}" -p '{"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
+          sleep 0.5
+        done
         # Delete PV
-        run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+        kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        sleep 1
+        # Check if still exists
+        if kubectl get pv "${pv}" >/dev/null 2>&1; then
+          echo "  PV ${pv} still exists, forcing aggressive removal..."
+          kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
+          kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+          sleep 1
+        fi
       done
-      sleep 2
+      echo "  Waiting for PVs to be deleted..."
+      sleep 3
     fi
   fi
   
