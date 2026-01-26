@@ -777,41 +777,49 @@ delete_namespace() {
     force_remove_namespace_finalizers "${namespace}"
   fi
   
-  # Delete all PVCs first (they block namespace deletion) - with timeout
+  # Delete all PVCs first (they block namespace deletion) - quick and aggressive
   pvcs="$(kubectl get pvc -n "${namespace}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)"
   if [ -n "${pvcs}" ]; then
-    log_info "Deleting PVCs in ${namespace} (timeout: 60s per PVC)..."
-    local pvc_start_time=$(date +%s)
+    log_info "Deleting PVCs in ${namespace} (quick cleanup, max 5s per PVC)..."
     for pvc in ${pvcs}; do
       # Check overall timeout
-      if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
-        log_warn "Overall timeout reached, skipping remaining PVCs..."
-        break
+      if [ "${PURGE_NODE}" = "true" ]; then
+        if ! check_overall_timeout ${OVERALL_TIMEOUT_PURGE_NODE}; then
+          log_warn "Overall timeout reached, skipping remaining PVCs..."
+          break
+        fi
+      else
+        if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
+          log_warn "Overall timeout reached, skipping remaining PVCs..."
+          break
+        fi
       fi
       
       echo "  Processing PVC: ${pvc}..."
-      # Quick attempt: remove finalizers and delete (no wait - fire and forget)
+      # Quick attempt: remove finalizers and delete (fire and forget, no wait)
       kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
       kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       
-      # Quick check after 2 seconds - if still exists, try aggressive removal once more
-      sleep 2
+      # One quick check after 1 second, then move on
+      sleep 1
       if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
-        echo "  PVC ${pvc} still exists, using aggressive removal..."
+        echo "  PVC ${pvc} still exists, trying aggressive removal once..."
+        # Try one aggressive removal attempt
         if command -v jq >/dev/null 2>&1; then
           kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | jq 'del(.metadata.finalizers)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
         elif command -v python3 >/dev/null 2>&1; then
           kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
         fi
         kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-        echo "  Continuing - PVC ${pvc} will be cleaned up by namespace deletion"
+        echo "  Continuing - PVC ${pvc} will be cleaned up during namespace deletion"
       fi
     done
+    # Don't wait for PVCs - namespace deletion will handle it
   fi
   
-  # Delete PVs associated with this namespace (they also block namespace deletion) - with timeout
+  # Delete PVs associated with this namespace (they also block namespace deletion) - quick and aggressive
   if [ "${KEEP_VOLUMES}" != "true" ]; then
-    log_info "Deleting PVs for namespace ${namespace} (timeout: 60s total)..."
+    log_info "Deleting PVs for namespace ${namespace} (quick cleanup, max 5s per PV)..."
     # Find PVs for this namespace
     if command -v python3 >/dev/null 2>&1; then
       PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${namespace}']" 2>/dev/null || true)"
@@ -822,23 +830,30 @@ delete_namespace() {
       PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${namespace}$" | cut -f1 || true)"
     fi
     if [ -n "${PVS}" ]; then
-      local pv_start_time=$(date +%s)
       for pv in ${PVS}; do
         # Check overall timeout
-        if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
-          log_warn "Overall timeout reached, skipping remaining PVs..."
-          break
+        if [ "${PURGE_NODE}" = "true" ]; then
+          if ! check_overall_timeout ${OVERALL_TIMEOUT_PURGE_NODE}; then
+            log_warn "Overall timeout reached, skipping remaining PVs..."
+            break
+          fi
+        else
+          if ! check_overall_timeout ${OVERALL_TIMEOUT_UNINSTALL}; then
+            log_warn "Overall timeout reached, skipping remaining PVs..."
+            break
+          fi
         fi
         
         echo "  Processing PV: ${pv}..."
-        # Quick attempt: remove finalizers and claimRef, then delete (no wait - fire and forget)
+        # Quick attempt: remove finalizers and claimRef, then delete (fire and forget, no wait)
         kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
         kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
         
-        # Quick check after 2 seconds - if still exists, try aggressive removal once more
-        sleep 2
+        # One quick check after 1 second, then move on
+        sleep 1
         if kubectl get pv "${pv}" >/dev/null 2>&1; then
-          echo "  PV ${pv} still exists, using aggressive removal..."
+          echo "  PV ${pv} still exists, trying aggressive removal once..."
+          # Try one aggressive removal attempt
           if command -v jq >/dev/null 2>&1; then
             kubectl get pv "${pv}" -o json 2>/dev/null | jq 'del(.metadata.finalizers) | del(.spec.claimRef)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
           elif command -v python3 >/dev/null 2>&1; then
@@ -848,6 +863,7 @@ delete_namespace() {
           echo "  Continuing - PV ${pv} will be cleaned up separately"
         fi
       done
+      # Don't wait for PVs - proceed to namespace deletion
     fi
   fi
   
