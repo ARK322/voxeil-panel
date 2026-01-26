@@ -720,25 +720,43 @@ delete_namespace() {
     log_info "Deleting PVCs in ${namespace}..."
     for pvc in ${pvcs}; do
       echo "  Processing PVC: ${pvc}..."
-      # Remove finalizers first (multiple attempts)
-      for attempt in {1..3}; do
-        kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-        sleep 0.5
-      done
+      # Method 1: Try merge patch
+      kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      sleep 0.5
+      
+      # Method 2: Try JSON patch
+      kubectl patch pvc "${pvc}" -n "${namespace}" -p '[{"op": "remove", "path": "/metadata/finalizers"}]' --type=json >/dev/null 2>&1 || true
+      sleep 0.5
+      
+      # Method 3: Try direct JSON replace (most aggressive)
+      if command -v python3 >/dev/null 2>&1; then
+        kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+      elif command -v jq >/dev/null 2>&1; then
+        kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | jq 'del(.metadata.finalizers)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+      fi
+      sleep 0.5
+      
       # Delete PVC
       kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
-      # Wait and check if still exists, force remove again
       sleep 1
+      
+      # Check if still exists and try more aggressive methods
       if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
-        echo "  PVC ${pvc} still exists, forcing aggressive removal..."
-        # Try multiple patch methods
+        echo "  PVC ${pvc} still exists, using most aggressive removal..."
+        # Try all methods again
         kubectl patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-        kubectl patch pvc "${pvc}" -n "${namespace}" -p '[{"op": "replace", "path": "/metadata/finalizers", "value": []}]' --type=json >/dev/null 2>&1 || true
+        kubectl patch pvc "${pvc}" -n "${namespace}" -p '[{"op": "remove", "path": "/metadata/finalizers"}]' --type=json >/dev/null 2>&1 || true
+        if command -v python3 >/dev/null 2>&1; then
+          kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+        elif command -v jq >/dev/null 2>&1; then
+          kubectl get pvc "${pvc}" -n "${namespace}" -o json 2>/dev/null | jq 'del(.metadata.finalizers)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+        fi
         kubectl delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
         sleep 1
         # Final check
         if kubectl get pvc "${pvc}" -n "${namespace}" >/dev/null 2>&1; then
-          echo "  Warning: PVC ${pvc} may still exist"
+          echo "  Warning: PVC ${pvc} may still exist - may require manual cleanup"
+          echo "    Try: kubectl patch pvc ${pvc} -n ${namespace} -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge"
         fi
       fi
     done
@@ -762,25 +780,44 @@ delete_namespace() {
     if [ -n "${PVS}" ]; then
       for pv in ${PVS}; do
         echo "  Processing PV: ${pv}..."
-        # Remove finalizers from PV first (multiple attempts)
-        for attempt in {1..3}; do
-          kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-          sleep 0.5
-        done
-        # Also remove claimRef to release the PV (multiple attempts)
-        for attempt in {1..3}; do
-          kubectl patch pv "${pv}" -p '{"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
-          sleep 0.5
-        done
+        # Method 1: Try patch with both finalizers and claimRef removal
+        kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
+        sleep 0.5
+        
+        # Method 2: Try JSON patch
+        kubectl patch pv "${pv}" -p '[{"op": "remove", "path": "/metadata/finalizers"},{"op": "remove", "path": "/spec/claimRef"}]' --type=json >/dev/null 2>&1 || true
+        sleep 0.5
+        
+        # Method 3: Try direct JSON replace (most aggressive)
+        if command -v python3 >/dev/null 2>&1; then
+          kubectl get pv "${pv}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; data['spec']['claimRef']=None; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+        elif command -v jq >/dev/null 2>&1; then
+          kubectl get pv "${pv}" -o json 2>/dev/null | jq 'del(.metadata.finalizers) | del(.spec.claimRef)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+        fi
+        sleep 0.5
+        
         # Delete PV
         kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
         sleep 1
-        # Check if still exists
+        
+        # Check if still exists and try more aggressive methods
         if kubectl get pv "${pv}" >/dev/null 2>&1; then
-          echo "  PV ${pv} still exists, forcing aggressive removal..."
+          echo "  PV ${pv} still exists, using most aggressive removal..."
+          # Try all methods again
           kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
+          kubectl patch pv "${pv}" -p '[{"op": "remove", "path": "/metadata/finalizers"},{"op": "remove", "path": "/spec/claimRef"}]' --type=json >/dev/null 2>&1 || true
+          if command -v python3 >/dev/null 2>&1; then
+            kubectl get pv "${pv}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; data['spec']['claimRef']=None; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+          elif command -v jq >/dev/null 2>&1; then
+            kubectl get pv "${pv}" -o json 2>/dev/null | jq 'del(.metadata.finalizers) | del(.spec.claimRef)' 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
+          fi
           kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
           sleep 1
+          # Final check
+          if kubectl get pv "${pv}" >/dev/null 2>&1; then
+            echo "  Warning: PV ${pv} may still exist - may require manual cleanup"
+            echo "    Try: kubectl patch pv ${pv} -p '{\"metadata\":{\"finalizers\":[]},\"spec\":{\"claimRef\":null}}' --type=merge"
+          fi
         fi
       done
       echo "  Waiting for PVs to be deleted..."
@@ -922,19 +959,30 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     disable_admission_webhooks_preflight
   fi
   
-  # A) Workloads first - delete all resources by label
+  # A) Ingresses first (reverse of installer: ingresses are applied last)
+  log_step "Deleting ingresses and routes"
+  log_info "Deleting ingresses..."
+  run "kubectl delete ingress -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  # Also delete by name patterns (backward compatibility)
+  run "kubectl delete ingress panel -n platform --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete ingress pgadmin -n infra-db --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete ingress mailcow -n mail-zone --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  # Delete Traefik TCP routes (IngressRouteTCP)
+  run "kubectl delete ingressroutetcp -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  
+  # B) Workloads - delete all resources by label (but not ingresses, already deleted)
   log_step "Deleting workloads and namespace-scoped resources"
   log_info "Deleting all resources labeled app.kubernetes.io/part-of=voxeil..."
-  run "kubectl delete all,cm,secret,sa,role,rolebinding,ingress,networkpolicy -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete all,cm,secret,sa,role,rolebinding,networkpolicy -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # Also delete PVCs explicitly
   log_info "Deleting PVCs..."
   run "kubectl delete pvc -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
-  # B) Namespaces next (reverse order), and WAIT
-  log_step "Deleting namespaces (reverse order)"
+  # C) Namespaces next (REVERSE order of installation), and WAIT
+  log_step "Deleting namespaces (reverse order of installation)"
   
-  # Delete user and tenant namespaces first (dynamically created)
+  # Delete user and tenant namespaces first (dynamically created, depend on platform)
   log_info "Deleting user namespaces..."
   user_namespaces="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^user-' || true)"
   if [ -n "${user_namespaces}" ]; then
@@ -955,35 +1003,52 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     done
   fi
   
-  # Delete main namespaces (only if in state or --force)
-  if [ "${FORCE}" = "true" ] || is_installed "PLATFORM_INSTALLED"; then
-    delete_namespace "platform"
-  fi
-  if [ "${FORCE}" = "true" ] || is_installed "INFRA_DB_INSTALLED"; then
-    delete_namespace "infra-db"
-  fi
-  if [ "${FORCE}" = "true" ] || kubectl get namespace dns-zone >/dev/null 2>&1; then
-    delete_namespace "dns-zone"
+  # Delete main namespaces in REVERSE order of installation:
+  # Installer order: platform -> infra-db -> (dns-zone) -> (mail-zone) -> backup-system
+  # Uninstaller order: backup-system -> (mail-zone) -> (dns-zone) -> infra-db -> platform
+  if [ "${FORCE}" = "true" ] || is_installed "BACKUP_SYSTEM_INSTALLED"; then
+    delete_namespace "backup-system"
   fi
   if [ "${FORCE}" = "true" ] || kubectl get namespace mail-zone >/dev/null 2>&1; then
     delete_namespace "mail-zone"
   fi
-  if [ "${FORCE}" = "true" ] || is_installed "BACKUP_SYSTEM_INSTALLED"; then
-    delete_namespace "backup-system"
+  if [ "${FORCE}" = "true" ] || kubectl get namespace dns-zone >/dev/null 2>&1; then
+    delete_namespace "dns-zone"
+  fi
+  if [ "${FORCE}" = "true" ] || is_installed "INFRA_DB_INSTALLED"; then
+    delete_namespace "infra-db"
+  fi
+  if [ "${FORCE}" = "true" ] || is_installed "PLATFORM_INSTALLED"; then
+    delete_namespace "platform"
   fi
   
-  # Delete system namespaces
-  if [ "${FORCE}" = "true" ] || is_installed "KYVERNO_INSTALLED"; then
-    delete_namespace "kyverno"
-  fi
+  # Delete system namespaces in REVERSE order of installation:
+  # Installer order: cert-manager -> Kyverno -> Flux
+  # Uninstaller order: Flux -> Kyverno -> cert-manager
   if [ "${FORCE}" = "true" ] || is_installed "FLUX_INSTALLED"; then
     delete_namespace "flux-system"
+  fi
+  if [ "${FORCE}" = "true" ] || is_installed "KYVERNO_INSTALLED"; then
+    delete_namespace "kyverno"
   fi
   if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
     delete_namespace "cert-manager"
   fi
   
-  # C) Remaining webhooks (cluster-scoped) by label (cert-manager, Flux, etc.)
+  # D) Traefik middlewares and HelmChartConfig (reverse of installer: Traefik config is applied first)
+  log_step "Deleting Traefik resources"
+  log_info "Deleting Traefik security middlewares..."
+  run "kubectl delete middleware security-headers rate-limit sql-injection-protection request-size-limit -n kube-system -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  log_info "Deleting HelmChartConfig (Traefik entrypoints)..."
+  run "kubectl delete helmchartconfig traefik -n kube-system --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  
+  # E) ClusterIssuers (reverse of installer: ClusterIssuers are applied after cert-manager)
+  if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
+    log_info "Deleting ClusterIssuers..."
+    run "kubectl delete clusterissuer --all --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  fi
+  
+  # F) Remaining webhooks (cluster-scoped) by label (cert-manager, Flux, etc.)
   # Note: Kyverno webhooks are handled in preflight to prevent API lock
   log_step "Deleting remaining webhooks"
   run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
@@ -1005,7 +1070,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     done
   fi
   
-  # D) ClusterRoles / ClusterRoleBindings by label
+  # G) ClusterRoles / ClusterRoleBindings by label (reverse of installer: RBAC is applied in platform base)
   log_step "Deleting ClusterRoles and ClusterRoleBindings"
   run "kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
@@ -1034,19 +1099,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     fi
   done
   
-  # Delete ClusterIssuers and HelmChartConfig
-  if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
-    log_info "Deleting ClusterIssuers..."
-    run "kubectl delete clusterissuer --all --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-  fi
-  log_info "Deleting HelmChartConfig..."
-  run "kubectl delete helmchartconfig traefik -n kube-system --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-  
-  # Delete Traefik security middlewares
-  log_info "Deleting Traefik security middlewares..."
-  run "kubectl delete middleware security-headers rate-limit sql-injection-protection request-size-limit -n kube-system -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-  
-  # E) CRDs LAST by label
+  # H) CRDs LAST by label (reverse of installer: CRDs are installed first for cert-manager/Kyverno/Flux)
   log_step "Deleting CRDs"
   run "kubectl delete crd -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
