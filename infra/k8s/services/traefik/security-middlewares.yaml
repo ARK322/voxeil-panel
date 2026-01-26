@@ -52,10 +52,6 @@ spec:
     average: 50
     period: 1m
     burst: 20
-  # Request size limit to prevent large payload attacks
-  buffering:
-    maxRequestBodyBytes: 5242880
-    maxResponseBodyBytes: 5242880
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
