@@ -3053,13 +3053,89 @@ if command -v apt-get >/dev/null 2>&1; then
   fi
   if command -v systemctl >/dev/null 2>&1; then
     mkdir -p /etc/fail2ban/jail.d
+    mkdir -p /var/log/traefik
+    mkdir -p /var/log/mailcow
+    mkdir -p /var/log/bind9
+    
     cat > /etc/fail2ban/jail.d/voxeil.conf <<'EOF'
 [sshd]
 enabled = true
 bantime = 1h
 findtime = 10m
 maxretry = 5
+
+[traefik-http]
+enabled = true
+port = http,https
+filter = traefik-http
+logpath = /var/log/traefik/access.log
+bantime = 2h
+findtime = 10m
+maxretry = 20
+
+[traefik-auth]
+enabled = true
+port = http,https
+filter = traefik-auth
+logpath = /var/log/traefik/access.log
+bantime = 6h
+findtime = 10m
+maxretry = 5
+
+[mailcow-auth]
+enabled = true
+port = 25,465,587,143,993,110,995
+filter = mailcow-auth
+logpath = /var/log/mailcow/auth.log
+bantime = 2h
+findtime = 10m
+maxretry = 5
+
+[bind9]
+enabled = true
+port = 53
+filter = bind9
+logpath = /var/log/bind9/query.log
+bantime = 1h
+findtime = 10m
+maxretry = 10
 EOF
+
+    # Create fail2ban filters
+    mkdir -p /etc/fail2ban/filter.d
+    
+    cat > /etc/fail2ban/filter.d/traefik-http.conf <<'EOF'
+[Definition]
+# JSON format: {"ClientAddr":"<HOST>","StatusCode":4xx/5xx}
+failregex = ^.*"ClientAddr":"<HOST>".*"StatusCode":(4\d{2}|5\d{2}).*$
+            ^.*"RemoteAddr":"<HOST>".*"Status":(4\d{2}|5\d{2}).*$
+ignoreregex =
+EOF
+
+    cat > /etc/fail2ban/filter.d/traefik-auth.conf <<'EOF'
+[Definition]
+# JSON format for auth failures
+failregex = ^.*"ClientAddr":"<HOST>".*"StatusCode":(401|403).*$
+            ^.*"RemoteAddr":"<HOST>".*"Status":(401|403).*$
+            ^.*"ClientAddr":"<HOST>".*"RequestMethod":"POST".*"RequestPath":"/.*login.*".*"StatusCode":(401|403).*$
+ignoreregex =
+EOF
+
+    cat > /etc/fail2ban/filter.d/mailcow-auth.conf <<'EOF'
+[Definition]
+failregex = ^.*authentication failed.*from <HOST>.*$
+            ^.*login failed.*<HOST>.*$
+            ^.*invalid.*credentials.*<HOST>.*$
+ignoreregex =
+EOF
+
+    cat > /etc/fail2ban/filter.d/bind9.conf <<'EOF'
+[Definition]
+failregex = ^.*client <HOST>#.*query.*denied.*$
+            ^.*client <HOST>#.*query.*refused.*$
+ignoreregex =
+EOF
+
     systemctl enable fail2ban || true
     systemctl restart fail2ban || true
   fi

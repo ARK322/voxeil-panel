@@ -7,6 +7,27 @@ metadata:
     app.kubernetes.io/part-of: voxeil
 spec:
   valuesContent: |-
+    # Access logs configuration
+    accessLog:
+      enabled: true
+      filePath: /var/log/traefik/access.log
+      format: json
+      fields:
+        defaultMode: keep
+        headers:
+          defaultMode: keep
+          names:
+            User-Agent: keep
+            Authorization: drop
+            Cookie: drop
+    
+    # Additional security settings
+    globalArguments:
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--accesslog.format=json"
+      - "--accesslog.filepath=/var/log/traefik/access.log"
+    
     ports:
       web:
         port: 80

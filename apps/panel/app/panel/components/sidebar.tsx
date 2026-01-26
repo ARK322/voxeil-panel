@@ -11,6 +11,7 @@ const navItems = [
   { href: "/panel/db", label: "Database", icon: "💾" },
   { href: "/panel/dns", label: "DNS", icon: "🔗" },
   { href: "/panel/backups", label: "Backups", icon: "💿" },
+  { href: "/panel/security", label: "Security", icon: "🔒" },
   { href: "/panel/health", label: "Health", icon: "❤️" },
 ];
 

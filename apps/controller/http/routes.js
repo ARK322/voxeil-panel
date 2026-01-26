@@ -746,4 +746,64 @@ export function registerRoutes(app) {
         const result = await purgeSiteBackup(slug);
         return reply.send({ ok: true, ...result });
     });
+
+    // Security logs endpoint (fail2ban)
+    app.get("/admin/security/logs", async (req, reply) => {
+        requireAdmin(req);
+        const { exec } = await import("node:child_process");
+        const { promisify } = await import("node:util");
+        const execAsync = promisify(exec);
+        
+        try {
+            // Get fail2ban status
+            let status = {};
+            try {
+                const { stdout: statusOutput } = await execAsync("fail2ban-client status 2>/dev/null || echo 'FAIL2BAN_NOT_RUNNING'");
+                if (!statusOutput.includes("FAIL2BAN_NOT_RUNNING")) {
+                    const lines = statusOutput.split("\n");
+                    const jailLine = lines.find(line => line.includes("Jail list:"));
+                    if (jailLine) {
+                        const jails = jailLine.split(":")[1]?.trim().split(",").map(j => j.trim()).filter(Boolean) || [];
+                        status.jails = jails;
+                        
+                        // Get banned IPs for each jail
+                        status.banned = {};
+                        for (const jail of jails) {
+                            try {
+                                const { stdout: jailStatus } = await execAsync(`fail2ban-client status ${jail} 2>/dev/null || echo ''`);
+                                const bannedLine = jailStatus.split("\n").find(line => line.includes("Banned IP list:"));
+                                if (bannedLine) {
+                                    const ips = bannedLine.split(":")[1]?.trim().split(/\s+/).filter(Boolean) || [];
+                                    status.banned[jail] = ips;
+                                }
+                            } catch {
+                                status.banned[jail] = [];
+                            }
+                        }
+                    }
+                } else {
+                    status.error = "fail2ban not running";
+                }
+            } catch (error) {
+                status.error = error.message;
+            }
+            
+            // Get fail2ban log (last 500 lines)
+            let logLines = [];
+            try {
+                const { stdout: logOutput } = await execAsync("tail -n 500 /var/log/fail2ban.log 2>/dev/null || echo ''");
+                logLines = logOutput.split("\n").filter(Boolean);
+            } catch {
+                // Log file might not exist or be readable
+            }
+            
+            return reply.send({
+                ok: true,
+                status,
+                logs: logLines.slice(-200) // Last 200 lines
+            });
+        } catch (error) {
+            throw new HttpError(500, `Failed to read security logs: ${error.message}`);
+        }
+    });
 }

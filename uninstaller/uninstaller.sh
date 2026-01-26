@@ -387,10 +387,32 @@ if [ "${DOCTOR}" = "true" ]; then
     echo "  ⚠ Found /var/lib/voxeil/install.state"
     FILES_FOUND=1
   fi
+  if [ -f /etc/fail2ban/jail.d/voxeil.conf ]; then
+    echo "  ⚠ Found /etc/fail2ban/jail.d/voxeil.conf"
+    FILES_FOUND=1
+  fi
+  if [ -f /etc/fail2ban/filter.d/traefik-http.conf ] || [ -f /etc/fail2ban/filter.d/traefik-auth.conf ] || [ -f /etc/fail2ban/filter.d/mailcow-auth.conf ] || [ -f /etc/fail2ban/filter.d/bind9.conf ]; then
+    echo "  ⚠ Found fail2ban filter files"
+    FILES_FOUND=1
+  fi
   if [ ${FILES_FOUND} -eq 0 ]; then
     echo "  ✓ No Voxeil filesystem files found"
   else
     EXIT_CODE=1
+  fi
+  
+  # Check for Traefik middlewares
+  echo ""
+  echo "Checking Traefik middlewares..."
+  TRAEFIK_MIDDLEWARES="$(kubectl get middleware -n kube-system -l app.kubernetes.io/part-of=voxeil -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '(security-headers|rate-limit|sql-injection-protection|request-size-limit)' || true)"
+  if [ -n "${TRAEFIK_MIDDLEWARES}" ]; then
+    echo "  ⚠ Found Traefik security middlewares:"
+    echo "${TRAEFIK_MIDDLEWARES}" | while read -r mw; do
+      echo "    - ${mw}"
+    done
+    EXIT_CODE=1
+  else
+    echo "  ✓ No Traefik security middlewares found"
   fi
   
   echo ""
@@ -853,6 +875,10 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   log_info "Deleting HelmChartConfig..."
   run "kubectl delete helmchartconfig traefik -n kube-system --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
+  # Delete Traefik security middlewares
+  log_info "Deleting Traefik security middlewares..."
+  run "kubectl delete middleware security-headers rate-limit sql-injection-protection request-size-limit -n kube-system -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  
   # E) CRDs LAST by label
   log_step "Deleting CRDs"
   run "kubectl delete crd -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
@@ -1019,7 +1045,13 @@ run "rm -f /usr/local/bin/voxeil-ufw-apply 2>/dev/null || true"
 run "rm -f /etc/systemd/system/voxeil-ufw-apply.service 2>/dev/null || true"
 run "rm -f /etc/systemd/system/voxeil-ufw-apply.path 2>/dev/null || true"
 run "rm -f /etc/fail2ban/jail.d/voxeil.conf 2>/dev/null || true"
+run "rm -f /etc/fail2ban/filter.d/traefik-http.conf 2>/dev/null || true"
+run "rm -f /etc/fail2ban/filter.d/traefik-auth.conf 2>/dev/null || true"
+run "rm -f /etc/fail2ban/filter.d/mailcow-auth.conf 2>/dev/null || true"
+run "rm -f /etc/fail2ban/filter.d/bind9.conf 2>/dev/null || true"
 run "rm -f /etc/ssh/sshd_config.voxeil-backup.* 2>/dev/null || true"
+# Note: Log directories (/var/log/traefik, /var/log/mailcow, /var/log/bind9) are kept
+# to preserve logs. Remove manually if needed: rm -rf /var/log/{traefik,mailcow,bind9}
 # Only remove /var/lib/voxeil if not doing node purge (purge handles it)
 if [ "${PURGE_NODE}" != "true" ]; then
   run "rm -rf /var/lib/voxeil 2>/dev/null || true"
