@@ -1497,7 +1497,9 @@ GHCR_USERNAME="${GHCR_USERNAME:-}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
 GHCR_EMAIL="${GHCR_EMAIL:-}"
 GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-ark322/voxeil-panel}"
-GHCR_OWNER="${GHCR_OWNER:-${GITHUB_REPOSITORY%%/*}}"
+# Extract owner from GITHUB_REPOSITORY and convert to lowercase (matches GitHub Actions workflow)
+GHCR_OWNER_RAW="${GITHUB_REPOSITORY%%/*}"
+GHCR_OWNER="${GHCR_OWNER:-$(echo "${GHCR_OWNER_RAW}" | tr '[:upper:]' '[:lower:]')}"
 GHCR_REPO="${GHCR_REPO:-${GITHUB_REPOSITORY##*/}}"
 LETSENCRYPT_EMAIL="${LETSENCRYPT_EMAIL:-}"
 PANEL_ADMIN_USERNAME="${PANEL_ADMIN_USERNAME:-}"
@@ -1520,8 +1522,9 @@ PANEL_DOMAIN="${PANEL_DOMAIN:-}"
 PANEL_TLS_ISSUER="${PANEL_TLS_ISSUER:-letsencrypt-prod}"
 SITE_PORT_START="${SITE_PORT_START:-31000}"
 SITE_PORT_END="${SITE_PORT_END:-31999}"
-CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-ghcr.io/ark322/voxeil-controller:latest}"
-PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/ark322/voxeil-panel:latest}"
+# Use GHCR_OWNER (lowercase) to match GitHub Actions workflow
+CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-ghcr.io/${GHCR_OWNER}/voxeil-controller:latest}"
+PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/${GHCR_OWNER}/voxeil-panel:latest}"
 
 # Admin credentials (canonical names)
 ADMIN_EMAIL="${ADMIN_EMAIL:-}"
