@@ -213,7 +213,20 @@ if [ "${DOCTOR}" = "true" ]; then
     kubectl get clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
     EXIT_CODE=1
   else
-    echo "  ✓ None found"
+    # Also check by name pattern (backward compatibility)
+    VOXEIL_CLUSTER_BY_NAME="$(kubectl get clusterrole,clusterrolebinding -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '(controller-bootstrap|user-operator|controller-bootstrap-binding)' || true)"
+    if [ -n "${VOXEIL_CLUSTER_BY_NAME}" ]; then
+      echo "${VOXEIL_CLUSTER_BY_NAME}" | while read -r name; do
+        if kubectl get clusterrole "${name}" >/dev/null 2>&1; then
+          kubectl get clusterrole "${name}" 2>/dev/null || true
+        elif kubectl get clusterrolebinding "${name}" >/dev/null 2>&1; then
+          kubectl get clusterrolebinding "${name}" 2>/dev/null || true
+        fi
+      done
+      EXIT_CODE=1
+    else
+      echo "  ✓ None found"
+    fi
   fi
   
   echo ""
@@ -813,7 +826,18 @@ delete_namespace() {
   
   # Wait for namespace deletion (with shorter timeout for --force mode)
   if [ "${FORCE}" = "true" ]; then
-    wait_ns_deleted "${namespace}" 60
+    wait_ns_deleted "${namespace}" 60 || {
+      # Even if wait failed, try one more aggressive cleanup
+      if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+        log_warn "Namespace ${namespace} deletion timed out, attempting final cleanup..."
+        # Remove all finalizers one more time
+        if command -v python3 >/dev/null 2>&1; then
+          kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+        elif command -v jq >/dev/null 2>&1; then
+          kubectl get namespace "${namespace}" -o json 2>/dev/null | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+        fi
+      fi
+    }
   else
     wait_ns_deleted "${namespace}" 300
   fi
@@ -932,9 +956,30 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   log_step "Deleting ClusterRoles and ClusterRoleBindings"
   run "kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
-  # Also delete by name (backward compatibility)
-  run "kubectl delete clusterrole controller-bootstrap user-operator --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-  run "kubectl delete clusterrolebinding controller-bootstrap-binding --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  # Also delete by name (backward compatibility) - try multiple times if needed
+  log_info "Deleting ClusterRoles by name..."
+  for cr in controller-bootstrap user-operator; do
+    if kubectl get clusterrole "${cr}" >/dev/null 2>&1; then
+      run "kubectl delete clusterrole \"${cr}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      # If still exists, try removing finalizers
+      if kubectl get clusterrole "${cr}" >/dev/null 2>&1; then
+        run "kubectl patch clusterrole \"${cr}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        run "kubectl delete clusterrole \"${cr}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      fi
+    fi
+  done
+  
+  log_info "Deleting ClusterRoleBindings by name..."
+  for crb in controller-bootstrap-binding; do
+    if kubectl get clusterrolebinding "${crb}" >/dev/null 2>&1; then
+      run "kubectl delete clusterrolebinding \"${crb}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      # If still exists, try removing finalizers
+      if kubectl get clusterrolebinding "${crb}" >/dev/null 2>&1; then
+        run "kubectl patch clusterrolebinding \"${crb}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        run "kubectl delete clusterrolebinding \"${crb}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      fi
+    fi
+  done
   
   # Delete ClusterIssuers and HelmChartConfig
   if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
@@ -975,42 +1020,46 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   if [ "${FORCE}" = "true" ]; then
     log_step "Force-mode fallback cleanup (unlabeled leftovers)"
     
-    # Delete unlabeled namespaces
+    # Delete unlabeled namespaces - try all voxeil namespaces regardless of label
     log_info "Cleaning up unlabeled namespaces..."
     for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
       if kubectl get namespace "${ns}" >/dev/null 2>&1; then
-        if ! kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
-          log_info "Deleting unlabeled namespace: ${ns}"
-          delete_namespace "${ns}"
-        fi
+        log_info "Deleting namespace: ${ns} (force mode)"
+        delete_namespace "${ns}"
       fi
     done
     
-    # Delete user-* and tenant-* namespaces
+    # Delete user-* and tenant-* namespaces - in force mode, delete all regardless of label
     user_namespaces="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^user-' || true)"
     if [ -n "${user_namespaces}" ]; then
       for ns in ${user_namespaces}; do
-        if ! kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
-          log_info "Deleting unlabeled namespace: ${ns}"
-          delete_namespace "${ns}"
-        fi
+        log_info "Deleting namespace: ${ns} (force mode)"
+        delete_namespace "${ns}"
       done
     fi
     
     tenant_namespaces="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^tenant-' || true)"
     if [ -n "${tenant_namespaces}" ]; then
       for ns in ${tenant_namespaces}; do
-        if ! kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
-          log_info "Deleting unlabeled namespace: ${ns}"
-          delete_namespace "${ns}"
-        fi
+        log_info "Deleting namespace: ${ns} (force mode)"
+        delete_namespace "${ns}"
       done
     fi
     
     # Delete remaining cluster resources
     log_info "Cleaning up cluster roles and bindings..."
-    run "kubectl delete clusterrole controller-bootstrap user-operator --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-    run "kubectl delete clusterrolebinding controller-bootstrap-binding --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    for cr in controller-bootstrap user-operator; do
+      if kubectl get clusterrole "${cr}" >/dev/null 2>&1; then
+        run "kubectl patch clusterrole \"${cr}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        run "kubectl delete clusterrole \"${cr}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      fi
+    done
+    for crb in controller-bootstrap-binding; do
+      if kubectl get clusterrolebinding "${crb}" >/dev/null 2>&1; then
+        run "kubectl patch clusterrolebinding \"${crb}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        run "kubectl delete clusterrolebinding \"${crb}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      fi
+    done
     
     # Remove lingering webhookconfigs again (idempotent)
     log_info "Cleaning up remaining webhookconfigs..."
@@ -1052,12 +1101,22 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
       if [ -n "${PVS}" ]; then
         log_info "Deleting leftover PVs for namespace ${ns}..."
         for pv in ${PVS}; do
+          log_info "Processing PV ${pv}..."
           # Remove finalizers from PV first
           run "kubectl patch pv \"${pv}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
           # Also remove claimRef to release the PV
           run "kubectl patch pv \"${pv}\" -p '{\"spec\":{\"claimRef\":null}}' --type=merge >/dev/null 2>&1 || true"
+          # Wait a moment for patches to apply
+          sleep 1
           # Delete PV
           run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+          # If still exists after a moment, try again with more aggressive cleanup
+          sleep 2
+          if kubectl get pv "${pv}" >/dev/null 2>&1; then
+            log_info "PV ${pv} still exists, forcing removal..."
+            run "kubectl patch pv \"${pv}\" -p '{\"metadata\":{\"finalizers\":[]},\"spec\":{\"claimRef\":null}}' --type=merge >/dev/null 2>&1 || true"
+            run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+          fi
         done
       fi
     done
@@ -1135,10 +1194,75 @@ if [ "${DRY_RUN}" != "true" ] && command -v systemctl >/dev/null 2>&1; then
   systemctl daemon-reload 2>/dev/null || true
 fi
 
+# Final verification pass (only if not dry-run)
+if [ "${DRY_RUN}" != "true" ] && [ "${KUBECTL_AVAILABLE}" = "true" ]; then
+  log_step "Final verification pass"
+  
+  # Check for any remaining namespaces
+  REMAINING_NS="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
+  if [ -n "${REMAINING_NS}" ]; then
+    log_warn "Some namespaces still exist, attempting final cleanup..."
+    for ns in ${REMAINING_NS}; do
+      if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+        log_info "Final cleanup attempt for namespace: ${ns}"
+        # Try to remove finalizers and delete one more time
+        kubectl patch namespace "${ns}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+        if command -v python3 >/dev/null 2>&1; then
+          kubectl get namespace "${ns}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+        elif command -v jq >/dev/null 2>&1; then
+          kubectl get namespace "${ns}" -o json 2>/dev/null | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+        fi
+        kubectl delete namespace "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+      fi
+    done
+  fi
+  
+  # Final check for ClusterRoles and ClusterRoleBindings
+  for cr in controller-bootstrap user-operator; do
+    if kubectl get clusterrole "${cr}" >/dev/null 2>&1; then
+      log_info "Final cleanup: removing ClusterRole ${cr}..."
+      kubectl patch clusterrole "${cr}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      kubectl delete clusterrole "${cr}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+    fi
+  done
+  for crb in controller-bootstrap-binding; do
+    if kubectl get clusterrolebinding "${crb}" >/dev/null 2>&1; then
+      log_info "Final cleanup: removing ClusterRoleBinding ${crb}..."
+      kubectl patch clusterrolebinding "${crb}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      kubectl delete clusterrolebinding "${crb}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+    fi
+  done
+  
+  # Final check for leftover PVs
+  if [ "${KEEP_VOLUMES}" != "true" ]; then
+    VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
+    for ns in ${VOXEIL_NS_LIST}; do
+      if command -v python3 >/dev/null 2>&1; then
+        PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
+      elif command -v jq >/dev/null 2>&1; then
+        PVS="$(kubectl get pv -o json 2>/dev/null | jq -r '.items[] | select(.spec.claimRef.namespace == "'${ns}'") | .metadata.name' 2>/dev/null || true)"
+      else
+        PVS="$(kubectl get pv -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.claimRef.namespace}{"\n"}{end}' 2>/dev/null | grep -E "^[^\t]+\t${ns}$" | cut -f1 || true)"
+      fi
+      if [ -n "${PVS}" ]; then
+        log_info "Final cleanup: removing leftover PVs for namespace ${ns}..."
+        for pv in ${PVS}; do
+          kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
+          kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        done
+      fi
+    done
+  fi
+fi
+
 echo ""
 echo "=== Uninstall Complete ==="
 if [ "${DRY_RUN}" = "true" ]; then
   log_info "Dry run - no changes were made"
 else
   log_ok "All Voxeil Panel components removed"
+  if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
+    echo ""
+    log_info "Run 'bash /tmp/voxeil.sh doctor' to verify cleanup"
+  fi
 fi
