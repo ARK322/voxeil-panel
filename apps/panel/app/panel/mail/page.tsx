@@ -1,6 +1,8 @@
 import { api } from "../../../src/lib/api";
 import { env } from "../../../src/lib/env";
 
+export const dynamic = "force-dynamic";
+
 async function MailPage() {
   const mail = await api.mail.get();
 

@@ -1,5 +1,7 @@
 import { api } from "../../../src/lib/api";
 
+export const dynamic = "force-dynamic";
+
 function StatusBadge({ status }: { status: string }) {
   const colors =
     status === "healthy"

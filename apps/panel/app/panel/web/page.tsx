@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { api } from "../../../src/lib/api";
 
+export const dynamic = "force-dynamic";
+
 async function WebSitesPage() {
   const sites = await api.sites.list();
 

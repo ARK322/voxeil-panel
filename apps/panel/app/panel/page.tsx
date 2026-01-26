@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { api } from "../../src/lib/api";
 
+export const dynamic = "force-dynamic";
+
 async function DashboardPage() {
   const health = await api.health.get();
   const tenants = await api.tenants.list();

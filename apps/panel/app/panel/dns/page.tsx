@@ -1,5 +1,7 @@
 import { api } from "../../../src/lib/api";
 
+export const dynamic = "force-dynamic";
+
 async function DnsPage() {
   const dns = await api.dns.get();
 

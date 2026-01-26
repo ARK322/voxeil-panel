@@ -1,6 +1,8 @@
 import { api } from "../../../src/lib/api";
 import { env } from "../../../src/lib/env";
 
+export const dynamic = "force-dynamic";
+
 async function DbPage() {
   const db = await api.db.get();
 

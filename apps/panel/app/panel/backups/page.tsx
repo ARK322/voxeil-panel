@@ -1,5 +1,7 @@
 import { api } from "../../../src/lib/api";
 
+export const dynamic = "force-dynamic";
+
 async function BackupsPage() {
   const backups = await api.backups.get();
 
