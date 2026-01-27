@@ -2644,61 +2644,60 @@ if [ "${PROFILE}" = "full" ]; then
   else
     echo "  No orphaned webhooks found"
   fi
-fi
 
-# Use retry_apply to handle webhook timeouts
-retry_apply "${SERVICES_DIR}/cert-manager/cert-manager.yaml" "cert-manager manifests" 5 || {
-  log_error "Failed to apply cert-manager manifests after retries"
-  echo "This may be due to Kyverno webhook timeouts. You can try:"
-  echo "  1. Wait for Kyverno to be fully ready: kubectl wait --for=condition=Available deployment -n kyverno --all"
-  echo "  2. Or temporarily scale down Kyverno: kubectl scale deployment -n kyverno --replicas=0 --all"
-  exit 1
-}
+  # Use retry_apply to handle webhook timeouts
+  retry_apply "${SERVICES_DIR}/cert-manager/cert-manager.yaml" "cert-manager manifests" 5 || {
+    log_error "Failed to apply cert-manager manifests after retries"
+    echo "This may be due to Kyverno webhook timeouts. You can try:"
+    echo "  1. Wait for Kyverno to be fully ready: kubectl wait --for=condition=Available deployment -n kyverno --all"
+    echo "  2. Or temporarily scale down Kyverno: kubectl scale deployment -n kyverno --replicas=0 --all"
+    exit 1
+  }
 
-# Wait for CRDs with polling
-log_info "Waiting for cert-manager CRDs..."
-for i in {1..30}; do
-  if kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
+  # Wait for CRDs with polling
+  log_info "Waiting for cert-manager CRDs..."
+  for i in {1..30}; do
+    if kubectl get crd certificates.cert-manager.io >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
 
-kubectl wait --for=condition=Established crd/certificates.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s" || {
-  log_error "cert-manager CRDs did not become established"
-  kubectl get crd | grep cert-manager || true
-  exit 1
-}
-kubectl wait --for=condition=Established crd/certificaterequests.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
-kubectl wait --for=condition=Established crd/challenges.acme.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
-kubectl wait --for=condition=Established crd/clusterissuers.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
-kubectl wait --for=condition=Established crd/issuers.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
-kubectl wait --for=condition=Established crd/orders.acme.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+  kubectl wait --for=condition=Established crd/certificates.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s" || {
+    log_error "cert-manager CRDs did not become established"
+    kubectl get crd | grep cert-manager || true
+    exit 1
+  }
+  kubectl wait --for=condition=Established crd/certificaterequests.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+  kubectl wait --for=condition=Established crd/challenges.acme.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+  kubectl wait --for=condition=Established crd/clusterissuers.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+  kubectl wait --for=condition=Established crd/issuers.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
+  kubectl wait --for=condition=Established crd/orders.acme.cert-manager.io --timeout="${CERT_MANAGER_TIMEOUT}s"
 
-# Wait for deployments with polling
-log_info "Waiting for cert-manager deployments..."
-for i in {1..30}; do
-  if kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
-    break
-  fi
-  sleep 1
-done
+  # Wait for deployments with polling
+  log_info "Waiting for cert-manager deployments..."
+  for i in {1..30}; do
+    if kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
 
-kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s" || {
-  log_error "cert-manager deployment did not become available"
-  kubectl get pods -n cert-manager
-  exit 1
-}
-kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s" || {
-  log_error "cert-manager-webhook deployment did not become available"
-  kubectl get pods -n cert-manager
-  exit 1
-}
-kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s" || {
-  log_error "cert-manager-cainjector deployment did not become available"
-  kubectl get pods -n cert-manager
-  exit 1
-}
+  kubectl wait --for=condition=Available deployment/cert-manager -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s" || {
+    log_error "cert-manager deployment did not become available"
+    kubectl get pods -n cert-manager
+    exit 1
+  }
+  kubectl wait --for=condition=Available deployment/cert-manager-webhook -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s" || {
+    log_error "cert-manager-webhook deployment did not become available"
+    kubectl get pods -n cert-manager
+    exit 1
+  }
+  kubectl wait --for=condition=Available deployment/cert-manager-cainjector -n cert-manager --timeout="${CERT_MANAGER_TIMEOUT}s" || {
+    log_error "cert-manager-cainjector deployment did not become available"
+    kubectl get pods -n cert-manager
+    exit 1
+  }
   write_state_flag "CERT_MANAGER_INSTALLED"
   # Label cert-manager namespace
   label_namespace "cert-manager"
