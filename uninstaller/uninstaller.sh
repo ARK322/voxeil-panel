@@ -1485,6 +1485,20 @@ if [ "${PURGE_NODE}" = "true" ]; then
     log_info "Removing /var/lib/voxeil..."
     rm -rf /var/lib/voxeil 2>/dev/null || true
     
+    # Clean up Docker images if Docker is available
+    if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+      log_info "Cleaning up Voxeil Docker images..."
+      # Remove voxeil images
+      docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(voxeil|ghcr.io/.*/voxeil)" | while read -r image; do
+        log_info "Removing Docker image: ${image}"
+        docker rmi "${image}" 2>/dev/null || true
+      done
+      # Also remove by pattern (in case of different naming)
+      docker images | grep -E "voxeil|backup-runner|backup-service" | awk '{print $3}' | xargs -r docker rmi 2>/dev/null || true
+      # Clean up dangling images
+      docker image prune -f 2>/dev/null || true
+    fi
+    
     echo ""
     log_ok "Node purge complete - k3s and all Voxeil files removed"
     echo ""
@@ -1509,6 +1523,29 @@ run "rm -f /etc/ssh/sshd_config.voxeil-backup.* 2>/dev/null || true"
 # Only remove /var/lib/voxeil if not doing node purge (purge handles it)
 if [ "${PURGE_NODE}" != "true" ]; then
   run "rm -rf /var/lib/voxeil 2>/dev/null || true"
+fi
+
+# N) Clean up Docker images (optional, only if Docker is available)
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  log_step "Cleaning up Voxeil Docker images (optional)"
+  log_info "Removing Voxeil-related Docker images..."
+  # Remove voxeil images by pattern
+  VOXEIL_IMAGES=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(voxeil|ghcr.io/.*/voxeil|backup-runner|backup-service)" || true)
+  if [ -n "${VOXEIL_IMAGES}" ]; then
+    echo "${VOXEIL_IMAGES}" | while read -r image; do
+      if [ -n "${image}" ]; then
+        log_info "Removing Docker image: ${image}"
+        docker rmi "${image}" 2>/dev/null || true
+      fi
+    done
+  else
+    log_info "No Voxeil Docker images found to remove"
+  fi
+  # Clean up dangling images (optional)
+  log_info "Cleaning up dangling images..."
+  docker image prune -f 2>/dev/null || true
+else
+  log_info "Docker not available, skipping image cleanup"
 fi
 
 if [ "${DRY_RUN}" != "true" ] && command -v systemctl >/dev/null 2>&1; then

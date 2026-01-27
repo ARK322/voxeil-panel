@@ -1759,8 +1759,9 @@ PANEL_TLS_ISSUER="${PANEL_TLS_ISSUER:-letsencrypt-prod}"
 SITE_PORT_START="${SITE_PORT_START:-31000}"
 SITE_PORT_END="${SITE_PORT_END:-31999}"
 # Use GHCR_OWNER (lowercase) to match GitHub Actions workflow
-CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-ghcr.io/${GHCR_OWNER}/voxeil-controller:latest}"
-PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/${GHCR_OWNER}/voxeil-panel:latest}"
+IMAGE_TAG="${IMAGE_TAG:-latest}"
+CONTROLLER_IMAGE="${CONTROLLER_IMAGE:-ghcr.io/${GHCR_OWNER}/voxeil-controller:${IMAGE_TAG}}"
+PANEL_IMAGE="${PANEL_IMAGE:-ghcr.io/${GHCR_OWNER}/voxeil-panel:${IMAGE_TAG}}"
 
 # Admin credentials (canonical names)
 ADMIN_EMAIL="${ADMIN_EMAIL:-}"
@@ -2390,6 +2391,7 @@ fetch_manifest "infra/k8s/services/platform/panel-deploy.yaml" "${PLATFORM_DIR}/
 fetch_manifest "infra/k8s/services/platform/panel-svc.yaml" "${PLATFORM_DIR}/panel-svc.yaml" "panel service"
 fetch_manifest "infra/k8s/services/platform/panel-ingress.yaml" "${PLATFORM_DIR}/panel-ingress.yaml" "panel ingress"
 fetch_manifest "infra/k8s/services/platform/panel-auth.yaml" "${PLATFORM_DIR}/panel-auth.yaml" "panel auth"
+fetch_manifest "infra/k8s/services/platform/panel-redirect.yaml" "${PLATFORM_DIR}/panel-redirect.yaml" "panel redirect"
 
 log_info "Fetching infra-db manifests..."
 fetch_manifest "infra/k8s/services/infra-db/namespace.yaml" "${SERVICES_DIR}/infra-db/namespace.yaml" "infra-db namespace"
@@ -2924,6 +2926,7 @@ fi
 kubectl apply -f "${PLATFORM_DIR}/pvc.yaml"
 kubectl apply -f "${PLATFORM_DIR}/platform-secrets.yaml"
 kubectl apply -f "${PLATFORM_DIR}/panel-auth.yaml"
+kubectl apply -f "${PLATFORM_DIR}/panel-redirect.yaml"
 if [[ -n "${GHCR_USERNAME}" && -n "${GHCR_TOKEN}" ]]; then
   kubectl create secret docker-registry ghcr-pull-secret \
     -n platform \
@@ -2939,43 +2942,167 @@ fi
 # Note: Platform PVCs will be bound automatically when controller/panel pods are scheduled
 # (WaitForFirstConsumer: PVC binds when pod is scheduled, not before)
 
-# Validate controller image before applying deployment (non-blocking)
+# Function to auto-build images if validation fails
+auto_build_images() {
+  local image_type="$1"  # "controller" or "panel"
+  local image_name="$2"
+  
+  # Check if Docker is available
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    log_error "Docker is required to build images but is not available."
+    log_error ""
+    log_error "Options:"
+    log_error "  1. Wait for GitHub Actions workflow to build images:"
+    log_error "     https://github.com/${GHCR_OWNER}/${GHCR_REPO}/actions/workflows/images.yml"
+    log_error "  2. Manually trigger workflow:"
+    log_error "     Go to Actions > Build and Publish Docker Images > Run workflow"
+    log_error "  3. Install Docker and re-run installer (will auto-build images)"
+    return 1
+  fi
+  
+  log_info "Image not found in GHCR. Checking if GitHub Actions workflow has built it..."
+  log_info "Workflow URL: https://github.com/${GHCR_OWNER}/${GHCR_REPO}/actions/workflows/images.yml"
+  log_info "If workflow hasn't run yet, attempting to build locally..."
+  
+  log_info "Attempting to auto-build ${image_type} image locally..."
+  
+  # Determine tag suffix
+  local tag_suffix=""
+  if [ "${image_type}" = "controller" ]; then
+    tag_suffix="controller"
+  elif [ "${image_type}" = "panel" ]; then
+    tag_suffix="panel"
+  else
+    log_error "Unknown image type: ${image_type}"
+    return 1
+  fi
+  
+  # Check if git is available
+  if ! command -v git >/dev/null 2>&1; then
+    log_error "git is required to build images but is not installed."
+    log_error "Please install git: apt-get install -y git"
+    log_error "Or wait for GitHub Actions workflow to build images"
+    return 1
+  fi
+  
+  # Clone repository to temp directory
+  local repo_dir
+  repo_dir="$(mktemp -d)"
+  
+  local repo_url="https://github.com/${GHCR_OWNER}/${GHCR_REPO}.git"
+  local ref="${VERSION:-${REF:-main}}"
+  local image_tag="${IMAGE_TAG:-latest}"
+  
+  log_info "Cloning ${repo_url} (ref: ${ref})..."
+  if ! git clone --depth 1 --branch "${ref}" "${repo_url}" "${repo_dir}" 2>/dev/null; then
+    # Try main branch if specified branch doesn't exist
+    if [ "${ref}" != "main" ]; then
+      log_warn "Branch ${ref} not found, trying main..."
+      if ! git clone --depth 1 --branch main "${repo_url}" "${repo_dir}" 2>/dev/null; then
+        log_error "Failed to clone repository for building images"
+        log_error "Please ensure GitHub Actions workflow builds images, or check network connectivity"
+        rm -rf "${repo_dir}"
+        return 1
+      fi
+    else
+      log_error "Failed to clone repository for building images"
+      log_error "Please ensure GitHub Actions workflow builds images, or check network connectivity"
+      rm -rf "${repo_dir}"
+      return 1
+    fi
+  fi
+  
+  # Build image
+  log_info "Building ${image_type} image..."
+  local build_image="ghcr.io/${GHCR_OWNER}/voxeil-${tag_suffix}:${image_tag}"
+  local build_context=""
+  
+  if [ "${image_type}" = "controller" ]; then
+    build_context="${repo_dir}/apps/controller"
+  elif [ "${image_type}" = "panel" ]; then
+    build_context="${repo_dir}/apps/panel"
+  fi
+  
+  cd "${build_context}"
+  if docker build -t "${build_image}" . >/dev/null 2>&1; then
+    log_ok "${image_type} image built successfully: ${build_image}"
+    log_info "Note: This is a local build. For production, use images from GitHub Actions workflow."
+    # Clean up
+    cd /
+    rm -rf "${repo_dir}"
+    return 0
+  else
+    log_error "Failed to build ${image_type} image"
+    log_error ""
+    log_error "Please ensure GitHub Actions workflow builds images:"
+    log_error "  https://github.com/${GHCR_OWNER}/${GHCR_REPO}/actions/workflows/images.yml"
+    cd /
+    rm -rf "${repo_dir}"
+    return 1
+  fi
+}
+
+# Validate controller image before applying deployment
 if [[ "${SKIP_IMAGE_VALIDATION:-false}" != "true" ]]; then
   log_step "Validating controller image"
   if ! validate_image "${CONTROLLER_IMAGE}"; then
     echo ""
-    echo "⚠️  Controller image validation failed: ${CONTROLLER_IMAGE}"
-    echo "   This is normal for first-time installations if images haven't been built yet."
-    echo "   Continuing installation - k3s will attempt to pull the image during deployment."
-    echo ""
-    echo "   If deployment fails due to missing image, you can:"
-    echo "   1. Build images locally: ./scripts/build-images.sh --tag local"
-    echo "      Then re-run installer with: export CONTROLLER_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-controller:local"
-    echo "   2. Build and push to GHCR: ./scripts/build-images.sh --push --tag latest"
-    echo "   3. Set GHCR_USERNAME and GHCR_TOKEN if using private images"
-    echo "   4. Skip validation: export SKIP_IMAGE_VALIDATION=true"
-    echo ""
+    log_warn "Controller image validation failed: ${CONTROLLER_IMAGE}"
+    log_info "Attempting to auto-build image..."
+    
+    log_warn "Controller image not found in GHCR."
+    log_info "GitHub Actions workflow should build images automatically on push to main."
+    log_info "If images are not available, installer will attempt to build locally..."
+    
+    if auto_build_images "controller" "${CONTROLLER_IMAGE}"; then
+      log_ok "Controller image built successfully"
+      # Update CONTROLLER_IMAGE to use the built image
+      CONTROLLER_IMAGE="ghcr.io/${GHCR_OWNER}/voxeil-controller:${IMAGE_TAG:-latest}"
+      log_info "Using built image: ${CONTROLLER_IMAGE}"
+    else
+      log_error "Failed to auto-build controller image"
+      log_error "Installation cannot continue without controller image."
+      log_error ""
+      log_error "Solutions:"
+      log_error "  1. Trigger GitHub Actions workflow to build images:"
+      log_error "     https://github.com/${GHCR_OWNER}/${GHCR_REPO}/actions/workflows/images.yml"
+      log_error "  2. Wait for workflow to complete, then re-run installer"
+      log_error "  3. Or build manually: git clone https://github.com/${GHCR_OWNER}/${GHCR_REPO} && cd ${GHCR_REPO}/apps/controller && docker build -t ${CONTROLLER_IMAGE} ."
+      exit 1
+    fi
   fi
 else
   echo "Skipping controller image validation (SKIP_IMAGE_VALIDATION=true)"
 fi
 
-# Validate panel image before applying deployment (non-blocking)
+# Validate panel image before applying deployment
 if [[ "${SKIP_IMAGE_VALIDATION:-false}" != "true" ]]; then
   log_step "Validating panel image"
   if ! validate_image "${PANEL_IMAGE}"; then
     echo ""
-    echo "⚠️  Panel image validation failed: ${PANEL_IMAGE}"
-    echo "   This is normal for first-time installations if images haven't been built yet."
-    echo "   Continuing installation - k3s will attempt to pull the image during deployment."
-    echo ""
-    echo "   If deployment fails due to missing image, you can:"
-    echo "   1. Build images locally: ./scripts/build-images.sh --tag local"
-    echo "      Then re-run installer with: export PANEL_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-panel:local"
-    echo "   2. Build and push to GHCR: ./scripts/build-images.sh --push --tag latest"
-    echo "   3. Set GHCR_USERNAME and GHCR_TOKEN if using private images"
-    echo "   4. Skip validation: export SKIP_IMAGE_VALIDATION=true"
-    echo ""
+    log_warn "Panel image validation failed: ${PANEL_IMAGE}"
+    log_info "Attempting to auto-build image..."
+    
+    log_warn "Panel image not found in GHCR."
+    log_info "GitHub Actions workflow should build images automatically on push to main."
+    log_info "If images are not available, installer will attempt to build locally..."
+    
+    if auto_build_images "panel" "${PANEL_IMAGE}"; then
+      log_ok "Panel image built successfully"
+      # Update PANEL_IMAGE to use the built image
+      PANEL_IMAGE="ghcr.io/${GHCR_OWNER}/voxeil-panel:${IMAGE_TAG:-latest}"
+      log_info "Using built image: ${PANEL_IMAGE}"
+    else
+      log_error "Failed to auto-build panel image"
+      log_error "Installation cannot continue without panel image."
+      log_error ""
+      log_error "Solutions:"
+      log_error "  1. Trigger GitHub Actions workflow to build images:"
+      log_error "     https://github.com/${GHCR_OWNER}/${GHCR_REPO}/actions/workflows/images.yml"
+      log_error "  2. Wait for workflow to complete, then re-run installer"
+      log_error "  3. Or build manually: git clone https://github.com/${GHCR_OWNER}/${GHCR_REPO} && cd ${GHCR_REPO}/apps/panel && docker build -t ${PANEL_IMAGE} ."
+      exit 1
+    fi
   fi
 else
   echo "Skipping panel image validation (SKIP_IMAGE_VALIDATION=true)"
@@ -3719,6 +3846,8 @@ log_step "Post-install sanity checks"
 # Check Traefik pods are running
 log_info "Checking Traefik installation..."
 TRAEFIK_PODS="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --no-headers 2>/dev/null | grep -c Running || echo "0")"
+TRAEFIK_PODS="${TRAEFIK_PODS//[^0-9]/}"  # Remove non-numeric characters
+TRAEFIK_PODS="${TRAEFIK_PODS:-0}"  # Default to 0 if empty
 if [ "${TRAEFIK_PODS}" -eq 0 ]; then
   log_warn "Traefik pods not found or not running in kube-system"
   echo "  Checking Traefik pods status:"
@@ -3738,6 +3867,10 @@ log_info "Checking if Traefik is listening on ports 80 and 443..."
 if command -v ss >/dev/null 2>&1; then
   PORT_80="$(ss -lntp 2>/dev/null | grep -c ':80 ' || echo "0")"
   PORT_443="$(ss -lntp 2>/dev/null | grep -c ':443 ' || echo "0")"
+  PORT_80="${PORT_80//[^0-9]/}"  # Remove non-numeric characters
+  PORT_443="${PORT_443//[^0-9]/}"  # Remove non-numeric characters
+  PORT_80="${PORT_80:-0}"  # Default to 0 if empty
+  PORT_443="${PORT_443:-0}"  # Default to 0 if empty
   if [ "${PORT_80}" -eq 0 ] && [ "${PORT_443}" -eq 0 ]; then
     log_warn "Ports 80 and 443 are not listening"
     log_warn "Traefik may not be properly configured or may not have started"
@@ -3753,6 +3886,10 @@ if command -v ss >/dev/null 2>&1; then
 elif command -v netstat >/dev/null 2>&1; then
   PORT_80="$(netstat -lntp 2>/dev/null | grep -c ':80 ' || echo "0")"
   PORT_443="$(netstat -lntp 2>/dev/null | grep -c ':443 ' || echo "0")"
+  PORT_80="${PORT_80//[^0-9]/}"  # Remove non-numeric characters
+  PORT_443="${PORT_443//[^0-9]/}"  # Remove non-numeric characters
+  PORT_80="${PORT_80:-0}"  # Default to 0 if empty
+  PORT_443="${PORT_443:-0}"  # Default to 0 if empty
   if [ "${PORT_80}" -eq 0 ] && [ "${PORT_443}" -eq 0 ]; then
     log_warn "Ports 80 and 443 are not listening"
     log_warn "Traefik may not be properly configured or may not have started"
