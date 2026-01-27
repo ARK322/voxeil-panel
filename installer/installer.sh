@@ -1828,6 +1828,23 @@ prompt_password() {
   done
 }
 
+prompt_password_with_confirmation() {
+  local label="$1"
+  local password=""
+  local confirm=""
+  while true; do
+    password="$(prompt_password "${label}")"
+    echo "" >&2
+    confirm="$(prompt_password "Confirm ${label}")"
+    echo "" >&2
+    if [[ "${password}" == "${confirm}" ]]; then
+      printf "%s" "${password}"
+      return
+    fi
+    echo "Passwords do not match. Please try again." >&2
+  done
+}
+
 echo ""
 echo "== Config prompts =="
 
@@ -1889,7 +1906,7 @@ if [[ -z "${ADMIN_PASSWORD}" ]]; then
   if [[ -n "${PANEL_ADMIN_PASSWORD}" ]]; then
     ADMIN_PASSWORD="${PANEL_ADMIN_PASSWORD}"
   else
-    ADMIN_PASSWORD="$(prompt_password "Admin password")"
+    ADMIN_PASSWORD="$(prompt_password_with_confirmation "Admin password")"
   fi
 fi
 
@@ -2718,41 +2735,41 @@ fi
 # Install Flux only if profile is full
 if [ "${PROFILE}" = "full" ]; then
   log_step "Installing Flux controllers"
-# Check if namespace exists before creating
-if kubectl get namespace flux-system >/dev/null 2>&1; then
-  echo "  Namespace flux-system already exists, skipping creation"
-else
-  kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
-fi
-FLUX_INSTALL_URL="https://github.com/fluxcd/flux2/releases/download/v2.3.0/install.yaml"
-if ! curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"; then
-  log_error "Failed to download Flux install.yaml from ${FLUX_INSTALL_URL}"
-  exit 1
-fi
-if [[ ! -f "${SERVICES_DIR}/flux-system/install.yaml" ]] || [[ ! -s "${SERVICES_DIR}/flux-system/install.yaml" ]]; then
-  log_error "Flux install.yaml is missing or empty after download"
-  exit 1
-fi
-kubectl apply -f "${SERVICES_DIR}/flux-system/install.yaml" || {
-  log_error "Failed to apply Flux manifests"
-  exit 1
-}
-
-# Poll for deployments before wait
-log_info "Waiting for Flux deployments..."
-for i in {1..30}; do
-  if kubectl get deployments -n flux-system --no-headers 2>/dev/null | grep -q .; then
-    break
+  # Check if namespace exists before creating
+  if kubectl get namespace flux-system >/dev/null 2>&1; then
+    echo "  Namespace flux-system already exists, skipping creation"
+  else
+    kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
   fi
-  sleep 1
-done
+  FLUX_INSTALL_URL="https://github.com/fluxcd/flux2/releases/download/v2.3.0/install.yaml"
+  if ! curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"; then
+    log_error "Failed to download Flux install.yaml from ${FLUX_INSTALL_URL}"
+    exit 1
+  fi
+  if [[ ! -f "${SERVICES_DIR}/flux-system/install.yaml" ]] || [[ ! -s "${SERVICES_DIR}/flux-system/install.yaml" ]]; then
+    log_error "Flux install.yaml is missing or empty after download"
+    exit 1
+  fi
+  kubectl apply -f "${SERVICES_DIR}/flux-system/install.yaml" || {
+    log_error "Failed to apply Flux manifests"
+    exit 1
+  }
 
-kubectl wait --for=condition=Available deployment -n flux-system --all --timeout="${FLUX_TIMEOUT}s" || {
-  log_error "Flux deployments did not become available within ${FLUX_TIMEOUT}s"
-  kubectl get pods -n flux-system -o wide
-  kubectl get events -n flux-system --sort-by='.lastTimestamp' | tail -20
-  exit 1
-}
+  # Poll for deployments before wait
+  log_info "Waiting for Flux deployments..."
+  for i in {1..30}; do
+    if kubectl get deployments -n flux-system --no-headers 2>/dev/null | grep -q .; then
+      break
+    fi
+    sleep 1
+  done
+
+  kubectl wait --for=condition=Available deployment -n flux-system --all --timeout="${FLUX_TIMEOUT}s" || {
+    log_error "Flux deployments did not become available within ${FLUX_TIMEOUT}s"
+    kubectl get pods -n flux-system -o wide
+    kubectl get events -n flux-system --sort-by='.lastTimestamp' | tail -20
+    exit 1
+  }
   write_state_flag "FLUX_INSTALLED"
   # Label flux-system namespace
   label_namespace "flux-system"
