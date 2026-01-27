@@ -1833,10 +1833,26 @@ prompt_password_with_confirmation() {
   local password=""
   local confirm=""
   while true; do
-    password="$(prompt_password "${label}")"
-    echo "" >&2
-    confirm="$(prompt_password "Confirm ${label}")"
-    echo "" >&2
+    # First password
+    while true; do
+      read -r -s -p "${label}: " password < "${PROMPT_IN}"
+      echo "" >&2
+      if [[ -n "${password}" ]]; then
+        break
+      fi
+      echo "Password cannot be empty. Please try again." >&2
+    done
+    
+    # Confirm password
+    while true; do
+      read -r -s -p "Confirm ${label}: " confirm < "${PROMPT_IN}"
+      echo "" >&2
+      if [[ -n "${confirm}" ]]; then
+        break
+      fi
+      echo "Password cannot be empty. Please try again." >&2
+    done
+    
     if [[ "${password}" == "${confirm}" ]]; then
       printf "%s" "${password}"
       return
@@ -2841,9 +2857,9 @@ if [ "${PROFILE}" = "full" ]; then
   # CRITICAL: Wait for Kyverno webhook service to be reachable BEFORE hardening webhooks
   # This prevents bricking the cluster if service is not ready
   log_info "Waiting for Kyverno webhook service to be reachable (before hardening webhooks)..."
-  local service_ready=false
-  local max_wait=120  # 2 minutes max wait
-  local waited=0
+  service_ready=false
+  max_wait=120  # 2 minutes max wait
+  waited=0
   
   while [ ${waited} -lt ${max_wait} ]; do
     if check_kyverno_service_reachable "kyverno" "kyverno-svc" 5; then
