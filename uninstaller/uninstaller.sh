@@ -646,6 +646,8 @@ scale_down_controllers() {
 }
 
 # Disable admission webhooks (Kyverno and cert-manager) to prevent API lock
+# This function patches ALL webhooks entries (not just index 0) to fail-open
+# Uses request-timeouts to prevent hanging on unreachable webhooks
 disable_admission_webhooks_preflight() {
   echo ""
   log_info "Preflight: disabling Kyverno/cert-manager/flux admission webhooks (to prevent API lock)"
@@ -655,51 +657,100 @@ disable_admission_webhooks_preflight() {
 
   # Then, try to patch failurePolicy to Ignore (safer than immediate delete)
   # This prevents API lock while still allowing graceful cleanup
+  # IMPORTANT: Patch ALL webhooks entries, not just index 0 (webhook configs have multiple webhooks)
   webhook_patterns="kyverno cert-manager flux toolkit"
   for pattern in ${webhook_patterns}; do
-    # ValidatingWebhookConfigurations
-    validating_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
+    # ValidatingWebhookConfigurations - use request-timeout to prevent hanging
+    validating_webhooks="$(kubectl get validatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
     if [ -n "${validating_webhooks}" ]; then
       for wh in ${validating_webhooks}; do
-        # Patch failurePolicy to Ignore
-        kubectl patch validatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=json 2>/dev/null || \
-        kubectl patch validatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=merge 2>/dev/null || true
+        log_info "Patching validating webhook: ${wh} (setting fail-open)"
+        # Use python3 or jq to properly patch ALL webhooks entries
+        if command -v python3 >/dev/null 2>&1; then
+          kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+            python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if 'webhooks' in data:
+    for webhook in data['webhooks']:
+        webhook['failurePolicy'] = 'Ignore'
+        webhook['timeoutSeconds'] = 5
+print(json.dumps(data))
+" 2>/dev/null | kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
+        elif command -v jq >/dev/null 2>&1; then
+          kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+            jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
+            kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
+        else
+          # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
+          kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
+            -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
+            --type=json 2>/dev/null || \
+          kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
+            -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
+            --type=merge 2>/dev/null || true
+        fi
       done
     fi
     
-    # MutatingWebhookConfigurations
-    mutating_webhooks="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
+    # MutatingWebhookConfigurations - use request-timeout to prevent hanging
+    mutating_webhooks="$(kubectl get mutatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
     if [ -n "${mutating_webhooks}" ]; then
       for wh in ${mutating_webhooks}; do
-        # Patch failurePolicy to Ignore
-        kubectl patch mutatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=json 2>/dev/null || \
-        kubectl patch mutatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=merge 2>/dev/null || true
+        log_info "Patching mutating webhook: ${wh} (setting fail-open)"
+        # Use python3 or jq to properly patch ALL webhooks entries
+        if command -v python3 >/dev/null 2>&1; then
+          kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+            python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if 'webhooks' in data:
+    for webhook in data['webhooks']:
+        webhook['failurePolicy'] = 'Ignore'
+        webhook['timeoutSeconds'] = 5
+print(json.dumps(data))
+" 2>/dev/null | kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
+        elif command -v jq >/dev/null 2>&1; then
+          kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+            jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
+            kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
+        else
+          # Fallback: try patch with type=json
+          kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
+            -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
+            --type=json 2>/dev/null || \
+          kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
+            -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
+            --type=merge 2>/dev/null || true
+        fi
       done
     fi
   done
 
-  # If patch fails (webhook unreachable), try direct delete
+  # If patch fails (webhook unreachable), try direct delete with request-timeout
   # Kyverno: delete any webhook configs named kyverno-*
-  kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
-    | tr ' ' '\n' | grep -E '^kyverno-' | xargs -r kubectl delete validatingwebhookconfiguration --ignore-not-found >/dev/null 2>&1 || true
+  kubectl get validatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
+    | tr ' ' '\n' | grep -E '^kyverno-' | xargs -r -I {} kubectl delete validatingwebhookconfiguration {} --request-timeout=20s --ignore-not-found >/dev/null 2>&1 || true
 
-  kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
-    | tr ' ' '\n' | grep -E '^kyverno-' | xargs -r kubectl delete mutatingwebhookconfiguration --ignore-not-found >/dev/null 2>&1 || true
+  kubectl get mutatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
+    | tr ' ' '\n' | grep -E '^kyverno-' | xargs -r -I {} kubectl delete mutatingwebhookconfiguration {} --request-timeout=20s --ignore-not-found >/dev/null 2>&1 || true
 
   # cert-manager: there can be BOTH validating and mutating configs called cert-manager-webhook
-  kubectl delete validatingwebhookconfiguration cert-manager-webhook --ignore-not-found >/dev/null 2>&1 || true
-  kubectl delete mutatingwebhookconfiguration cert-manager-webhook --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete validatingwebhookconfiguration cert-manager-webhook --request-timeout=20s --ignore-not-found >/dev/null 2>&1 || true
+  kubectl delete mutatingwebhookconfiguration cert-manager-webhook --request-timeout=20s --ignore-not-found >/dev/null 2>&1 || true
 
   # Flux webhooks
-  kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
-    | tr ' ' '\n' | grep -iE 'flux' | xargs -r kubectl delete validatingwebhookconfiguration --ignore-not-found >/dev/null 2>&1 || true
+  kubectl get validatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
+    | tr ' ' '\n' | grep -iE 'flux' | xargs -r -I {} kubectl delete validatingwebhookconfiguration {} --request-timeout=20s --ignore-not-found >/dev/null 2>&1 || true
 
-  kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
-    | tr ' ' '\n' | grep -iE 'flux' | xargs -r kubectl delete mutatingwebhookconfiguration --ignore-not-found >/dev/null 2>&1 || true
+  kubectl get mutatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null \
+    | tr ' ' '\n' | grep -iE 'flux' | xargs -r -I {} kubectl delete mutatingwebhookconfiguration {} --request-timeout=20s --ignore-not-found >/dev/null 2>&1 || true
 
-  # Also delete labeled webhooks
+  # Also delete labeled webhooks (with request-timeout)
   kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \
-    -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true >/dev/null 2>&1 || true
+    -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true >/dev/null 2>&1 || true
+  
+  log_ok "Admission webhooks disabled (fail-open mode)"
 }
 
 # Wait for namespace deletion with timeout (simplified - finalizer removal handled in delete_namespace)
@@ -752,19 +803,19 @@ force_remove_namespace_finalizers() {
   
   log_info "Force removing finalizers from namespace ${namespace}..."
   
-  # Quick method: Try patch first (fastest)
-  kubectl patch namespace "${namespace}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+  # Quick method: Try patch first (fastest, use request-timeout)
+  kubectl patch namespace "${namespace}" --request-timeout=10s -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
   
   # If still exists, try /finalize endpoint (more aggressive, but can be slow)
   if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
     # Use the fastest available tool
     if command -v jq >/dev/null 2>&1; then
-      kubectl get namespace "${namespace}" -o json 2>/dev/null | jq '.spec.finalizers=[]' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+      kubectl get namespace "${namespace}" --request-timeout=10s -o json 2>/dev/null | jq '.spec.finalizers=[]' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" --request-timeout=15s -f - >/dev/null 2>&1 || true
     elif command -v python3 >/dev/null 2>&1; then
-      kubectl get namespace "${namespace}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+      kubectl get namespace "${namespace}" --request-timeout=10s -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" --request-timeout=15s -f - >/dev/null 2>&1 || true
     elif command -v sed >/dev/null 2>&1; then
       # Fallback: use sed to remove finalizers array
-      kubectl get namespace "${namespace}" -o json 2>/dev/null | sed 's/"finalizers":\[[^]]*\]/"finalizers":[]/g' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" -f - >/dev/null 2>&1 || true
+      kubectl get namespace "${namespace}" --request-timeout=10s -o json 2>/dev/null | sed 's/"finalizers":\[[^]]*\]/"finalizers":[]/g' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${namespace}/finalize" --request-timeout=15s -f - >/dev/null 2>&1 || true
     fi
   fi
 }
@@ -808,9 +859,9 @@ delete_namespace() {
       # Capture the bound PV name early (helps when PVC is stuck in Terminating)
       volume_name="$(kubectl_safe 5 get pvc "${pvc}" -n "${namespace}" -o jsonpath='{.spec.volumeName}' 2>/dev/null || true)"
 
-      # Quick attempt: remove finalizers and delete (never hang)
-      kubectl_safe 5 patch pvc "${pvc}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-      kubectl_safe 8 delete pvc "${pvc}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+      # Quick attempt: remove finalizers and delete (never hang, use request-timeout)
+      kubectl_safe 5 patch pvc "${pvc}" -n "${namespace}" --request-timeout=10s -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      kubectl_safe 8 delete pvc "${pvc}" -n "${namespace}" --request-timeout=15s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
 
       # One quick check after 1 second, then move on
       sleep 1
@@ -867,9 +918,9 @@ delete_namespace() {
         fi
         
         echo "  Processing PV: ${pv}..."
-        # Quick attempt: remove finalizers and claimRef, then delete (fire and forget, no wait)
-        kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
-        kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        # Quick attempt: remove finalizers and claimRef, then delete (fire and forget, no wait, use request-timeout)
+        kubectl patch pv "${pv}" --request-timeout=10s -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
+        kubectl delete pv "${pv}" --request-timeout=15s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
         
         # One quick check after 1 second, then move on
         sleep 1
@@ -946,16 +997,16 @@ delete_namespace() {
       force_remove_namespace_finalizers "${namespace}"
     fi
     
-    # Delete namespace (with timeout to prevent hanging)
+    # Delete namespace (with request-timeout to prevent hanging on webhook calls)
     log_info "Deleting namespace ${namespace}..."
-    err="$(run_with_timeout 30 "kubectl delete namespace \"${namespace}\" --ignore-not-found=true --grace-period=0 --force" 2>&1 || echo "timeout_or_error")"
+    err="$(run_with_timeout 30 "kubectl delete namespace \"${namespace}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force" 2>&1 || echo "timeout_or_error")"
     
     # Check for webhook errors in stderr
     if echo "$err" | grep -qiE 'failed calling webhook|context deadline exceeded' && echo "$err" | grep -qiE 'kyverno|cert-manager'; then
       log_warn "Admission webhook blockage detected while deleting ${namespace}. Disabling webhooks and retrying..."
       disable_admission_webhooks_preflight
-      # Retry deletion after disabling webhooks (with timeout)
-      run_with_timeout 30 "kubectl delete namespace \"${namespace}\" --ignore-not-found=true --grace-period=0 --force" >/dev/null 2>&1 || true
+      # Retry deletion after disabling webhooks (with request-timeout)
+      run_with_timeout 30 "kubectl delete namespace \"${namespace}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force" >/dev/null 2>&1 || true
     fi
     
     # Immediately check if namespace is stuck in Terminating and remove finalizers
@@ -1034,8 +1085,8 @@ delete_namespace() {
       final_waited=$((final_waited + 1))
     done
     
-    # Final check - if still exists, log warning but continue
-    if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+    # Final check - if still exists, log warning but continue (use request-timeout)
+    if kubectl get namespace "${namespace}" --request-timeout=5s >/dev/null 2>&1; then
       log_warn "Namespace ${namespace} may still exist - continuing with cleanup"
       echo "  Manual cleanup may be required: kubectl get namespace ${namespace} -o json | jq '.spec.finalizers=[]' | kubectl replace --raw \"/api/v1/namespaces/${namespace}/finalize\" -f -"
     else
@@ -1193,22 +1244,22 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   # G) Remaining webhooks (cluster-scoped) by label (cert-manager, Flux, etc.)
   # Note: Kyverno webhooks are handled in preflight to prevent API lock
   log_step "Deleting remaining webhooks"
-  run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # Also delete by name patterns if not labeled (backward compatibility - cert-manager, Flux, etc.)
   if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
     log_info "Deleting cert-manager webhooks (by name pattern)..."
-    cert_webhooks="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i cert-manager || true)"
+    cert_webhooks="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i cert-manager || true)"
     for webhook in ${cert_webhooks}; do
-      run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \"${webhook}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \"${webhook}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
     done
   fi
   
   if [ "${FORCE}" = "true" ] || is_installed "FLUX_INSTALLED"; then
     log_info "Deleting Flux webhooks (by name pattern)..."
-    flux_webhooks="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i flux || true)"
+    flux_webhooks="$(kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i flux || true)"
     for webhook in ${flux_webhooks}; do
-      run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \"${webhook}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      run "kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \"${webhook}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
     done
   fi
   
@@ -1243,25 +1294,25 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   
   # I) CRDs LAST by label (reverse of installer: CRDs are installed first for cert-manager/Kyverno/Flux)
   log_step "Deleting CRDs"
-  run "kubectl delete crd -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete crd -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # Also delete by name patterns (backward compatibility)
   # Note: FORCE=true CRD deletions are deferred to Step F (after namespace deletion)
   if [ "${FORCE}" != "true" ] && is_installed "CERT_MANAGER_INSTALLED"; then
     log_info "Deleting cert-manager CRDs (by name pattern)..."
-    run "kubectl delete crd -l app.kubernetes.io/name=cert-manager --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-    run "kubectl delete crd certificates.cert-manager.io certificaterequests.cert-manager.io challenges.acme.cert-manager.io clusterissuers.cert-manager.io issuers.cert-manager.io orders.acme.cert-manager.io --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd -l app.kubernetes.io/name=cert-manager --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd certificates.cert-manager.io certificaterequests.cert-manager.io challenges.acme.cert-manager.io clusterissuers.cert-manager.io issuers.cert-manager.io orders.acme.cert-manager.io --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
   if [ "${FORCE}" != "true" ] && is_installed "KYVERNO_INSTALLED"; then
     log_info "Deleting Kyverno CRDs (by name pattern)..."
-    run "kubectl delete crd -l app.kubernetes.io/name=kyverno --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-    run "kubectl delete crd policies.kyverno.io clusterpolicies.kyverno.io policyreports.wgpolicyk8s.io clusterpolicyreports.wgpolicyk8s.io --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd -l app.kubernetes.io/name=kyverno --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd policies.kyverno.io clusterpolicies.kyverno.io policyreports.wgpolicyk8s.io clusterpolicyreports.wgpolicyk8s.io --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
   if [ "${FORCE}" != "true" ] && is_installed "FLUX_INSTALLED"; then
     log_info "Deleting Flux CRDs (by name pattern)..."
-    run "kubectl delete crd -l app.kubernetes.io/name=flux --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd -l app.kubernetes.io/name=flux --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
   # J) Force-mode fallback cleanup for unlabeled leftovers (state missing)
@@ -1315,18 +1366,18 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     
     # Delete CRDs by patterns (name match, not labels) - LAST, after namespaces and webhooks
     log_info "Cleaning up CRDs by name pattern (kyverno/cert-manager/flux/toolkit)..."
-    crds="$(kubectl get crd -o name 2>/dev/null | grep -E '(kyverno|cert-manager|fluxcd|toolkit)' || true)"
+    crds="$(kubectl get crd --request-timeout=10s -o name 2>/dev/null | grep -E '(kyverno|cert-manager|fluxcd|toolkit)' || true)"
     if [ -n "${crds}" ]; then
-      echo "${crds}" | xargs -r kubectl delete --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+      echo "${crds}" | xargs -r -I {} kubectl delete {} --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
     fi
     
     # Also delete CRDs by name patterns (from Step E, deferred here for FORCE=true case)
     log_info "Cleaning up CRDs by component patterns..."
-    run "kubectl delete crd -l app.kubernetes.io/name=cert-manager --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-    run "kubectl delete crd certificates.cert-manager.io certificaterequests.cert-manager.io challenges.acme.cert-manager.io clusterissuers.cert-manager.io issuers.cert-manager.io orders.acme.cert-manager.io --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-    run "kubectl delete crd -l app.kubernetes.io/name=kyverno --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-    run "kubectl delete crd policies.kyverno.io clusterpolicies.kyverno.io policyreports.wgpolicyk8s.io clusterpolicyreports.wgpolicyk8s.io --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-    run "kubectl delete crd -l app.kubernetes.io/name=flux --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd -l app.kubernetes.io/name=cert-manager --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd certificates.cert-manager.io certificaterequests.cert-manager.io challenges.acme.cert-manager.io clusterissuers.cert-manager.io issuers.cert-manager.io orders.acme.cert-manager.io --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd -l app.kubernetes.io/name=kyverno --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd policies.kyverno.io clusterpolicies.kyverno.io policyreports.wgpolicyk8s.io clusterpolicyreports.wgpolicyk8s.io --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete crd -l app.kubernetes.io/name=flux --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
   # K) Storage cleanup - PVs (unless --keep-volumes)

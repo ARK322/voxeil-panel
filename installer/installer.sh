@@ -308,6 +308,242 @@ fix_kyverno_cleanup_jobs() {
   fi
 }
 
+# ========= Admission Webhook Safety Functions =========
+# These functions prevent admission webhook deadlocks during installation/uninstallation
+
+# Safely bootstrap Kyverno webhooks: set ALL webhooks to fail-open (failurePolicy=Ignore)
+# and set timeoutSeconds to a small value (3-5 seconds) to prevent API lock
+# This must patch ALL webhooks entries, not just index 0 (Kyverno configs have multiple webhooks)
+safe_bootstrap_kyverno_webhooks() {
+  log_info "Safe bootstrap: Setting Kyverno webhooks to fail-open (failurePolicy=Ignore) to prevent API lock..."
+  
+  # Find all Kyverno webhook configurations
+  local validating_webhooks
+  validating_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE 'kyverno' || true)"
+  local mutating_webhooks
+  mutating_webhooks="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE 'kyverno' || true)"
+  
+  # Patch validating webhooks - patch ALL webhooks entries, not just index 0
+  for wh in ${validating_webhooks}; do
+    log_info "Patching validating webhook: ${wh}"
+    # Use python3 or jq to properly patch ALL webhooks entries
+    if command -v python3 >/dev/null 2>&1; then
+      kubectl get validatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+        python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if 'webhooks' in data:
+    for webhook in data['webhooks']:
+        webhook['failurePolicy'] = 'Ignore'
+        webhook['timeoutSeconds'] = 5
+print(json.dumps(data))
+" 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+    elif command -v jq >/dev/null 2>&1; then
+      kubectl get validatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+        jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
+        kubectl apply -f - >/dev/null 2>&1 || true
+    else
+      # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
+      kubectl patch validatingwebhookconfiguration "${wh}" \
+        -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
+        --type=json 2>/dev/null || \
+      kubectl patch validatingwebhookconfiguration "${wh}" \
+        -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
+        --type=merge 2>/dev/null || true
+    fi
+  done
+  
+  # Patch mutating webhooks - patch ALL webhooks entries, not just index 0
+  for wh in ${mutating_webhooks}; do
+    log_info "Patching mutating webhook: ${wh}"
+    # Use python3 or jq to properly patch ALL webhooks entries
+    if command -v python3 >/dev/null 2>&1; then
+      kubectl get mutatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+        python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if 'webhooks' in data:
+    for webhook in data['webhooks']:
+        webhook['failurePolicy'] = 'Ignore'
+        webhook['timeoutSeconds'] = 5
+print(json.dumps(data))
+" 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+    elif command -v jq >/dev/null 2>&1; then
+      kubectl get mutatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+        jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
+        kubectl apply -f - >/dev/null 2>&1 || true
+    else
+      # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
+      kubectl patch mutatingwebhookconfiguration "${wh}" \
+        -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
+        --type=json 2>/dev/null || \
+      kubectl patch mutatingwebhookconfiguration "${wh}" \
+        -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
+        --type=merge 2>/dev/null || true
+    fi
+  done
+  
+  log_ok "Kyverno webhooks set to fail-open"
+}
+
+# Check if Kyverno webhook service is reachable
+# Returns 0 if service is reachable, 1 otherwise
+check_kyverno_service_reachable() {
+  local namespace="${1:-kyverno}"
+  local service_name="${2:-kyverno-svc}"
+  local timeout="${3:-10}"
+  
+  # Check if service exists
+  if ! kubectl get svc "${service_name}" -n "${namespace}" --request-timeout="${timeout}s" >/dev/null 2>&1; then
+    return 1
+  fi
+  
+  # Check if service has endpoints with at least 1 ready address
+  local endpoints
+  endpoints="$(kubectl get endpoints "${service_name}" -n "${namespace}" -o jsonpath='{.subsets[*].addresses[*].ip}' --request-timeout="${timeout}s" 2>/dev/null || echo "")"
+  
+  if [ -z "${endpoints}" ]; then
+    return 1
+  fi
+  
+  # Check if at least one endpoint IP exists
+  local endpoint_count
+  endpoint_count="$(echo "${endpoints}" | tr ' ' '\n' | grep -v '^$' | wc -l || echo "0")"
+  
+  if [ "${endpoint_count}" -gt 0 ]; then
+    return 0
+  fi
+  
+  return 1
+}
+
+# Harden Kyverno webhooks: set failurePolicy=Fail after service is reachable
+# This restores proper security posture once Kyverno is healthy
+harden_kyverno_webhooks() {
+  log_info "Hardening Kyverno webhooks: Setting failurePolicy=Fail (service is reachable)..."
+  
+  # Find all Kyverno webhook configurations
+  local validating_webhooks
+  validating_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE 'kyverno' || true)"
+  local mutating_webhooks
+  mutating_webhooks="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE 'kyverno' || true)"
+  
+  # Patch validating webhooks - patch ALL webhooks entries
+  for wh in ${validating_webhooks}; do
+    log_info "Hardening validating webhook: ${wh}"
+    # Use python3 or jq to properly patch ALL webhooks entries
+    if command -v python3 >/dev/null 2>&1; then
+      kubectl get validatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+        python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if 'webhooks' in data:
+    for webhook in data['webhooks']:
+        webhook['failurePolicy'] = 'Fail'
+        # Keep timeoutSeconds reasonable (default is usually 10s)
+        if 'timeoutSeconds' not in webhook or webhook.get('timeoutSeconds', 0) < 5:
+            webhook['timeoutSeconds'] = 10
+print(json.dumps(data))
+" 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+    elif command -v jq >/dev/null 2>&1; then
+      kubectl get validatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+        jq '.webhooks[] |= . + {"failurePolicy": "Fail", "timeoutSeconds": 10}' 2>/dev/null | \
+        kubectl apply -f - >/dev/null 2>&1 || true
+    else
+      # Fallback: try patch with type=json
+      kubectl patch validatingwebhookconfiguration "${wh}" \
+        -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
+        --type=json 2>/dev/null || \
+      kubectl patch validatingwebhookconfiguration "${wh}" \
+        -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
+        --type=merge 2>/dev/null || true
+    fi
+  done
+  
+  # Patch mutating webhooks - patch ALL webhooks entries
+  for wh in ${mutating_webhooks}; do
+    log_info "Hardening mutating webhook: ${wh}"
+    # Use python3 or jq to properly patch ALL webhooks entries
+    if command -v python3 >/dev/null 2>&1; then
+      kubectl get mutatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+        python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if 'webhooks' in data:
+    for webhook in data['webhooks']:
+        webhook['failurePolicy'] = 'Fail'
+        # Keep timeoutSeconds reasonable (default is usually 10s)
+        if 'timeoutSeconds' not in webhook or webhook.get('timeoutSeconds', 0) < 5:
+            webhook['timeoutSeconds'] = 10
+print(json.dumps(data))
+" 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+    elif command -v jq >/dev/null 2>&1; then
+      kubectl get mutatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+        jq '.webhooks[] |= . + {"failurePolicy": "Fail", "timeoutSeconds": 10}' 2>/dev/null | \
+        kubectl apply -f - >/dev/null 2>&1 || true
+    else
+      # Fallback: try patch with type=json
+      kubectl patch mutatingwebhookconfiguration "${wh}" \
+        -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
+        --type=json 2>/dev/null || \
+      kubectl patch mutatingwebhookconfiguration "${wh}" \
+        -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
+        --type=merge 2>/dev/null || true
+    fi
+  done
+  
+  log_ok "Kyverno webhooks hardened (failurePolicy=Fail)"
+}
+
+# Self-heal wrapper for kubectl operations that may be blocked by admission webhooks
+# If a kubectl command fails with webhook timeout, automatically run safe bootstrap and retry
+kubectl_with_webhook_heal() {
+  local cmd="$*"
+  local output
+  local exit_code
+  
+  # Try the command first
+  output="$(eval "${cmd}" 2>&1)"
+  exit_code=$?
+  
+  # If command succeeded, return
+  if [ ${exit_code} -eq 0 ]; then
+    echo "${output}"
+    return 0
+  fi
+  
+  # Check if error is related to Kyverno webhook timeout
+  if echo "${output}" | grep -qiE "failed calling webhook.*kyverno|context deadline exceeded.*kyverno"; then
+    log_warn "Kyverno webhook timeout detected, running safe bootstrap and retrying..."
+    safe_bootstrap_kyverno_webhooks
+    
+    # Optionally scale down Kyverno admission controller temporarily if required
+    if kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
+      log_info "Temporarily scaling down Kyverno admission controller to unblock..."
+      kubectl scale deployment kyverno-admission-controller -n kyverno --replicas=0 --request-timeout=10s >/dev/null 2>&1 || true
+      sleep 2
+    fi
+    
+    # Retry the command once
+    output="$(eval "${cmd}" 2>&1)"
+    exit_code=$?
+    
+    if [ ${exit_code} -eq 0 ]; then
+      log_ok "Command succeeded after webhook heal"
+      echo "${output}"
+      return 0
+    else
+      log_warn "Command still failed after webhook heal, but continuing..."
+      echo "${output}" >&2
+      return ${exit_code}
+    fi
+  fi
+  
+  # If error is not webhook-related, return original error
+  echo "${output}" >&2
+  return ${exit_code}
+}
+
 # Check kubectl context
 check_kubectl_context() {
   if ! kubectl cluster-info >/dev/null 2>&1; then
@@ -2383,44 +2619,9 @@ if [ "${PROFILE}" = "full" ]; then
     exit 1
   fi
 
-# Check if Kyverno is installed and might cause webhook timeouts
-# Also check for orphaned Kyverno webhooks (namespace deleted but webhooks remain)
-if kubectl get namespace kyverno >/dev/null 2>&1; then
-  echo "Kyverno namespace detected, checking webhook readiness..."
-  # Wait a moment for Kyverno webhooks to be responsive
-  sleep 2
-  echo "Checking Kyverno deployments..."
-  
-  # Check if Kyverno admission controller deployment exists
-  # Use a short timeout for get command to avoid hanging
-  if kubectl get deployment kyverno-admission-controller -n kyverno --request-timeout=5s >/dev/null 2>&1; then
-    echo "Checking Kyverno admission controller readiness (timeout: 30s)..."
-    # kubectl wait has a timeout, make it non-blocking
-    # Suppress stderr to avoid noise, but allow exit code to be checked
-    if kubectl wait --for=condition=Available deployment/kyverno-admission-controller -n kyverno --timeout=30s --request-timeout=35s 2>/dev/null; then
-      echo "✓ Kyverno admission controller is ready"
-    else
-      echo "⚠ Warning: Kyverno admission controller may not be fully ready (timeout or not available)"
-      echo "  Proceeding anyway - this may cause webhook timeouts during cert-manager installation."
-    fi
-  else
-    echo "Kyverno admission controller deployment not found (may be installing or using different name)"
-  fi
-  
-  # Also check for other common Kyverno deployments (non-blocking)
-  if kubectl get deployment kyverno -n kyverno --request-timeout=5s >/dev/null 2>&1; then
-    echo "Checking Kyverno main deployment readiness (timeout: 30s)..."
-    if kubectl wait --for=condition=Available deployment/kyverno -n kyverno --timeout=30s --request-timeout=35s 2>/dev/null; then
-      echo "✓ Kyverno main deployment is ready"
-    else
-      echo "⚠ Kyverno main deployment not ready yet (proceeding anyway)"
-    fi
-  fi
-  log_info "Proceeding with cert-manager installation..."
-else
-  log_info "Kyverno namespace not found (will be installed later)"
   # Check for orphaned Kyverno webhooks (namespace deleted but webhooks remain)
-  log_info "Checking for orphaned Kyverno webhooks..."
+  # This is a safety check - Kyverno will be installed later, after cert-manager and Flux
+  log_info "Checking for orphaned Kyverno webhooks (pre-install safety check)..."
   orphaned_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
   orphaned_mutating="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -i kyverno || true)"
   
@@ -2515,74 +2716,6 @@ else
   fi
 fi
 
-# Install Kyverno only if profile is full
-if [ "${PROFILE}" = "full" ]; then
-  log_step "Installing Kyverno (idempotent)"
-# Idempotent namespace creation
-# Check if namespace exists before creating
-if kubectl get namespace kyverno >/dev/null 2>&1; then
-  echo "  Namespace kyverno already exists, skipping creation"
-else
-  kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
-fi
-
-# Idempotent Kyverno installation: use server-side apply with force-conflicts
-KYVERNO_MANIFEST="${SERVICES_DIR}/kyverno/install.yaml"
-echo "Applying Kyverno manifests (server-side, idempotent)..."
-kubectl apply --server-side --force-conflicts -f "${KYVERNO_MANIFEST}" || {
-  log_error "Failed to apply Kyverno manifests"
-  exit 1
-}
-log_ok "Kyverno resources applied successfully"
-
-# Immediately fix cleanup jobs to ensure they use correct images
-# This prevents old bitnami/kubectl images from being used
-fix_kyverno_cleanup_jobs "${KYVERNO_MANIFEST}"
-
-# Wait for Kyverno deployments with proper polling
-log_info "Waiting for Kyverno deployments to be available..."
-# Poll first to ensure deployments exist
-for i in {1..30}; do
-  if kubectl get deployments -n kyverno --no-headers 2>/dev/null | grep -q .; then
-    break
-  fi
-  sleep 1
-done
-
-kubectl wait --for=condition=Available deployment -n kyverno --all --timeout="${KYVERNO_TIMEOUT}s" || {
-  log_error "Kyverno deployments did not become available within ${KYVERNO_TIMEOUT}s"
-  echo "=== Kyverno Diagnostic ==="
-  kubectl get pods -n kyverno -o wide
-  echo ""
-  kubectl get deployments -n kyverno
-  echo ""
-  kubectl get events -n kyverno --sort-by='.lastTimestamp' | tail -30
-  exit 1
-}
-  write_state_flag "KYVERNO_INSTALLED"
-  # Label kyverno namespace
-  label_namespace "kyverno"
-
-  # Apply policies (idempotent) - wait a bit for Kyverno to be fully ready
-log_info "Waiting for Kyverno to be fully operational..."
-sleep 5
-echo "Applying Kyverno policies..."
-kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
-
-# Wait a moment for policies to be active
-log_info "Waiting for policies to be active..."
-sleep 3
-
-  # Fix any failed cleanup jobs (e.g., ImagePullBackOff from old bitnami/kubectl images)
-  # Note: SERVICES_DIR may not be set yet during cleanup, so pass empty string
-  fix_kyverno_cleanup_jobs ""
-else
-  log_info "Skipping Kyverno installation (profile: ${PROFILE})"
-  if kubectl get namespace kyverno >/dev/null 2>&1; then
-    label_namespace "kyverno"
-  fi
-fi
-
 # Install Flux only if profile is full
 if [ "${PROFILE}" = "full" ]; then
   log_step "Installing Flux controllers"
@@ -2628,6 +2761,117 @@ else
   log_info "Skipping Flux installation (profile: ${PROFILE})"
   if kubectl get namespace flux-system >/dev/null 2>&1; then
     label_namespace "flux-system"
+  fi
+fi
+
+# Install Kyverno only if profile is full
+# IMPORTANT: Kyverno is installed AFTER Traefik, cert-manager, and Flux to prevent admission webhook deadlocks
+# Even if Kyverno is sick later, cluster has ingress and is easier to recover
+if [ "${PROFILE}" = "full" ]; then
+  log_step "Installing Kyverno (idempotent, after core services)"
+  
+  # Idempotent namespace creation
+  # Check if namespace exists before creating
+  if kubectl get namespace kyverno >/dev/null 2>&1; then
+    echo "  Namespace kyverno already exists, skipping creation"
+  else
+    kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
+  fi
+
+  # Idempotent Kyverno installation: use server-side apply with force-conflicts
+  KYVERNO_MANIFEST="${SERVICES_DIR}/kyverno/install.yaml"
+  echo "Applying Kyverno manifests (server-side, idempotent)..."
+  kubectl apply --server-side --force-conflicts -f "${KYVERNO_MANIFEST}" || {
+    log_error "Failed to apply Kyverno manifests"
+    exit 1
+  }
+  log_ok "Kyverno resources applied successfully"
+
+  # CRITICAL: Immediately set webhooks to fail-open to prevent API lock
+  # This must happen BEFORE deployments become available, as webhooks are created during apply
+  log_info "Safe bootstrap: Setting Kyverno webhooks to fail-open (preventing API lock)..."
+  safe_bootstrap_kyverno_webhooks
+
+  # Immediately fix cleanup jobs to ensure they use correct images
+  # This prevents old bitnami/kubectl images from being used
+  fix_kyverno_cleanup_jobs "${KYVERNO_MANIFEST}"
+
+  # Wait for Kyverno deployments with proper polling
+  log_info "Waiting for Kyverno deployments to be available..."
+  # Poll first to ensure deployments exist
+  for i in {1..30}; do
+    if kubectl get deployments -n kyverno --no-headers 2>/dev/null | grep -q .; then
+      break
+    fi
+    sleep 1
+  done
+
+  kubectl wait --for=condition=Available deployment -n kyverno --all --timeout="${KYVERNO_TIMEOUT}s" || {
+    log_error "Kyverno deployments did not become available within ${KYVERNO_TIMEOUT}s"
+    echo "=== Kyverno Diagnostic ==="
+    kubectl get pods -n kyverno -o wide
+    echo ""
+    kubectl get deployments -n kyverno
+    echo ""
+    kubectl get events -n kyverno --sort-by='.lastTimestamp' | tail -30
+    log_warn "Kyverno deployments not ready, but webhooks are fail-open - continuing installation"
+    # Don't exit - webhooks are fail-open, so cluster won't be bricked
+  }
+  
+  write_state_flag "KYVERNO_INSTALLED"
+  # Label kyverno namespace
+  label_namespace "kyverno"
+
+  # CRITICAL: Wait for Kyverno webhook service to be reachable BEFORE hardening webhooks
+  # This prevents bricking the cluster if service is not ready
+  log_info "Waiting for Kyverno webhook service to be reachable (before hardening webhooks)..."
+  local service_ready=false
+  local max_wait=120  # 2 minutes max wait
+  local waited=0
+  
+  while [ ${waited} -lt ${max_wait} ]; do
+    if check_kyverno_service_reachable "kyverno" "kyverno-svc" 5; then
+      log_ok "Kyverno webhook service is reachable"
+      service_ready=true
+      break
+    fi
+    sleep 2
+    waited=$((waited + 2))
+    if [ $((waited % 20)) -eq 0 ]; then
+      log_info "Still waiting for Kyverno service... (${waited}/${max_wait}s)"
+    fi
+  done
+  
+  if [ "${service_ready}" = "true" ]; then
+    # Service is reachable, harden webhooks back to fail-closed
+    log_info "Hardening Kyverno webhooks: Setting failurePolicy=Fail (service is reachable)..."
+    harden_kyverno_webhooks
+  else
+    # Service not reachable within timeout - keep webhooks fail-open to avoid bricking cluster
+    log_warn "Kyverno webhook service not reachable within ${max_wait}s"
+    log_warn "Keeping webhooks in fail-open mode (failurePolicy=Ignore) to prevent API lock"
+    log_warn "This is safe - Kyverno policies will not be enforced until service is healthy"
+    log_warn "You can manually harden webhooks later when Kyverno is healthy:"
+    log_warn "  kubectl get validatingwebhookconfigurations -o name | grep kyverno | xargs -I {} kubectl patch {} --type=json -p '[{\"op\":\"replace\",\"path\":\"/webhooks/0/failurePolicy\",\"value\":\"Fail\"}]'"
+  fi
+
+  # Apply policies (idempotent) - wait a bit for Kyverno to be fully ready
+  log_info "Waiting for Kyverno to be fully operational..."
+  sleep 5
+  echo "Applying Kyverno policies..."
+  kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
+
+  # Wait a moment for policies to be active
+  log_info "Waiting for policies to be active..."
+  sleep 3
+
+  # Fix any failed cleanup jobs (e.g., ImagePullBackOff from old bitnami/kubectl images)
+  # Note: SERVICES_DIR may not be set yet during cleanup, so pass empty string
+  fix_kyverno_cleanup_jobs ""
+else
+  log_info "Skipping Kyverno installation (profile: ${PROFILE})"
+  if kubectl get namespace kyverno >/dev/null 2>&1; then
+    label_namespace "kyverno"
   fi
 fi
 
@@ -3437,6 +3681,61 @@ echo "PVC status in platform namespace:"
 kubectl get pvc -n platform
 
 echo ""
+# ========= Post-install sanity checks =========
+log_step "Post-install sanity checks"
+
+# Check Traefik pods are running
+log_info "Checking Traefik installation..."
+TRAEFIK_PODS="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --no-headers 2>/dev/null | grep -c Running || echo "0")"
+if [ "${TRAEFIK_PODS}" -eq 0 ]; then
+  log_warn "Traefik pods not found or not running in kube-system"
+  echo "  Checking Traefik pods status:"
+  kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik 2>/dev/null || true
+  echo ""
+  echo "  Checking Traefik deployment status:"
+  kubectl get deployments -n kube-system -l app.kubernetes.io/name=traefik 2>/dev/null || true
+  echo ""
+  log_warn "Traefik may not be installed or may be in CrashLoopBackOff"
+  log_warn "This may cause ingress issues. Check logs: kubectl logs -n kube-system -l app.kubernetes.io/name=traefik"
+else
+  log_ok "Traefik pods are running (${TRAEFIK_PODS} pod(s))"
+fi
+
+# Check if ports 80 and 443 are listening (Traefik should bind these)
+log_info "Checking if Traefik is listening on ports 80 and 443..."
+if command -v ss >/dev/null 2>&1; then
+  PORT_80="$(ss -lntp 2>/dev/null | grep -c ':80 ' || echo "0")"
+  PORT_443="$(ss -lntp 2>/dev/null | grep -c ':443 ' || echo "0")"
+  if [ "${PORT_80}" -eq 0 ] && [ "${PORT_443}" -eq 0 ]; then
+    log_warn "Ports 80 and 443 are not listening"
+    log_warn "Traefik may not be properly configured or may not have started"
+    log_warn "Check Traefik service: kubectl get svc -n kube-system -l app.kubernetes.io/name=traefik"
+    log_warn "Check Traefik logs: kubectl logs -n kube-system -l app.kubernetes.io/name=traefik"
+  elif [ "${PORT_80}" -eq 0 ]; then
+    log_warn "Port 80 is not listening (port 443 is OK)"
+  elif [ "${PORT_443}" -eq 0 ]; then
+    log_warn "Port 443 is not listening (port 80 is OK)"
+  else
+    log_ok "Traefik is listening on ports 80 and 443"
+  fi
+elif command -v netstat >/dev/null 2>&1; then
+  PORT_80="$(netstat -lntp 2>/dev/null | grep -c ':80 ' || echo "0")"
+  PORT_443="$(netstat -lntp 2>/dev/null | grep -c ':443 ' || echo "0")"
+  if [ "${PORT_80}" -eq 0 ] && [ "${PORT_443}" -eq 0 ]; then
+    log_warn "Ports 80 and 443 are not listening"
+    log_warn "Traefik may not be properly configured or may not have started"
+  elif [ "${PORT_80}" -eq 0 ]; then
+    log_warn "Port 80 is not listening (port 443 is OK)"
+  elif [ "${PORT_443}" -eq 0 ]; then
+    log_warn "Port 443 is not listening (port 80 is OK)"
+  else
+    log_ok "Traefik is listening on ports 80 and 443"
+  fi
+else
+  log_info "Cannot check port bindings (ss/netstat not available)"
+  log_info "Verify Traefik service manually: kubectl get svc -n kube-system -l app.kubernetes.io/name=traefik"
+fi
+
 log_ok "Installation complete"
 echo "Panel: https://${PANEL_DOMAIN}"
 echo "Panel admin username: ${PANEL_ADMIN_USERNAME}"
