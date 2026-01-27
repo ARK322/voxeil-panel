@@ -2757,7 +2757,7 @@ if [ "${PROFILE}" = "full" ]; then
   if kubectl get namespace flux-system >/dev/null 2>&1; then
     echo "  Namespace flux-system already exists, skipping creation"
   else
-    kubectl apply -f "${SERVICES_DIR}/flux-system/namespace.yaml"
+    retry_apply "${SERVICES_DIR}/flux-system/namespace.yaml" "flux-system namespace" 5
   fi
   FLUX_INSTALL_URL="https://github.com/fluxcd/flux2/releases/download/v2.3.0/install.yaml"
   if ! curl -sfL "${FLUX_INSTALL_URL}" -o "${SERVICES_DIR}/flux-system/install.yaml"; then
@@ -2809,7 +2809,7 @@ if [ "${PROFILE}" = "full" ]; then
   if kubectl get namespace kyverno >/dev/null 2>&1; then
     echo "  Namespace kyverno already exists, skipping creation"
   else
-    kubectl apply -f "${SERVICES_DIR}/kyverno/namespace.yaml"
+    retry_apply "${SERVICES_DIR}/kyverno/namespace.yaml" "kyverno namespace" 5
   fi
 
   # Idempotent Kyverno installation: use server-side apply with force-conflicts
@@ -2893,11 +2893,11 @@ if [ "${PROFILE}" = "full" ]; then
   log_info "Waiting for Kyverno to be fully operational..."
   sleep 5
   echo "Applying Kyverno policies..."
-  kubectl apply -f "${SERVICES_DIR}/kyverno/policies.yaml"
+  retry_apply "${SERVICES_DIR}/kyverno/policies.yaml" "Kyverno policies" 3
 
   # Wait a moment for policies to be active
   log_info "Waiting for policies to be active..."
-  sleep 3
+  sleep 5  # Increased wait time for policies to be fully active
 
   # Fix any failed cleanup jobs (e.g., ImagePullBackOff from old bitnami/kubectl images)
   # Note: SERVICES_DIR may not be set yet during cleanup, so pass empty string
@@ -2914,7 +2914,8 @@ log_step "Applying platform base manifests"
 if kubectl get namespace platform >/dev/null 2>&1; then
   echo "  Namespace platform already exists, skipping creation"
 else
-  kubectl apply -f "${PLATFORM_DIR}/namespace.yaml"
+  # Use retry_apply for namespace creation (handles webhook timeouts)
+  retry_apply "${PLATFORM_DIR}/namespace.yaml" "platform namespace" 5
 fi
 label_namespace "platform"
 kubectl apply -f "${PLATFORM_DIR}/rbac.yaml"
@@ -3166,7 +3167,8 @@ log_step "Applying infra DB manifests"
 if kubectl get namespace infra-db >/dev/null 2>&1; then
   echo "  Namespace infra-db already exists, skipping creation"
 else
-  kubectl apply -f "${SERVICES_DIR}/infra-db/namespace.yaml"
+  # Use retry_apply for namespace creation (handles webhook timeouts)
+  retry_apply "${SERVICES_DIR}/infra-db/namespace.yaml" "infra-db namespace" 5
 fi
 label_namespace "infra-db"
 kubectl apply -f "${SERVICES_DIR}/infra-db/postgres-secret.yaml"
@@ -3314,7 +3316,7 @@ if [ "${WITH_DNS}" = "true" ]; then
   if kubectl get namespace dns-zone >/dev/null 2>&1; then
     echo "  Namespace dns-zone already exists, skipping creation"
   else
-    kubectl apply -f "${SERVICES_DIR}/dns-zone/namespace.yaml"
+    retry_apply "${SERVICES_DIR}/dns-zone/namespace.yaml" "dns-zone namespace" 5
   fi
   label_namespace "dns-zone"
   kubectl apply -f "${SERVICES_DIR}/dns-zone/tsig-secret.yaml"
@@ -3357,7 +3359,7 @@ if [ "${WITH_MAIL}" = "true" ]; then
     if kubectl get namespace mail-zone >/dev/null 2>&1; then
       echo "  Namespace mail-zone already exists, skipping creation"
     else
-      kubectl apply -f "${SERVICES_DIR}/mail-zone/namespace.yaml"
+      retry_apply "${SERVICES_DIR}/mail-zone/namespace.yaml" "mail-zone namespace" 5
     fi
   label_namespace "mail-zone"
   kubectl apply -f "${SERVICES_DIR}/mail-zone/mailcow-secrets.yaml"
