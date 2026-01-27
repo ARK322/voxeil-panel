@@ -1499,6 +1499,35 @@ if [ "${PURGE_NODE}" = "true" ]; then
       docker image prune -f 2>/dev/null || true
     fi
     
+    # Clean up containerd images (auto-build edilen image'ler containerd'de olabilir)
+    if command -v ctr >/dev/null 2>&1; then
+      log_info "Cleaning up Voxeil containerd images..."
+      # ctr output: IMAGE TAG DIGEST SIZE
+      # Extract full image name (IMAGE:TAG format)
+      VOXEIL_CONTAINERD_IMAGES=$(ctr -n k8s.io images ls 2>/dev/null | grep -E "(voxeil|ghcr.io/.*/voxeil)" | awk '{print $1":"$2}' | grep -v "^$" || true)
+      if [ -n "${VOXEIL_CONTAINERD_IMAGES}" ]; then
+        echo "${VOXEIL_CONTAINERD_IMAGES}" | while read -r image; do
+          if [ -n "${image}" ]; then
+            log_info "Removing containerd image: ${image}"
+            ctr -n k8s.io images rm "${image}" 2>/dev/null || true
+          fi
+        done
+      fi
+    elif command -v crictl >/dev/null 2>&1; then
+      log_info "Cleaning up Voxeil containerd images..."
+      # crictl output: IMAGE TAG IMAGE ID SIZE
+      # Extract IMAGE:TAG format
+      VOXEIL_CONTAINERD_IMAGES=$(crictl images 2>/dev/null | grep -E "(voxeil|ghcr.io/.*/voxeil)" | awk '{print $1":"$2}' | grep -v "^$" || true)
+      if [ -n "${VOXEIL_CONTAINERD_IMAGES}" ]; then
+        echo "${VOXEIL_CONTAINERD_IMAGES}" | while read -r image; do
+          if [ -n "${image}" ]; then
+            log_info "Removing containerd image: ${image}"
+            crictl rmi "${image}" 2>/dev/null || true
+          fi
+        done
+      fi
+    fi
+    
     echo ""
     log_ok "Node purge complete - k3s and all Voxeil files removed"
     echo ""
@@ -1525,7 +1554,8 @@ if [ "${PURGE_NODE}" != "true" ]; then
   run "rm -rf /var/lib/voxeil 2>/dev/null || true"
 fi
 
-# N) Clean up Docker images (optional, only if Docker is available)
+# N) Clean up Docker images and containerd images (optional)
+# Clean up Docker images (if Docker is available)
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   log_step "Cleaning up Voxeil Docker images (optional)"
   log_info "Removing Voxeil-related Docker images..."
@@ -1545,7 +1575,45 @@ if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   log_info "Cleaning up dangling images..."
   docker image prune -f 2>/dev/null || true
 else
-  log_info "Docker not available, skipping image cleanup"
+  log_info "Docker not available, skipping Docker image cleanup"
+fi
+
+# Clean up containerd images (if k3s/containerd is available)
+# Auto-build edilen image'ler containerd'ye import edilmiş olabilir
+if command -v ctr >/dev/null 2>&1; then
+  log_step "Cleaning up Voxeil containerd images (optional)"
+  log_info "Removing Voxeil-related containerd images..."
+  # ctr output: IMAGE TAG DIGEST SIZE
+  # Extract full image name (IMAGE:TAG format)
+  VOXEIL_CONTAINERD_IMAGES=$(ctr -n k8s.io images ls 2>/dev/null | grep -E "(voxeil|ghcr.io/.*/voxeil)" | awk '{print $1":"$2}' | grep -v "^$" || true)
+  if [ -n "${VOXEIL_CONTAINERD_IMAGES}" ]; then
+    echo "${VOXEIL_CONTAINERD_IMAGES}" | while read -r image; do
+      if [ -n "${image}" ]; then
+        log_info "Removing containerd image: ${image}"
+        ctr -n k8s.io images rm "${image}" 2>/dev/null || true
+      fi
+    done
+  else
+    log_info "No Voxeil containerd images found to remove"
+  fi
+elif command -v crictl >/dev/null 2>&1; then
+  log_step "Cleaning up Voxeil containerd images (optional)"
+  log_info "Removing Voxeil-related containerd images..."
+  # crictl output: IMAGE TAG IMAGE ID SIZE
+  # Extract IMAGE:TAG format
+  VOXEIL_CONTAINERD_IMAGES=$(crictl images 2>/dev/null | grep -E "(voxeil|ghcr.io/.*/voxeil)" | awk '{print $1":"$2}' | grep -v "^$" || true)
+  if [ -n "${VOXEIL_CONTAINERD_IMAGES}" ]; then
+    echo "${VOXEIL_CONTAINERD_IMAGES}" | while read -r image; do
+      if [ -n "${image}" ]; then
+        log_info "Removing containerd image: ${image}"
+        crictl rmi "${image}" 2>/dev/null || true
+      fi
+    done
+  else
+    log_info "No Voxeil containerd images found to remove"
+  fi
+else
+  log_info "ctr/crictl not available, skipping containerd image cleanup"
 fi
 
 if [ "${DRY_RUN}" != "true" ] && command -v systemctl >/dev/null 2>&1; then
