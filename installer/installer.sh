@@ -3552,6 +3552,11 @@ ufw_retry "--force reset" || true
 ufw_retry "default deny incoming" || true
 ufw_retry "default allow outgoing" || true
 
+# CRITICAL: Always allow SSH (port 22) from anywhere to prevent lockout
+# This must be done BEFORE any allowlist restrictions
+ufw_retry "allow 22/tcp" || true
+echo "SSH port 22 is always allowed (to prevent lockout)"
+
 allow_all=true
 if [[ -s "${ALLOWLIST_FILE}" ]]; then
   allow_all=false
@@ -3559,6 +3564,8 @@ fi
 
 if [[ "${allow_all}" == "true" ]]; then
   for port in "${ports_tcp[@]}"; do
+    # Skip port 22 as it's already allowed above
+    [[ "${port}" == "22" ]] && continue
     ufw_retry "allow ${port}/tcp" || true
   done
   for port in "${ports_udp[@]}"; do
@@ -3570,6 +3577,8 @@ else
     [[ -z "${entry}" ]] && continue
     [[ "${entry}" == \#* ]] && continue
     for port in "${ports_tcp[@]}"; do
+      # Skip port 22 as it's already allowed from anywhere above
+      [[ "${port}" == "22" ]] && continue
       ufw_retry "allow from ${entry} to any port ${port} proto tcp" || true
     done
     for port in "${ports_udp[@]}"; do
