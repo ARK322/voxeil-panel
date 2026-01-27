@@ -9,6 +9,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.middlewares: mail-zone-mailcow-auth@kubernetescrd
     cert-manager.io/cluster-issuer: REPLACE_MAILCOW_TLS_ISSUER
 spec:
+  ingressClassName: traefik
   tls:
     - hosts:
         - REPLACE_MAILCOW_DOMAIN

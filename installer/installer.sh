@@ -640,10 +640,27 @@ validate_image() {
   
   echo "Validating image: ${image}"
   
-  # First, check if image exists locally (even for remote tags)
+  # First, check if image exists locally in Docker (even for remote tags)
   if docker image inspect "${image}" >/dev/null 2>&1; then
-    echo "✓ Image ${image} exists locally"
+    echo "✓ Image ${image} exists locally in Docker"
     return 0
+  fi
+  
+  # Also check if image exists in k3s containerd (if k3s is installed)
+  if command -v ctr >/dev/null 2>&1; then
+    # ctr output format: IMAGE TAG DIGEST SIZE
+    # Use grep with word boundary to match exact image name
+    if ctr -n k8s.io images ls 2>/dev/null | grep -qE "^${image}[[:space:]]|^${image}$"; then
+      echo "✓ Image ${image} exists locally in k3s containerd"
+      return 0
+    fi
+  elif command -v crictl >/dev/null 2>&1; then
+    # crictl output format: IMAGE TAG IMAGE ID SIZE
+    # Match image name (may appear in different columns)
+    if crictl images 2>/dev/null | grep -q "${image}"; then
+      echo "✓ Image ${image} exists locally in k3s containerd"
+      return 0
+    fi
   fi
   
   # For local images (with :local tag) or backup images, only check locally
@@ -1732,7 +1749,8 @@ fi
 GHCR_USERNAME="${GHCR_USERNAME:-}"
 GHCR_TOKEN="${GHCR_TOKEN:-}"
 GHCR_EMAIL="${GHCR_EMAIL:-}"
-GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-ark322/voxeil-panel}"
+# Use REPO if GITHUB_REPOSITORY is not set (for consistency)
+GITHUB_REPOSITORY="${GITHUB_REPOSITORY:-${REPO:-ark322/voxeil-panel}}"
 # Extract owner from GITHUB_REPOSITORY and convert to lowercase (matches GitHub Actions workflow)
 GHCR_OWNER_RAW="${GITHUB_REPOSITORY%%/*}"
 GHCR_OWNER="${GHCR_OWNER:-$(echo "${GHCR_OWNER_RAW}" | tr '[:upper:]' '[:lower:]')}"
@@ -2566,8 +2584,8 @@ done
 IMAGE_BASE="ghcr.io/${GHCR_OWNER}/${GHCR_REPO}"
 # Escape values for sed (only & needs escaping with | delimiter)
 IMAGE_BASE_ESC="$(sed_escape "${IMAGE_BASE}")"
-CONTROLLER_IMAGE_ESC="$(sed_escape "${CONTROLLER_IMAGE}")"
-PANEL_IMAGE_ESC="$(sed_escape "${PANEL_IMAGE}")"
+# Note: CONTROLLER_IMAGE_ESC and PANEL_IMAGE_ESC will be set AFTER image validation
+# to ensure auto-built images are used in manifests
 PANEL_DOMAIN_ESC="$(sed_escape "${PANEL_DOMAIN}")"
 PANEL_TLS_ISSUER_ESC="$(sed_escape "${PANEL_TLS_ISSUER}")"
 PANEL_BASICAUTH_B64_ESC="$(sed_escape "${PANEL_BASICAUTH_B64}")"
@@ -2589,9 +2607,8 @@ if [[ -n "${FILES_WITH_PLACEHOLDER}" ]]; then
   echo "${FILES_WITH_PLACEHOLDER}" | xargs sed -i "s|REPLACE_IMAGE_BASE|${IMAGE_BASE_ESC}|g"
 fi
 
-# Template manifests (only if files exist)
-[ -f "${PLATFORM_DIR}/controller-deploy.yaml" ] && sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE_ESC}|g" "${PLATFORM_DIR}/controller-deploy.yaml"
-[ -f "${PLATFORM_DIR}/panel-deploy.yaml" ] && sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE_ESC}|g" "${PLATFORM_DIR}/panel-deploy.yaml"
+# Note: Image templating will be done AFTER image validation (see below)
+# This ensures that if auto-build updates the image, the manifest uses the correct image
 [ -f "${PLATFORM_DIR}/panel-ingress.yaml" ] && sed -i "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN_ESC}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
 [ -f "${PLATFORM_DIR}/panel-ingress.yaml" ] && sed -i "s|REPLACE_PANEL_TLS_ISSUER|${PANEL_TLS_ISSUER_ESC}|g" "${PLATFORM_DIR}/panel-ingress.yaml"
 [ -f "${PLATFORM_DIR}/panel-auth.yaml" ] && sed -i "s|REPLACE_PANEL_BASICAUTH|${PANEL_BASICAUTH_B64_ESC}|g" "${PLATFORM_DIR}/panel-auth.yaml"
@@ -3031,14 +3048,6 @@ auto_build_images() {
     return 1
   fi
   
-  # Check if git is available
-  if ! command -v git >/dev/null 2>&1; then
-    log_error "git is required to build images but is not installed."
-    log_error "Please install git: apt-get install -y git"
-    log_error "Or wait for GitHub Actions workflow to build images"
-    return 1
-  fi
-  
   # Clone repository to temp directory
   local repo_dir
   repo_dir="$(mktemp -d)"
@@ -3081,6 +3090,53 @@ auto_build_images() {
   if docker build -t "${build_image}" . >/dev/null 2>&1; then
     log_ok "${image_type} image built successfully: ${build_image}"
     log_info "Note: This is a local build. For production, use images from GitHub Actions workflow."
+    
+    # Import image to k3s containerd so k3s can use it
+    # k3s uses containerd, so we need to import the Docker image to containerd
+    log_info "Importing image to k3s containerd..."
+    local import_success=false
+    if command -v ctr >/dev/null 2>&1; then
+      # Use ctr (containerd CLI) to import image
+      if docker save "${build_image}" 2>/dev/null | ctr -n k8s.io images import - 2>/dev/null; then
+        # Verify import was successful by checking if image exists in containerd
+        if ctr -n k8s.io images ls 2>/dev/null | grep -qE "^${build_image}[[:space:]]|^${build_image}$"; then
+          log_ok "Image imported to k3s containerd successfully"
+          import_success=true
+        else
+          log_warn "Image import command succeeded but image not found in containerd"
+          import_success=false
+        fi
+      else
+        log_warn "Failed to import image to containerd using ctr"
+        import_success=false
+      fi
+    elif command -v crictl >/dev/null 2>&1; then
+      # Fallback: try crictl (container runtime CLI)
+      if docker save "${build_image}" 2>/dev/null | crictl load - 2>/dev/null; then
+        # Verify import was successful
+        if crictl images 2>/dev/null | grep -q "${build_image}"; then
+          log_ok "Image imported to k3s containerd successfully"
+          import_success=true
+        else
+          log_warn "Image import command succeeded but image not found in containerd"
+          import_success=false
+        fi
+      else
+        log_warn "Failed to import image to containerd using crictl"
+        import_success=false
+      fi
+    else
+      log_warn "ctr or crictl not found. Image is built but not imported to containerd."
+      import_success=false
+    fi
+    
+    if [ "${import_success}" = false ]; then
+      log_warn "Image is built in Docker but not available in k3s containerd."
+      log_warn "k3s will try to pull from registry when pods start."
+      log_warn "If image doesn't exist in GHCR, pods will fail with ImagePullBackOff."
+      log_warn "To fix: Push image to GHCR or ensure ctr/crictl is available for import"
+    fi
+    
     # Clean up
     cd /
     rm -rf "${repo_dir}"
@@ -3161,6 +3217,13 @@ if [[ "${SKIP_IMAGE_VALIDATION:-false}" != "true" ]]; then
 else
   echo "Skipping panel image validation (SKIP_IMAGE_VALIDATION=true)"
 fi
+
+# Template image placeholders in manifests AFTER validation (so auto-built images are used)
+log_info "Templating image placeholders in manifests..."
+CONTROLLER_IMAGE_ESC="$(sed_escape "${CONTROLLER_IMAGE}")"
+PANEL_IMAGE_ESC="$(sed_escape "${PANEL_IMAGE}")"
+[ -f "${PLATFORM_DIR}/controller-deploy.yaml" ] && sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE_ESC}|g" "${PLATFORM_DIR}/controller-deploy.yaml"
+[ -f "${PLATFORM_DIR}/panel-deploy.yaml" ] && sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE_ESC}|g" "${PLATFORM_DIR}/panel-deploy.yaml"
 
 log_step "Applying infra DB manifests"
 # Check if namespace exists before creating

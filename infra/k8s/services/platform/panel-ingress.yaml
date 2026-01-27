@@ -9,6 +9,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.middlewares: platform-panel-auth@kubernetescrd
     cert-manager.io/cluster-issuer: REPLACE_PANEL_TLS_ISSUER
 spec:
+  ingressClassName: traefik
   tls:
     - hosts:
         - REPLACE_PANEL_DOMAIN
@@ -34,6 +35,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: web
     traefik.ingress.kubernetes.io/router.middlewares: platform-panel-redirect@kubernetescrd
 spec:
+  ingressClassName: traefik
   rules:
     - host: REPLACE_PANEL_DOMAIN
       http:

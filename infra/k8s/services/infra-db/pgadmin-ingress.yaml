@@ -9,6 +9,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.middlewares: infra-db-pgadmin-auth@kubernetescrd
     cert-manager.io/cluster-issuer: REPLACE_PANEL_TLS_ISSUER
 spec:
+  ingressClassName: traefik
   tls:
     - hosts:
         - REPLACE_PGADMIN_DOMAIN

@@ -1,7 +1,11 @@
 import { NextResponse } from "next/server";
-import tenantsData from "../../../mock-data/tenants.json";
 import type { Tenant } from "../../../src/lib/types";
 
 export async function GET(): Promise<NextResponse<Tenant[]>> {
-  return NextResponse.json(tenantsData as Tenant[]);
+  // TODO: Connect to real controller API
+  // const response = await fetch(`${process.env.CONTROLLER_API_URL}/tenants`);
+  // return NextResponse.json(await response.json());
+  
+  // Placeholder response
+  return NextResponse.json([] as Tenant[]);
 }

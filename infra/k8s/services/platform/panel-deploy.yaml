@@ -19,6 +19,7 @@ spec:
       containers:
         - name: panel
           image: REPLACE_PANEL_IMAGE
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 3000
           readinessProbe:
