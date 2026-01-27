@@ -2947,17 +2947,49 @@ auto_build_images() {
   local image_type="$1"  # "controller" or "panel"
   local image_name="$2"
   
-  # Check if Docker is available
+  # Check if Docker is available, if not try to install it
   if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
-    log_error "Docker is required to build images but is not available."
-    log_error ""
-    log_error "Options:"
-    log_error "  1. Wait for GitHub Actions workflow to build images:"
-    log_error "     https://github.com/${GHCR_OWNER}/${GHCR_REPO}/actions/workflows/images.yml"
-    log_error "  2. Manually trigger workflow:"
-    log_error "     Go to Actions > Build and Publish Docker Images > Run workflow"
-    log_error "  3. Install Docker and re-run installer (will auto-build images)"
-    return 1
+    log_warn "Docker is required to build images but is not available."
+    log_info "Attempting to install Docker automatically..."
+    
+    # Temporarily set BUILD_IMAGES to true to force Docker installation
+    local old_build_images="${BUILD_IMAGES:-false}"
+    BUILD_IMAGES=true
+    
+    # Try to install Docker
+    if ensure_docker; then
+      log_ok "Docker installed successfully"
+      # Wait a moment for Docker daemon to be ready
+      sleep 3
+      # Verify Docker is working
+      if ! docker info >/dev/null 2>&1; then
+        log_warn "Docker installed but daemon not ready, waiting..."
+        local wait_count=0
+        while [ ${wait_count} -lt 30 ] && ! docker info >/dev/null 2>&1; do
+          sleep 1
+          wait_count=$((wait_count + 1))
+        done
+        if ! docker info >/dev/null 2>&1; then
+          log_error "Docker daemon not ready after installation"
+          log_error "Please start Docker manually: systemctl start docker"
+          BUILD_IMAGES="${old_build_images}"
+          return 1
+        fi
+      fi
+      log_ok "Docker is ready"
+      BUILD_IMAGES="${old_build_images}"
+    else
+      log_error "Failed to install Docker automatically"
+      BUILD_IMAGES="${old_build_images}"
+      log_error ""
+      log_error "Options:"
+      log_error "  1. Wait for GitHub Actions workflow to build images:"
+      log_error "     https://github.com/${GHCR_OWNER}/${GHCR_REPO}/actions/workflows/images.yml"
+      log_error "  2. Manually trigger workflow:"
+      log_error "     Go to Actions > Build and Publish Docker Images > Run workflow"
+      log_error "  3. Install Docker manually and re-run installer"
+      return 1
+    fi
   fi
   
   log_info "Image not found in GHCR. Checking if GitHub Actions workflow has built it..."
@@ -2965,6 +2997,27 @@ auto_build_images() {
   log_info "If workflow hasn't run yet, attempting to build locally..."
   
   log_info "Attempting to auto-build ${image_type} image locally..."
+  
+  # Check if git is available, if not try to install it
+  if ! command -v git >/dev/null 2>&1; then
+    log_warn "git is required to build images but is not installed."
+    log_info "Attempting to install git..."
+    
+    if command -v apt-get >/dev/null 2>&1; then
+      if apt-get update -y >/dev/null 2>&1 && apt-get install -y git >/dev/null 2>&1; then
+        log_ok "git installed successfully"
+      else
+        log_error "Failed to install git automatically"
+        log_error "Please install git manually: apt-get install -y git"
+        log_error "Or wait for GitHub Actions workflow to build images"
+        return 1
+      fi
+    else
+      log_error "git is required but automatic install is only supported on apt-get systems (Ubuntu/Debian)."
+      log_error "Please install git manually or wait for GitHub Actions workflow to build images"
+      return 1
+    fi
+  fi
   
   # Determine tag suffix
   local tag_suffix=""
