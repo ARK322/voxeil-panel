@@ -28,7 +28,8 @@ curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel
 - It is an **ephemeral script** that you download and run (typically to `/tmp/voxeil.sh`)
 - It is **NOT** installed system-wide
 - It is **NOT** removed by `uninstall` or `purge-node` commands
-- Deleting `/tmp/voxeil.sh` does **NOT** affect the installed system
+- **Deleting `/tmp/voxeil.sh` does NOT affect the installed system** - the script is ephemeral and can be safely removed
+- **`uninstall` and `purge-node` do NOT automatically delete `/tmp/voxeil.sh`** - you must manually delete it if needed
 - You can safely delete and re-download it at any time
 - The script orchestrates everything and downloads internal scripts (installer/uninstaller) from GitHub as needed
 - **Repository cloning is NOT required for end users** - this repo is for development only
@@ -42,7 +43,16 @@ All commands are executed via `voxeil.sh`:
 - `install` - Install Voxeil Panel
 - `uninstall [--force]` - Safe uninstall (removes only Voxeil resources)
 - `purge-node --force` - Complete node wipe (removes k3s, requires --force)
+- `nuke --force` - Alias for `purge-node` (IRREVERSIBLE, requires --force)
 - `doctor` - Check installation status (read-only)
+
+**Command comparison:**
+
+| Command | What it removes | Reversible | Requires --force |
+|---------|----------------|-------------|-------------------|
+| `uninstall` | Only Voxeil resources (namespaces, CRDs, webhooks, PVs) | Yes (safe) | Optional (for unlabeled leftovers) |
+| `purge-node` | k3s + all Kubernetes data + Voxeil resources | No (IRREVERSIBLE) | Yes (mandatory) |
+| `nuke` | Same as `purge-node` (alias/wrapper) | No (IRREVERSIBLE) | Yes (mandatory) |
 
 ### Install
 
@@ -103,6 +113,11 @@ bash /tmp/voxeil.sh --ref v1.0.0 install
 ### Uninstall (Safe)
 
 **This removes ONLY Voxeil platform resources. It does NOT remove k3s, docker, or system namespaces.**
+
+**Command differences:**
+- **`uninstall`** → Safe uninstall that removes only Voxeil resources (namespaces, CRDs, webhooks, PVs). Does NOT remove k3s. Safe and reversible.
+- **`purge-node`** → Complete node wipe that removes k3s and all Kubernetes data. Requires `--force` flag. **IRREVERSIBLE**.
+- **`nuke`** → Alias/wrapper for `purge-node`. **IRREVERSIBLE** - there is no going back.
 
 **Note:** `uninstall` is safe and reversible—it only removes Voxeil components. For a complete node wipe (including k3s), use `purge-node` instead (see below).
 
@@ -175,19 +190,30 @@ curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel
 **Note:** 
 - The `purge-node` command requires `--force` as a safety measure to prevent accidental node wipe
 - The `purge-node` command will **NOT** delete `/tmp/voxeil.sh`. You can manually delete it if needed
+- **`nuke` is a wrapper/alias for `purge-node`** - both are **IRREVERSIBLE** and require `--force`
 
-### Doctor Mode
+### Doctor Mode (Production Gate)
 
-Check installation status without making changes:
+**Doctor mode is a read-only PROD GATE** that checks installation status without making changes. **Before deploying to production, doctor must PASS (exit code 0).**
 
 ```bash
 bash /tmp/voxeil.sh doctor
 ```
 
+**Exit codes:**
+
+| Exit Code | Result | Meaning | Action Required |
+|-----------|--------|---------|-----------------|
+| 0 | PASS | No critical problems detected | Safe to proceed to production |
+| 1 | FAIL | Critical problems found | Must fix issues before production |
+| 2 | UNABLE_TO_CHECK | Doctor unable to check (kubectl unavailable, cluster unreachable, permission issues) | Fix kubectl/cluster access, then re-run doctor |
+
 **What it checks:**
 - State file contents (`/var/lib/voxeil/install.state`)
 - Resources labeled `app.kubernetes.io/part-of=voxeil`
 - Stuck Terminating namespaces
+- Problematic pod states (ImagePullBackOff, CrashLoopBackOff, NotReady, etc.)
+- Webhook deadlock risks (webhooks without ready controller pods)
 - Unlabeled namespaces that might be leftovers
 - PersistentVolumes tied to voxeil namespaces (by claimRef)
 - Webhook configurations (validating and mutating)
@@ -195,7 +221,7 @@ bash /tmp/voxeil.sh doctor
 - ClusterRoles and ClusterRoleBindings
 - PVCs
 
-Doctor mode **never modifies the system** and shows recommended next commands in its output. Exit code is 0 if clean, 1 if leftovers are found.
+Doctor mode **never modifies the system** and shows recommended next commands in its output. **Prod'a çıkmadan önce doctor PASS olmalı (exit code 0).**
 
 ### Version Pinning
 

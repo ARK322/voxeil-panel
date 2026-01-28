@@ -1731,24 +1731,7 @@ if [ "${DOCTOR}" = "true" ]; then
   fi
   
   # kubectl availability
-  if command -v kubectl >/dev/null 2>&1; then
-    echo "  ✓ kubectl command available: $(command -v kubectl)"
-  elif [[ -f /usr/local/bin/k3s ]]; then
-    if /usr/local/bin/k3s kubectl version --client >/dev/null 2>&1; then
-      echo "  ✓ kubectl available via k3s kubectl"
-    else
-      echo "  ⚠ kubectl not available (k3s kubectl failed)"
-      EXIT_CODE=1
-    fi
-  else
-    echo "  ⚠ kubectl not available"
-    EXIT_CODE=1
-  fi
-  echo ""
-  
-  # Cluster readiness (use k3s kubectl fallback if kubectl not in PATH)
-  local kubectl_cmd=""
-  local kubectl_type
+  kubectl_cmd=""
   kubectl_type="$(type -t kubectl 2>/dev/null || echo "")"
   if [[ "${kubectl_type}" == "file" ]]; then
     kubectl_cmd="kubectl"
@@ -1756,7 +1739,18 @@ if [ "${DOCTOR}" = "true" ]; then
     kubectl_cmd="/usr/local/bin/k3s kubectl"
   fi
   
+  if [[ -n "${kubectl_cmd}" ]]; then
+    echo "  ✓ kubectl command available: ${kubectl_cmd}"
+  else
+    echo "  ⚠ kubectl not available"
+    EXIT_CODE=1
+  fi
+  echo ""
+  
+  # Cluster readiness check
+  CLUSTER_ACCESSIBLE=false
   if [[ -n "${kubectl_cmd}" ]] && ${kubectl_cmd} cluster-info >/dev/null 2>&1; then
+    CLUSTER_ACCESSIBLE=true
     echo "=== Cluster Status ==="
     echo "Cluster info:"
     ${kubectl_cmd} cluster-info 2>/dev/null | head -3 || echo "  Unable to get cluster info"
@@ -1797,22 +1791,169 @@ if [ "${DOCTOR}" = "true" ]; then
   fi
   
   # Check kubectl availability for resource checks
-  if ! command -v kubectl >/dev/null 2>&1 || ! kubectl cluster-info >/dev/null 2>&1; then
+  if [[ "${CLUSTER_ACCESSIBLE}" != "true" ]]; then
     echo "⚠ kubectl not available or cluster not accessible"
-    echo "  Skipping Kubernetes resource checks"
+    echo "  Resource checks skipped"
     echo ""
-    exit ${EXIT_CODE}
+    echo "=== Summary ==="
+    echo "RESULT: UNABLE_TO_CHECK"
+    echo "Exit code: 2"
+    exit 2
   fi
+  
+  # Check Terminating namespaces
+  echo "=== Terminating Namespaces ==="
+  TERMINATING_NS=""
+  while IFS= read -r ns; do
+    if [ -n "${ns}" ]; then
+      PHASE=$(${kubectl_cmd} get namespace "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+      DEL_TIMESTAMP=$(${kubectl_cmd} get namespace "${ns}" -o jsonpath='{.metadata.deletionTimestamp}' 2>/dev/null || echo "")
+      if [[ "${PHASE}" == "Terminating" ]] || [[ -n "${DEL_TIMESTAMP}" ]]; then
+        if [ -z "${TERMINATING_NS}" ]; then
+          TERMINATING_NS="${ns}"
+        else
+          TERMINATING_NS="${TERMINATING_NS}"$'\n'"${ns}"
+        fi
+      fi
+    fi
+  done <<< "$(${kubectl_cmd} get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' || true)"
+  
+  if [ -n "${TERMINATING_NS}" ]; then
+    echo "  ⚠ Stuck Terminating namespaces detected:"
+    while IFS= read -r ns; do
+      if [ -n "${ns}" ]; then
+        echo "    - ${ns}"
+      fi
+    done <<< "${TERMINATING_NS}"
+    EXIT_CODE=1
+  else
+    echo "  ✓ None found"
+  fi
+  echo ""
+  
+  # Check problematic pod states
+  echo "=== Problematic Pod States ==="
+  PROBLEMATIC_PODS=""
+  POD_COUNT=0
+  
+  # Get all pods and filter for problematic states
+  ALL_PODS=$(${kubectl_cmd} get pods --all-namespaces --no-headers 2>/dev/null || true)
+  if [ -n "${ALL_PODS}" ]; then
+    while IFS= read -r pod_line; do
+      if [ -n "${pod_line}" ]; then
+        NAMESPACE=$(echo "${pod_line}" | awk '{print $1}')
+        POD_NAME=$(echo "${pod_line}" | awk '{print $2}')
+        READY=$(echo "${pod_line}" | awk '{print $3}')
+        STATUS=$(echo "${pod_line}" | awk '{print $4}')
+        REASON=$(echo "${pod_line}" | awk '{print $5}')
+        
+        # Check for problematic states
+        PROBLEMATIC=false
+        if [[ "${STATUS}" == "ImagePullBackOff" ]] || \
+           [[ "${STATUS}" == "ErrImagePull" ]] || \
+           [[ "${STATUS}" == "CrashLoopBackOff" ]] || \
+           [[ "${STATUS}" == "CreateContainerConfigError" ]] || \
+           [[ "${STATUS}" == "RunContainerError" ]] || \
+           [[ "${REASON}" == "ImagePullBackOff" ]] || \
+           [[ "${REASON}" == "ErrImagePull" ]] || \
+           [[ "${REASON}" == "CrashLoopBackOff" ]] || \
+           [[ "${REASON}" == "CreateContainerConfigError" ]] || \
+           [[ "${REASON}" == "RunContainerError" ]]; then
+          PROBLEMATIC=true
+        elif [[ "${READY}" =~ ^0/ ]] && [[ "${STATUS}" != "Completed" ]]; then
+          PROBLEMATIC=true
+        elif [[ "${STATUS}" == "Pending" ]] && [[ "${REASON}" != "Scheduled" ]]; then
+          PROBLEMATIC=true
+        fi
+        
+        if [[ "${PROBLEMATIC}" == "true" ]] && [ ${POD_COUNT} -lt 50 ]; then
+          if [ -z "${PROBLEMATIC_PODS}" ]; then
+            PROBLEMATIC_PODS="${NAMESPACE}/${POD_NAME} (${STATUS}${REASON:+ - ${REASON}})"
+          else
+            PROBLEMATIC_PODS="${PROBLEMATIC_PODS}"$'\n'"${NAMESPACE}/${POD_NAME} (${STATUS}${REASON:+ - ${REASON}})"
+          fi
+          POD_COUNT=$((POD_COUNT + 1))
+        fi
+      fi
+    done <<< "${ALL_PODS}"
+  fi
+  
+  if [ -n "${PROBLEMATIC_PODS}" ]; then
+    echo "  ⚠ Problematic pods detected (showing up to 50):"
+    while IFS= read -r pod_info; do
+      if [ -n "${pod_info}" ]; then
+        echo "    - ${pod_info}"
+      fi
+    done <<< "${PROBLEMATIC_PODS}"
+    if [ ${POD_COUNT} -ge 50 ]; then
+      echo "    ... (more pods may exist, run: ${kubectl_cmd} get pods --all-namespaces | grep -E 'ImagePullBackOff|ErrImagePull|CrashLoopBackOff|CreateContainerConfigError|RunContainerError|Pending')"
+    fi
+    EXIT_CODE=1
+  else
+    echo "  ✓ None found"
+  fi
+  echo ""
+  
+  # Check webhook deadlock risk
+  echo "=== Webhook Deadlock Risk ==="
+  WEBHOOK_RISK=false
+  VOXEIL_WEBHOOKS=$(${kubectl_cmd} get validatingwebhookconfiguration,mutatingwebhookconfiguration -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null | grep -E '(voxeil|kyverno)' || true)
+  if [ -n "${VOXEIL_WEBHOOKS}" ]; then
+    while IFS= read -r wh_name; do
+      if [ -n "${wh_name}" ]; then
+        # Check if related controller pods are ready
+        CONTROLLER_READY=false
+        if echo "${wh_name}" | grep -q kyverno; then
+          READY_PODS=$(${kubectl_cmd} get pods -n kyverno -l app.kubernetes.io/name=kyverno --no-headers 2>/dev/null | grep -c " Running " || echo "0")
+          TOTAL_PODS=$(${kubectl_cmd} get pods -n kyverno -l app.kubernetes.io/name=kyverno --no-headers 2>/dev/null | wc -l || echo "0")
+          if [ "${READY_PODS}" -gt 0 ] && [ "${READY_PODS}" -eq "${TOTAL_PODS}" ] && [ "${TOTAL_PODS}" -gt 0 ]; then
+            CONTROLLER_READY=true
+          fi
+        elif echo "${wh_name}" | grep -q voxeil; then
+          READY_PODS=$(${kubectl_cmd} get pods -n platform -l app.kubernetes.io/name=controller --no-headers 2>/dev/null | grep -c " Running " || echo "0")
+          TOTAL_PODS=$(${kubectl_cmd} get pods -n platform -l app.kubernetes.io/name=controller --no-headers 2>/dev/null | wc -l || echo "0")
+          if [ "${READY_PODS}" -gt 0 ] && [ "${READY_PODS}" -eq "${TOTAL_PODS}" ] && [ "${TOTAL_PODS}" -gt 0 ]; then
+            CONTROLLER_READY=true
+          fi
+        fi
+        
+        if [[ "${CONTROLLER_READY}" != "true" ]]; then
+          WEBHOOK_RISK=true
+          echo "  ⚠ Potential webhook deadlock risk: ${wh_name}"
+          echo "    Related controller pods are not ready"
+        fi
+      fi
+    done <<< "${VOXEIL_WEBHOOKS}"
+  fi
+  
+  if [[ "${WEBHOOK_RISK}" != "true" ]]; then
+    echo "  ✓ No deadlock risk detected"
+  else
+    EXIT_CODE=1
+  fi
+  echo ""
   
   # Check labeled resources
   echo "=== Resources with app.kubernetes.io/part-of=voxeil ==="
   
   echo "Namespaces:"
-  VOXEIL_NS="$(kubectl get namespaces -l app.kubernetes.io/part-of=voxeil -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' || true)"
+  VOXEIL_NS=""
+  while IFS= read -r ns; do
+    if [ -n "${ns}" ]; then
+      if [ -z "${VOXEIL_NS}" ]; then
+        VOXEIL_NS="${ns}"
+      else
+        VOXEIL_NS="${VOXEIL_NS}"$'\n'"${ns}"
+      fi
+    fi
+  done <<< "$(${kubectl_cmd} get namespaces -l app.kubernetes.io/part-of=voxeil -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' || true)"
+  
   if [ -n "${VOXEIL_NS}" ]; then
-    echo "${VOXEIL_NS}" | while read -r ns; do
-      echo "  - ${ns}"
-    done
+    while IFS= read -r ns; do
+      if [ -n "${ns}" ]; then
+        echo "  - ${ns}"
+      fi
+    done <<< "${VOXEIL_NS}"
     EXIT_CODE=1
   else
     echo "  ✓ None found"
@@ -1820,9 +1961,9 @@ if [ "${DOCTOR}" = "true" ]; then
   
   echo ""
   echo "All resources (pods, services, etc.):"
-  VOXEIL_ALL="$(kubectl get all -A -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  VOXEIL_ALL="$(${kubectl_cmd} get all -A -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
   if [ "${VOXEIL_ALL}" -gt 0 ]; then
-    kubectl get all -A -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    ${kubectl_cmd} get all -A -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
     EXIT_CODE=1
   else
     echo "  ✓ None found"
@@ -1830,9 +1971,9 @@ if [ "${DOCTOR}" = "true" ]; then
   
   echo ""
   echo "ConfigMaps, Secrets, ServiceAccounts, Roles, RoleBindings, Ingresses, NetworkPolicies:"
-  VOXEIL_OTHER="$(kubectl get cm,secret,sa,role,rolebinding,ingress,networkpolicy -A -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  VOXEIL_OTHER="$(${kubectl_cmd} get cm,secret,sa,role,rolebinding,ingress,networkpolicy -A -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
   if [ "${VOXEIL_OTHER}" -gt 0 ]; then
-    kubectl get cm,secret,sa,role,rolebinding,ingress,networkpolicy -A -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    ${kubectl_cmd} get cm,secret,sa,role,rolebinding,ingress,networkpolicy -A -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
     EXIT_CODE=1
   else
     echo "  ✓ None found"
@@ -1840,9 +1981,9 @@ if [ "${DOCTOR}" = "true" ]; then
   
   echo ""
   echo "ClusterRoles and ClusterRoleBindings:"
-  VOXEIL_CLUSTER="$(kubectl get clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  VOXEIL_CLUSTER="$(${kubectl_cmd} get clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
   if [ "${VOXEIL_CLUSTER}" -gt 0 ]; then
-    kubectl get clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    ${kubectl_cmd} get clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
     EXIT_CODE=1
   else
     echo "  ✓ None found"
@@ -1850,9 +1991,9 @@ if [ "${DOCTOR}" = "true" ]; then
   
   echo ""
   echo "Webhooks:"
-  VOXEIL_WEBHOOKS="$(kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  VOXEIL_WEBHOOKS="$(${kubectl_cmd} get validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
   if [ "${VOXEIL_WEBHOOKS}" -gt 0 ]; then
-    kubectl get validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    ${kubectl_cmd} get validatingwebhookconfiguration,mutatingwebhookconfiguration -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
     EXIT_CODE=1
   else
     echo "  ✓ None found"
@@ -1860,9 +2001,9 @@ if [ "${DOCTOR}" = "true" ]; then
   
   echo ""
   echo "CRDs:"
-  VOXEIL_CRDS="$(kubectl get crd -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  VOXEIL_CRDS="$(${kubectl_cmd} get crd -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
   if [ "${VOXEIL_CRDS}" -gt 0 ]; then
-    kubectl get crd -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    ${kubectl_cmd} get crd -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
     EXIT_CODE=1
   else
     echo "  ✓ None found"
@@ -1870,9 +2011,9 @@ if [ "${DOCTOR}" = "true" ]; then
   
   echo ""
   echo "PVCs:"
-  VOXEIL_PVCS="$(kubectl get pvc -A -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
+  VOXEIL_PVCS="$(${kubectl_cmd} get pvc -A -l app.kubernetes.io/part-of=voxeil --no-headers 2>/dev/null | wc -l || echo "0")"
   if [ "${VOXEIL_PVCS}" -gt 0 ]; then
-    kubectl get pvc -A -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
+    ${kubectl_cmd} get pvc -A -l app.kubernetes.io/part-of=voxeil 2>/dev/null || true
     EXIT_CODE=1
   else
     echo "  ✓ None found"
@@ -1881,14 +2022,34 @@ if [ "${DOCTOR}" = "true" ]; then
   # Check for unlabeled namespaces that might be voxeil-related
   echo ""
   echo "=== Unlabeled Namespaces (potential leftovers) ==="
-  UNLABELED_NS="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
-  if [ -n "${UNLABELED_NS}" ]; then
-    echo "${UNLABELED_NS}" | while read -r ns; do
-      if ! kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null | grep -q voxeil; then
-        echo "  ⚠ ${ns} (not labeled)"
-        EXIT_CODE=1
+  UNLABELED_NS=""
+  while IFS= read -r ns; do
+    if [ -n "${ns}" ]; then
+      if [ -z "${UNLABELED_NS}" ]; then
+        UNLABELED_NS="${ns}"
+      else
+        UNLABELED_NS="${UNLABELED_NS}"$'\n'"${ns}"
       fi
-    done
+    fi
+  done <<< "$(${kubectl_cmd} get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
+  
+  if [ -n "${UNLABELED_NS}" ]; then
+    UNLABELED_FOUND=false
+    while IFS= read -r ns; do
+      if [ -n "${ns}" ]; then
+        LABEL=$(${kubectl_cmd} get namespace "${ns}" -o jsonpath='{.metadata.labels.app\.kubernetes\.io/part-of}' 2>/dev/null || echo "")
+        if [[ "${LABEL}" != "voxeil" ]]; then
+          echo "  ⚠ ${ns} (unlabeled leftover risk)"
+          UNLABELED_FOUND=true
+        fi
+      fi
+    done <<< "${UNLABELED_NS}"
+    
+    if [[ "${UNLABELED_FOUND}" == "true" ]]; then
+      EXIT_CODE=1
+    else
+      echo "  ✓ All found namespaces are properly labeled"
+    fi
   else
     echo "  ✓ None found"
   fi
@@ -1897,39 +2058,55 @@ if [ "${DOCTOR}" = "true" ]; then
   echo ""
   echo "=== PersistentVolumes (checking claimRef) ==="
   VOXEIL_PVS=0
-  for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
-    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
-      PVS="$(kubectl get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
-      if [ -n "${PVS}" ]; then
-        echo "  ⚠ PVs for namespace ${ns}:"
-        echo "${PVS}" | while read -r pv; do
-          echo "    - ${pv}"
-        done
-        VOXEIL_PVS=1
-        EXIT_CODE=1
+  if command -v python3 >/dev/null 2>&1; then
+    for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
+      if ${kubectl_cmd} get namespace "${ns}" >/dev/null 2>&1; then
+        PVS=""
+        while IFS= read -r pv; do
+          if [ -n "${pv}" ]; then
+            if [ -z "${PVS}" ]; then
+              PVS="${pv}"
+            else
+              PVS="${PVS}"$'\n'"${pv}"
+            fi
+          fi
+        done <<< "$(${kubectl_cmd} get pv -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); [print(pv['metadata']['name']) for pv in data.get('items', []) if pv.get('spec', {}).get('claimRef', {}).get('namespace') == '${ns}']" 2>/dev/null || true)"
+        
+        if [ -n "${PVS}" ]; then
+          echo "  ⚠ PVs for namespace ${ns}:"
+          while IFS= read -r pv; do
+            if [ -n "${pv}" ]; then
+              echo "    - ${pv}"
+            fi
+          done <<< "${PVS}"
+          VOXEIL_PVS=1
+          EXIT_CODE=1
+        fi
       fi
+    done
+    if [ ${VOXEIL_PVS} -eq 0 ]; then
+      echo "  ✓ None found"
     fi
-  done
-  if [ ${VOXEIL_PVS} -eq 0 ]; then
-    echo "  ✓ None found"
+  else
+    echo "  ⚠ python3 missing, skipping PV claimRef scan"
   fi
+  echo ""
   
   # Traefik status
-  echo ""
   echo "=== Traefik Status ==="
-  if kubectl get helmchartconfig traefik -n kube-system >/dev/null 2>&1; then
+  if ${kubectl_cmd} get helmchartconfig traefik -n kube-system >/dev/null 2>&1; then
     echo "  ✓ Traefik HelmChartConfig found"
-    TRAEFIK_JOBS=$(kubectl get jobs -n kube-system -l app.kubernetes.io/name=traefik --no-headers 2>/dev/null | wc -l || echo "0")
+    TRAEFIK_JOBS=$(${kubectl_cmd} get jobs -n kube-system -l app.kubernetes.io/name=traefik --no-headers 2>/dev/null | wc -l || echo "0")
     if [ "${TRAEFIK_JOBS}" -gt 0 ]; then
       echo "  Traefik Helm install jobs:"
-      kubectl get jobs -n kube-system -l app.kubernetes.io/name=traefik 2>/dev/null || true
-      FAILED_JOBS=$(kubectl get jobs -n kube-system -l app.kubernetes.io/name=traefik -o jsonpath='{.items[?(@.status.failed==1)].metadata.name}' 2>/dev/null || echo "")
+      ${kubectl_cmd} get jobs -n kube-system -l app.kubernetes.io/name=traefik 2>/dev/null || true
+      FAILED_JOBS=$(${kubectl_cmd} get jobs -n kube-system -l app.kubernetes.io/name=traefik -o jsonpath='{.items[?(@.status.failed==1)].metadata.name}' 2>/dev/null || echo "")
       if [ -n "${FAILED_JOBS}" ]; then
         echo "  ⚠ Failed Traefik jobs detected:"
         for job in ${FAILED_JOBS}; do
           echo "    - ${job}"
           echo "    Last 30 lines of logs:"
-          kubectl logs -n kube-system "job/${job}" --tail=30 2>/dev/null | sed 's/^/      /' || echo "      Unable to get logs"
+          ${kubectl_cmd} logs -n kube-system "job/${job}" --tail=30 2>/dev/null | sed 's/^/      /' || echo "      Unable to get logs"
         done
         EXIT_CODE=1
       fi
@@ -1941,19 +2118,19 @@ if [ "${DOCTOR}" = "true" ]; then
   
   # Flux status
   echo "=== Flux Status ==="
-  if kubectl get namespace flux-system >/dev/null 2>&1; then
+  if ${kubectl_cmd} get namespace flux-system >/dev/null 2>&1; then
     echo "  ✓ flux-system namespace exists"
-    FLUX_DEPLOYMENTS=$(kubectl get deployments -n flux-system --no-headers 2>/dev/null | wc -l || echo "0")
+    FLUX_DEPLOYMENTS=$(${kubectl_cmd} get deployments -n flux-system --no-headers 2>/dev/null | wc -l || echo "0")
     if [ "${FLUX_DEPLOYMENTS}" -gt 0 ]; then
       echo "  Flux deployments:"
-      kubectl get deployments -n flux-system 2>/dev/null || true
-      NOT_READY=$(kubectl get deployments -n flux-system -o jsonpath='{.items[?(@.status.readyReplicas!=@.spec.replicas)].metadata.name}' 2>/dev/null || echo "")
+      ${kubectl_cmd} get deployments -n flux-system 2>/dev/null || true
+      NOT_READY=$(${kubectl_cmd} get deployments -n flux-system -o jsonpath='{.items[?(@.status.readyReplicas!=@.spec.replicas)].metadata.name}' 2>/dev/null || echo "")
       if [ -n "${NOT_READY}" ]; then
         echo "  ⚠ Not ready deployments:"
         for deploy in ${NOT_READY}; do
           echo "    - ${deploy}"
           echo "    Last 30 lines of logs:"
-          kubectl logs -n flux-system "deployment/${deploy}" --tail=30 2>/dev/null | sed 's/^/      /' || echo "      Unable to get logs"
+          ${kubectl_cmd} logs -n flux-system "deployment/${deploy}" --tail=30 2>/dev/null | sed 's/^/      /' || echo "      Unable to get logs"
         done
         EXIT_CODE=1
       fi
@@ -1967,13 +2144,17 @@ if [ "${DOCTOR}" = "true" ]; then
   echo ""
   echo "=== Summary ==="
   if [ ${EXIT_CODE} -eq 0 ]; then
-    echo "✓ System appears clean - no Voxeil resources detected"
+    echo "RESULT: PASS"
+    echo "Exit code: 0"
   else
+    echo "RESULT: FAIL"
+    echo "Exit code: 1"
+    echo ""
     echo "⚠ System has Voxeil resources or potential leftovers"
     echo ""
     echo "Recommended next steps:"
     echo "  bash /tmp/voxeil.sh uninstall --force"
-    if kubectl get namespace flux-system >/dev/null 2>&1 || kubectl get namespace kyverno >/dev/null 2>&1 || kubectl get namespace cert-manager >/dev/null 2>&1; then
+    if ${kubectl_cmd} get namespace flux-system >/dev/null 2>&1 || ${kubectl_cmd} get namespace kyverno >/dev/null 2>&1 || ${kubectl_cmd} get namespace cert-manager >/dev/null 2>&1; then
       echo "  bash /tmp/voxeil.sh purge-node --force  (if you want to completely reset the node)"
     fi
   fi
