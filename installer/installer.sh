@@ -3122,7 +3122,10 @@ if [ "${PROFILE}" = "full" ]; then
     log_warn "Keeping webhooks in fail-open mode (failurePolicy=Ignore) to prevent API lock"
     log_warn "This is safe - Kyverno policies will not be enforced until service is healthy"
     log_warn "You can manually harden webhooks later when Kyverno is healthy:"
-    log_warn "  kubectl get validatingwebhookconfigurations -o name | grep kyverno | xargs -I {} kubectl patch {} --type=json -p '[{\"op\":\"replace\",\"path\":\"/webhooks/0/failurePolicy\",\"value\":\"Fail\"}]'"
+    log_warn "  # Safe method: patch ALL webhooks entries (not just index 0)"
+    log_warn "  kubectl get validatingwebhookconfigurations -o name | grep kyverno | while read wh; do"
+    log_warn "    kubectl get \${wh} -o json | python3 -c \"import sys,json; d=json.load(sys.stdin); [w.update({'failurePolicy':'Fail','timeoutSeconds':10}) for w in d.get('webhooks',[])]; print(json.dumps(d))\" | kubectl apply -f -"
+    log_warn "  done"
   fi
 
   # Apply policies (idempotent) - wait a bit for Kyverno to be fully ready
@@ -4216,21 +4219,23 @@ echo ""
 # ========= Post-install sanity checks =========
 log_step "Post-install sanity checks"
 
-# Check Traefik pods are running
-log_info "Checking Traefik installation..."
-TRAEFIK_PODS="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --no-headers 2>/dev/null | grep -c Running || echo "0")"
+# Check Traefik pods are running (critical component - must be running for install success)
+log_info "Verifying Traefik is running (critical for ingress)..."
+TRAEFIK_PODS="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s --no-headers 2>/dev/null | grep -c Running || echo "0")"
 TRAEFIK_PODS="${TRAEFIK_PODS//[^0-9]/}"  # Remove non-numeric characters
 TRAEFIK_PODS="${TRAEFIK_PODS:-0}"  # Default to 0 if empty
 if [ "${TRAEFIK_PODS}" -eq 0 ]; then
-  log_warn "Traefik pods not found or not running in kube-system"
+  log_error "Traefik pods not found or not running in kube-system"
   echo "  Checking Traefik pods status:"
-  kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik 2>/dev/null || true
+  kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || true
   echo ""
   echo "  Checking Traefik deployment status:"
-  kubectl get deployments -n kube-system -l app.kubernetes.io/name=traefik 2>/dev/null || true
+  kubectl get deployments -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || true
   echo ""
-  log_warn "Traefik may not be installed or may be in CrashLoopBackOff"
-  log_warn "This may cause ingress issues. Check logs: kubectl logs -n kube-system -l app.kubernetes.io/name=traefik"
+  log_error "Traefik is not running - this is required for ingress to work"
+  log_error "Installation cannot be considered successful without Traefik"
+  log_error "Check logs: kubectl logs -n kube-system -l app.kubernetes.io/name=traefik"
+  exit 1
 else
   log_ok "Traefik pods are running (${TRAEFIK_PODS} pod(s))"
 fi
