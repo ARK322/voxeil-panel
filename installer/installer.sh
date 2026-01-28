@@ -263,14 +263,14 @@ fix_kyverno_cleanup_jobs() {
       if [ -n "${job_name}" ]; then
         echo "  Cleaning up job: ${job_name} (pod: ${pod})"
         # Delete job first (this will also delete the pod)
-        kubectl delete job "${job_name}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+        kubectl delete job "${job_name}" -n "${namespace}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
           fixed_count=$((fixed_count + 1)) || true
         # Also delete pod directly as fallback (in case job deletion doesn't work)
-        kubectl delete pod "${pod}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        kubectl delete pod "${pod}" -n "${namespace}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       else
         # If no job owner, delete pod directly
         echo "  Cleaning up pod directly: ${pod}"
-        kubectl delete pod "${pod}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+        kubectl delete pod "${pod}" -n "${namespace}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
           fixed_count=$((fixed_count + 1)) || true
       fi
     done
@@ -343,13 +343,12 @@ print(json.dumps(data))
         jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
         kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     else
-      # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
-      kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
-        -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
-        --type=json 2>/dev/null || \
-      kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
-        -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
-        --type=merge 2>/dev/null || true
+      # Fallback: use sed to modify JSON safely (patches ALL webhooks, not just first)
+      # This avoids array overwrite issues with --type=merge
+      kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+        sed -E 's/"failurePolicy":"[^"]*"/"failurePolicy":"Ignore"/g; s/"timeoutSeconds":[0-9]+/"timeoutSeconds":5/g; s/"timeoutSeconds":null/"timeoutSeconds":5/g' 2>/dev/null | \
+        kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || \
+      log_warn "Failed to patch webhook ${wh} (python3/jq not available, sed fallback failed)"
     fi
   done
   
@@ -373,13 +372,12 @@ print(json.dumps(data))
         jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
         kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     else
-      # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
-      kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
-        -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
-        --type=json 2>/dev/null || \
-      kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
-        -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
-        --type=merge 2>/dev/null || true
+      # Fallback: use sed to modify JSON safely (patches ALL webhooks, not just first)
+      # This avoids array overwrite issues with --type=merge
+      kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+        sed -E 's/"failurePolicy":"[^"]*"/"failurePolicy":"Ignore"/g; s/"timeoutSeconds":[0-9]+/"timeoutSeconds":5/g; s/"timeoutSeconds":null/"timeoutSeconds":5/g' 2>/dev/null | \
+        kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || \
+      log_warn "Failed to patch webhook ${wh} (python3/jq not available, sed fallback failed)"
     fi
   done
   
@@ -483,13 +481,12 @@ print(json.dumps(data))
         jq '.webhooks[] |= . + {"failurePolicy": "Fail", "timeoutSeconds": 10}' 2>/dev/null | \
         kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     else
-      # Fallback: try patch with type=json
-      kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
-        -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
-        --type=json 2>/dev/null || \
-      kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
-        -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
-        --type=merge 2>/dev/null || true
+      # Fallback: use sed to modify JSON safely (patches ALL webhooks, not just first)
+      # This avoids array overwrite issues with --type=merge
+      kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+        sed -E 's/"failurePolicy":"[^"]*"/"failurePolicy":"Fail"/g; s/"timeoutSeconds":[0-9]+/"timeoutSeconds":10/g; s/"timeoutSeconds":null/"timeoutSeconds":10/g' 2>/dev/null | \
+        kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || \
+      log_warn "Failed to patch webhook ${wh} (python3/jq not available, sed fallback failed)"
     fi
   done
   
@@ -515,13 +512,12 @@ print(json.dumps(data))
         jq '.webhooks[] |= . + {"failurePolicy": "Fail", "timeoutSeconds": 10}' 2>/dev/null | \
         kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     else
-      # Fallback: try patch with type=json
-      kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
-        -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
-        --type=json 2>/dev/null || \
-      kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
-        -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
-        --type=merge 2>/dev/null || true
+      # Fallback: use sed to modify JSON safely (patches ALL webhooks, not just first)
+      # This avoids array overwrite issues with --type=merge
+      kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+        sed -E 's/"failurePolicy":"[^"]*"/"failurePolicy":"Fail"/g; s/"timeoutSeconds":[0-9]+/"timeoutSeconds":10/g; s/"timeoutSeconds":null/"timeoutSeconds":10/g' 2>/dev/null | \
+        kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || \
+      log_warn "Failed to patch webhook ${wh} (python3/jq not available, sed fallback failed)"
     fi
   done
   
@@ -2288,13 +2284,12 @@ print(json.dumps(data))
           jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 3}' 2>/dev/null | \
           kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
       else
-        # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
-        kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
-          -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":3}]}' \
-          --type=json 2>/dev/null || \
-        kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
-          -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":3}]}' \
-          --type=merge 2>/dev/null || true
+        # Fallback: use sed to modify JSON safely (patches ALL webhooks, not just first)
+        # This avoids array overwrite issues with --type=merge
+        kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+          sed -E 's/"failurePolicy":"[^"]*"/"failurePolicy":"Ignore"/g; s/"timeoutSeconds":[0-9]+/"timeoutSeconds":3/g; s/"timeoutSeconds":null/"timeoutSeconds":3/g' 2>/dev/null | \
+          kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || \
+        log_warn "Failed to patch webhook ${wh} (python3/jq not available, sed fallback failed)"
       fi
     done
   fi
@@ -2321,13 +2316,12 @@ print(json.dumps(data))
           jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 3}' 2>/dev/null | \
           kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
       else
-        # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
-        kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
-          -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":3}]}' \
-          --type=json 2>/dev/null || \
-        kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
-          -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":3}]}' \
-          --type=merge 2>/dev/null || true
+        # Fallback: use sed to modify JSON safely (patches ALL webhooks, not just first)
+        # This avoids array overwrite issues with --type=merge
+        kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+          sed -E 's/"failurePolicy":"[^"]*"/"failurePolicy":"Ignore"/g; s/"timeoutSeconds":[0-9]+/"timeoutSeconds":3/g; s/"timeoutSeconds":null/"timeoutSeconds":3/g' 2>/dev/null | \
+          kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || \
+        log_warn "Failed to patch webhook ${wh} (python3/jq not available, sed fallback failed)"
       fi
     done
   fi
@@ -2395,10 +2389,10 @@ for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system
       for pod in ${failed_pods}; do
         job_name="$(kubectl get pod "${pod}" -n "${ns}" -o jsonpath='{.metadata.ownerReferences[?(@.kind=="Job")].name}' 2>/dev/null || true)"
         if [ -n "${job_name}" ]; then
-          kubectl delete job "${job_name}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+          kubectl delete job "${job_name}" -n "${ns}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
             cleaned_pods=$((cleaned_pods + 1)) || true
         else
-          kubectl delete pod "${pod}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
+          kubectl delete pod "${pod}" -n "${ns}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 && \
             cleaned_pods=$((cleaned_pods + 1)) || true
         fi
       done
@@ -2908,12 +2902,12 @@ if [ "${PROFILE}" = "full" ]; then
     
     for webhook in ${orphaned_webhooks}; do
       echo "  Deleting validating webhook: ${webhook}"
-      kubectl delete validatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
+      kubectl delete validatingwebhookconfiguration "${webhook}" --request-timeout=20s --ignore-not-found=true >/dev/null 2>&1 || true
     done
     
     for webhook in ${orphaned_mutating}; do
       echo "  Deleting mutating webhook: ${webhook}"
-      kubectl delete mutatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
+      kubectl delete mutatingwebhookconfiguration "${webhook}" --request-timeout=20s --ignore-not-found=true >/dev/null 2>&1 || true
     done
     
     log_ok "Orphaned webhooks cleaned up"
@@ -3568,7 +3562,7 @@ failed_pgadmin_pods="$(kubectl get pods -n infra-db -l app=pgadmin -o jsonpath='
 if [ -n "${failed_pgadmin_pods}" ]; then
   for pod in ${failed_pgadmin_pods}; do
     echo "  Deleting failed pod: ${pod}"
-    kubectl delete pod "${pod}" -n infra-db --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+    kubectl delete pod "${pod}" -n infra-db --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
   done
   sleep 2
 fi

@@ -682,13 +682,12 @@ print(json.dumps(data))
             jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
             kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
         else
-          # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
-          kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
-            -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
-            --type=json 2>/dev/null || \
-          kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
-            -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
-            --type=merge 2>/dev/null || true
+          # Fallback: use sed to modify JSON safely (patches ALL webhooks, not just first)
+          # This avoids array overwrite issues with --type=merge
+          kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+            sed -E 's/"failurePolicy":"[^"]*"/"failurePolicy":"Ignore"/g; s/"timeoutSeconds":[0-9]+/"timeoutSeconds":5/g; s/"timeoutSeconds":null/"timeoutSeconds":5/g' 2>/dev/null | \
+            kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || \
+          log_warn "Failed to patch webhook ${wh} (python3/jq not available, sed fallback failed)"
         fi
       done
     fi
@@ -715,13 +714,12 @@ print(json.dumps(data))
             jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
             kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
         else
-          # Fallback: try patch with type=json
-          kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
-            -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
-            --type=json 2>/dev/null || \
-          kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
-            -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
-            --type=merge 2>/dev/null || true
+          # Fallback: use sed to modify JSON safely (patches ALL webhooks, not just first)
+          # This avoids array overwrite issues with --type=merge
+          kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+            sed -E 's/"failurePolicy":"[^"]*"/"failurePolicy":"Ignore"/g; s/"timeoutSeconds":[0-9]+/"timeoutSeconds":5/g; s/"timeoutSeconds":null/"timeoutSeconds":5/g' 2>/dev/null | \
+            kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || \
+          log_warn "Failed to patch webhook ${wh} (python3/jq not available, sed fallback failed)"
         fi
       done
     fi
@@ -932,7 +930,7 @@ delete_namespace() {
           elif command -v python3 >/dev/null 2>&1; then
             kubectl get pv "${pv}" -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['metadata']['finalizers']=[]; data['spec']['claimRef']=None; print(json.dumps(data))" 2>/dev/null | kubectl replace -f - >/dev/null 2>&1 || true
           fi
-          kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+          kubectl delete pv "${pv}" --request-timeout=15s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
           echo "  Continuing - PV ${pv} will be cleaned up separately"
         fi
       done
@@ -981,7 +979,7 @@ delete_namespace() {
           fi
           # Quick patch and delete (no wait)
           kubectl patch "${resource}" "${res}" -n "${namespace}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-          kubectl delete "${resource}" "${res}" -n "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+          kubectl delete "${resource}" "${res}" -n "${namespace}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
         done
       fi
     done
@@ -1054,7 +1052,7 @@ delete_namespace() {
   if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
     log_warn "Namespace stuck terminating, removing finalizers..."
     force_remove_namespace_finalizers "${namespace}"
-    kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+    kubectl delete namespace "${namespace}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
     
     # Wait additional 30 seconds with aggressive finalizer removal
     local final_waited=0
@@ -1074,7 +1072,7 @@ delete_namespace() {
           fi
         fi
         force_remove_namespace_finalizers "${namespace}"
-        kubectl delete namespace "${namespace}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        kubectl delete namespace "${namespace}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       fi
       
       if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
@@ -1129,28 +1127,28 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   # A) Delete ingresses/services/deployments/statefulsets in voxeil namespaces first
   log_step "Deleting ingresses, services, and workloads"
   log_info "Deleting ingresses..."
-  run "kubectl delete ingress -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete ingress -A -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   # Also delete by name patterns (backward compatibility)
-  run "kubectl delete ingress panel -n platform --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-  run "kubectl delete ingress pgadmin -n infra-db --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
-  run "kubectl delete ingress mailcow -n mail-zone --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete ingress panel -n platform --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete ingress pgadmin -n infra-db --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete ingress mailcow -n mail-zone --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   # Delete Traefik TCP routes (IngressRouteTCP)
-  run "kubectl delete ingressroutetcp -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete ingressroutetcp -A -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   log_info "Deleting services..."
-  run "kubectl delete svc -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete svc -A -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   log_info "Scaling down deployments and statefulsets..."
   for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager; do
     if kubectl get namespace "${ns}" >/dev/null 2>&1; then
-      run "kubectl scale deployment --all -n \"${ns}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
-      run "kubectl scale statefulset --all -n \"${ns}\" --replicas=0 --ignore-not-found=true >/dev/null 2>&1 || true"
+      run "kubectl scale deployment --all -n \"${ns}\" --replicas=0 --request-timeout=20s --ignore-not-found=true >/dev/null 2>&1 || true"
+      run "kubectl scale statefulset --all -n \"${ns}\" --replicas=0 --request-timeout=20s --ignore-not-found=true >/dev/null 2>&1 || true"
     fi
   done
   sleep 2
   
   log_info "Deleting deployments and statefulsets..."
-  run "kubectl delete deployment,statefulset -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete deployment,statefulset -A -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # B) Delete webhook configurations for kyverno/cert-manager/flux if they exist
   log_step "Deleting webhook configurations"
@@ -1161,11 +1159,11 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   # C) Workloads - delete all remaining resources by label
   log_step "Deleting remaining namespace-scoped resources"
   log_info "Deleting all resources labeled app.kubernetes.io/part-of=voxeil..."
-  run "kubectl delete all,cm,secret,sa,role,rolebinding,networkpolicy -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete all,cm,secret,sa,role,rolebinding,networkpolicy -A -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # Also delete PVCs explicitly
   log_info "Deleting PVCs..."
-  run "kubectl delete pvc -A -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete pvc -A -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # D) Namespaces next (REVERSE order of installation), and WAIT
   log_step "Deleting namespaces (reverse order of installation)"
@@ -1238,7 +1236,7 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   # F) ClusterIssuers (reverse of installer: ClusterIssuers are applied after cert-manager)
   if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
     log_info "Deleting ClusterIssuers..."
-    run "kubectl delete clusterissuer --all --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    run "kubectl delete clusterissuer --all --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   fi
   
   # G) Remaining webhooks (cluster-scoped) by label (cert-manager, Flux, etc.)
@@ -1411,13 +1409,13 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
           # Wait a moment for patches to apply
           sleep 1
           # Delete PV
-          run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+          run "kubectl delete pv \"${pv}\" --request-timeout=15s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
           # If still exists after a moment, try again with more aggressive cleanup
           sleep 2
           if kubectl get pv "${pv}" >/dev/null 2>&1; then
             log_info "PV ${pv} still exists, forcing removal..."
             run "kubectl patch pv \"${pv}\" -p '{\"metadata\":{\"finalizers\":[]},\"spec\":{\"claimRef\":null}}' --type=merge >/dev/null 2>&1 || true"
-            run "kubectl delete pv \"${pv}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+            run "kubectl delete pv \"${pv}\" --request-timeout=15s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
           fi
         done
       fi
@@ -1643,7 +1641,7 @@ if [ "${DRY_RUN}" != "true" ] && [ "${KUBECTL_AVAILABLE}" = "true" ]; then
         elif command -v sed >/dev/null 2>&1; then
           kubectl get namespace "${ns}" -o json 2>/dev/null | sed 's/"finalizers":\[[^]]*\]/"finalizers":[]/g' | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
         fi
-        kubectl delete namespace "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        kubectl delete namespace "${ns}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       fi
     done
   fi
@@ -1680,7 +1678,7 @@ if [ "${DRY_RUN}" != "true" ] && [ "${KUBECTL_AVAILABLE}" = "true" ]; then
         log_info "Final cleanup: removing leftover PVs for namespace ${ns}..."
         for pv in ${PVS}; do
           kubectl patch pv "${pv}" -p '{"metadata":{"finalizers":[]},"spec":{"claimRef":null}}' --type=merge >/dev/null 2>&1 || true
-          kubectl delete pv "${pv}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+          kubectl delete pv "${pv}" --request-timeout=15s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
         done
       fi
     done
