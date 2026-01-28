@@ -6,37 +6,71 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/common.sh"
 
-# kubectl wrapper with k3s fallback
-kubectl() {
-  local kubectl_type
-  kubectl_type="$(type -t kubectl 2>/dev/null || echo "")"
-  if [[ "${kubectl_type}" == "file" ]]; then
-    command kubectl "$@"
-  elif [[ -f /usr/local/bin/k3s ]]; then
-    /usr/local/bin/k3s kubectl "$@"
-  else
-    log_error "kubectl not found and k3s not available"
-    return 1
+# Global kubectl binary path (empty until resolved)
+KUBECTL_BIN=""
+
+# Resolve kubectl binary deterministically
+resolve_kubectl() {
+  # If already resolved, return success
+  if [[ -n "${KUBECTL_BIN}" ]]; then
+    return 0
   fi
+  
+  # Check for system kubectl binary first
+  if command -v kubectl >/dev/null 2>&1; then
+    KUBECTL_BIN="$(command -v kubectl)"
+    return 0
+  fi
+  
+  # Fallback to k3s kubectl wrapper
+  if [[ -f /usr/local/bin/k3s ]]; then
+    KUBECTL_BIN="/usr/local/bin/k3s kubectl"
+    return 0
+  fi
+  
+  # Check if k3s is in PATH
+  if command -v k3s >/dev/null 2>&1; then
+    KUBECTL_BIN="$(command -v k3s) kubectl"
+    return 0
+  fi
+  
+  # No kubectl found
+  return 1
 }
 
 # Ensure kubectl is available
 ensure_kubectl() {
-  if ! command_exists kubectl && [[ ! -f /usr/local/bin/k3s ]]; then
+  if ! resolve_kubectl; then
     log_error "kubectl not found and k3s not available"
     return 1
   fi
   return 0
 }
 
+# Run kubectl command with proper binary resolution
+run_kubectl() {
+  if ! resolve_kubectl; then
+    log_error "kubectl not found and k3s not available"
+    return 1
+  fi
+  
+  # If KUBECTL_BIN contains space (e.g., "k3s kubectl"), split it
+  if [[ "${KUBECTL_BIN}" == *" "* ]]; then
+    set -- ${KUBECTL_BIN} "$@"
+    "$@"
+  else
+    "${KUBECTL_BIN}" "$@"
+  fi
+}
+
 # Check kubectl context
 check_kubectl_context() {
-  if ! kubectl cluster-info >/dev/null 2>&1; then
+  if ! run_kubectl cluster-info >/dev/null 2>&1; then
     log_error "kubectl cannot reach cluster. Check k3s installation."
     return 1
   fi
   local current_context
-  current_context="$(kubectl config current-context 2>/dev/null || echo "default")"
+  current_context="$(run_kubectl config current-context 2>/dev/null || echo "default")"
   log_info "Current kubectl context: ${current_context}"
   return 0
 }
@@ -48,7 +82,7 @@ wait_for_k3s_api() {
   local attempt=0
   
   while [ ${attempt} -lt ${max_attempts} ]; do
-    if kubectl get --raw=/healthz >/dev/null 2>&1; then
+    if run_kubectl get --raw=/healthz >/dev/null 2>&1; then
       log_ok "k3s API is ready"
       return 0
     fi
@@ -66,7 +100,13 @@ wait_for_k3s_api() {
 kubectl_safe() {
   local timeout_s="${1:-10}"
   shift || true
-  run_with_timeout "${timeout_s}" "kubectl $*"
+  if ! resolve_kubectl; then
+    log_error "kubectl not found and k3s not available"
+    return 1
+  fi
+  # Build command string for timeout wrapper
+  local cmd="${KUBECTL_BIN} $*"
+  run_with_timeout "${timeout_s}" "${cmd}"
 }
 
 # Run command with timeout (for uninstall)
@@ -115,7 +155,7 @@ run_with_timeout() {
 safe_apply() {
   local file="$1"
   local desc="${2:-${file}}"
-  if ! kubectl apply -f "${file}" 2>&1; then
+  if ! run_kubectl apply -f "${file}" 2>&1; then
     log_error "Failed to apply ${desc}"
     return 1
   fi
@@ -132,7 +172,7 @@ retry_apply() {
   local output=""
   
   while [ ${attempt} -le ${max_attempts} ]; do
-    output="$(kubectl apply --server-side --force-conflicts -f "${file}" 2>&1)"
+    output="$(run_kubectl apply --server-side --force-conflicts -f "${file}" 2>&1)"
     if [ $? -eq 0 ]; then
       return 0
     fi
@@ -147,7 +187,7 @@ retry_apply() {
       fi
     fi
     
-    output="$(kubectl apply -f "${file}" 2>&1)"
+    output="$(run_kubectl apply -f "${file}" 2>&1)"
     if [ $? -eq 0 ]; then
       return 0
     fi
@@ -175,7 +215,7 @@ wait_ns_ready() {
   local waited=0
   
   while [ ${waited} -lt ${timeout} ]; do
-    if kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+    if run_kubectl get namespace "${namespace}" >/dev/null 2>&1; then
       log_ok "Namespace ${namespace} ready"
       return 0
     fi
@@ -195,9 +235,9 @@ wait_deploy_ready() {
   local waited=0
   
   while [ ${waited} -lt ${timeout} ]; do
-    if kubectl get deployment "${deployment}" -n "${namespace}" >/dev/null 2>&1; then
-      local ready=$(kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-      local desired=$(kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+    if run_kubectl get deployment "${deployment}" -n "${namespace}" >/dev/null 2>&1; then
+      local ready=$(run_kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+      local desired=$(run_kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
       if [ "${ready}" = "${desired}" ] && [ "${desired}" -gt 0 ]; then
         log_ok "Deployment ${deployment} ready (${ready}/${desired})"
         return 0
@@ -226,7 +266,7 @@ wait_ns_deleted() {
   fi
   
   while [ ${waited} -lt ${timeout} ]; do
-    if ! kubectl get namespace "${namespace}" >/dev/null 2>&1; then
+    if ! run_kubectl get namespace "${namespace}" >/dev/null 2>&1; then
       log_ok "Namespace ${namespace} deleted"
       return 0
     fi
