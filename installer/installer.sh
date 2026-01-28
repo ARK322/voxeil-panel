@@ -1851,6 +1851,32 @@ extract_root_domain() {
   fi
 }
 
+# Reusable bounded wait helper for waiting on conditions
+# Usage: wait_for "description" timeout_seconds command...
+# Returns 0 on success, 1 on timeout/failure
+wait_for() {
+  local desc="$1"
+  local timeout="$2"
+  shift 2
+  local start
+  start=$(date +%s)
+  local elapsed=0
+  
+  log_info "Waiting for ${desc} (timeout: ${timeout}s)..."
+  
+  while (( elapsed < timeout )); do
+    if "$@"; then
+      log_ok "${desc} ready"
+      return 0
+    fi
+    sleep 2
+    elapsed=$(($(date +%s) - start))
+  done
+  
+  log_error "Timeout waiting for ${desc} after ${timeout}s"
+  return 1
+}
+
 prompt_with_default() {
   local label="$1"
   local current="$2"
@@ -1867,70 +1893,122 @@ prompt_required() {
   local label="$1"
   local current="$2"
   local input=""
-  while true; do
+  local timeout="${PROMPT_TIMEOUT:-300}"
+  local start
+  start=$(date +%s)
+  local elapsed=0
+  
+  while (( elapsed < timeout )); do
     if [[ -n "${current}" ]]; then
-      read -r -p "${label} [${current}]: " input < "${PROMPT_IN}"
-      if [[ -z "${input}" ]]; then
-        printf "%s" "${current}"
-        return
-      fi
-      printf "%s" "${input}"
-      return
-    else
-      read -r -p "${label}: " input < "${PROMPT_IN}"
-      if [[ -n "${input}" ]]; then
+      if read -r -t 5 -p "${label} [${current}]: " input < "${PROMPT_IN}" 2>/dev/null; then
+        if [[ -z "${input}" ]]; then
+          printf "%s" "${current}"
+          return
+        fi
         printf "%s" "${input}"
         return
       fi
+    else
+      if read -r -t 5 -p "${label}: " input < "${PROMPT_IN}" 2>/dev/null; then
+        if [[ -n "${input}" ]]; then
+          printf "%s" "${input}"
+          return
+        fi
+      fi
     fi
+    elapsed=$(($(date +%s) - start))
   done
+  
+  log_error "Timeout waiting for required input: ${label}"
+  exit 1
 }
 
 prompt_password() {
   local label="$1"
   local input=""
-  while true; do
-    read -r -s -p "${label}: " input < "${PROMPT_IN}"
-    echo "" >&2
-    if [[ -n "${input}" ]]; then
-      printf "%s" "${input}"
-      return
+  local timeout="${PROMPT_TIMEOUT:-300}"
+  local start
+  start=$(date +%s)
+  local elapsed=0
+  
+  while (( elapsed < timeout )); do
+    if read -r -s -t 5 -p "${label}: " input < "${PROMPT_IN}" 2>/dev/null; then
+      echo "" >&2
+      if [[ -n "${input}" ]]; then
+        printf "%s" "${input}"
+        return
+      fi
+      echo "Password cannot be empty. Please try again." >&2
     fi
-    echo "Password cannot be empty. Please try again." >&2
+    elapsed=$(($(date +%s) - start))
   done
+  
+  log_error "Timeout waiting for password input: ${label}"
+  exit 1
 }
 
 prompt_password_with_confirmation() {
   local label="$1"
   local password=""
   local confirm=""
-  while true; do
+  local timeout="${PROMPT_TIMEOUT:-300}"
+  local start
+  start=$(date +%s)
+  local elapsed=0
+  
+  while (( elapsed < timeout )); do
     # First password
-    while true; do
-      read -r -s -p "${label}: " password < "${PROMPT_IN}"
-      echo "" >&2
-      if [[ -n "${password}" ]]; then
-        break
+    local pass_start
+    pass_start=$(date +%s)
+    password=""
+    local pass_elapsed=0
+    while (( pass_elapsed < timeout )); do
+      if read -r -s -t 5 -p "${label}: " password < "${PROMPT_IN}" 2>/dev/null; then
+        echo "" >&2
+        if [[ -n "${password}" ]]; then
+          break
+        fi
+        echo "Password cannot be empty. Please try again." >&2
       fi
-      echo "Password cannot be empty. Please try again." >&2
+      pass_elapsed=$(($(date +%s) - pass_start))
     done
     
+    if [[ -z "${password}" ]]; then
+      log_error "Timeout waiting for password input: ${label}"
+      exit 1
+    fi
+    
     # Confirm password
-    while true; do
-      read -r -s -p "Confirm ${label}: " confirm < "${PROMPT_IN}"
-      echo "" >&2
-      if [[ -n "${confirm}" ]]; then
-        break
+    local confirm_start
+    confirm_start=$(date +%s)
+    confirm=""
+    local confirm_elapsed=0
+    while (( confirm_elapsed < timeout )); do
+      if read -r -s -t 5 -p "Confirm ${label}: " confirm < "${PROMPT_IN}" 2>/dev/null; then
+        echo "" >&2
+        if [[ -n "${confirm}" ]]; then
+          break
+        fi
+        echo "Password cannot be empty. Please try again." >&2
       fi
-      echo "Password cannot be empty. Please try again." >&2
+      confirm_elapsed=$(($(date +%s) - confirm_start))
     done
+    
+    if [[ -z "${confirm}" ]]; then
+      log_error "Timeout waiting for password confirmation: ${label}"
+      exit 1
+    fi
     
     if [[ "${password}" == "${confirm}" ]]; then
       printf "%s" "${password}"
       return
     fi
     echo "Passwords do not match. Please try again." >&2
+    elapsed=$(($(date +%s) - start))
   done
+  
+  log_error "Timeout waiting for password confirmation: ${label}"
+  exit 1
 }
 
 echo ""
