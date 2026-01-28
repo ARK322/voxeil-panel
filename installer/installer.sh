@@ -2746,10 +2746,31 @@ if [ -f "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml" ]; then
   
   # Verify Traefik is Running before proceeding
   log_info "Verifying Traefik installation..."
+  
+  # First, check if Traefik HelmChart exists (k3s should install it by default)
+  log_info "Checking if Traefik HelmChart is installed..."
+  if ! kubectl get helmchart traefik -n kube-system --request-timeout=10s >/dev/null 2>&1; then
+    log_warn "Traefik HelmChart not found. k3s should install it by default."
+    log_info "Checking if HelmChartConfig was applied correctly..."
+    if kubectl get helmchartconfig traefik -n kube-system --request-timeout=10s >/dev/null 2>&1; then
+      log_info "HelmChartConfig exists. Traefik HelmChart may be installing..."
+    else
+      log_error "HelmChartConfig not found. Traefik configuration may not be applied."
+      exit 1
+    fi
+  else
+    log_ok "Traefik HelmChart found"
+  fi
+  
   TRAEFIK_READY=false
-  TRAEFIK_TIMEOUT=120
+  TRAEFIK_TIMEOUT=180  # Increased timeout to 3 minutes (HelmChart installation can take time)
   TRAEFIK_WAITED=0
   while [ ${TRAEFIK_WAITED} -lt ${TRAEFIK_TIMEOUT} ]; do
+    # Check for any Traefik pods (not just Running)
+    TRAEFIK_PODS_ALL="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s --no-headers 2>/dev/null | wc -l || echo "0")"
+    TRAEFIK_PODS_ALL="${TRAEFIK_PODS_ALL//[^0-9]/}"
+    TRAEFIK_PODS_ALL="${TRAEFIK_PODS_ALL:-0}"
+    
     TRAEFIK_PODS="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s --no-headers 2>/dev/null | grep -c Running || echo "0")"
     TRAEFIK_PODS="${TRAEFIK_PODS//[^0-9]/}"
     TRAEFIK_PODS="${TRAEFIK_PODS:-0}"
@@ -2762,33 +2783,77 @@ if [ -f "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml" ]; then
       
       if [ "${CRASH_LOOP}" -gt 0 ]; then
         log_error "Traefik pods are in CrashLoopBackOff state"
-        echo "  Traefik pod status:"
+        echo ""
+        echo "=== Traefik Diagnostic Information ==="
+        echo ""
+        echo "--- Traefik pod status ---"
         kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || true
         echo ""
-        echo "  Traefik pod logs:"
-        kubectl logs -n kube-system -l app.kubernetes.io/name=traefik --tail=50 --request-timeout=10s 2>/dev/null || true
+        echo "--- Traefik pod logs (last 50 lines) ---"
+        TRAEFIK_POD_NAME="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
+        if [ -n "${TRAEFIK_POD_NAME}" ]; then
+          kubectl logs -n kube-system "${TRAEFIK_POD_NAME}" --tail=50 --request-timeout=10s 2>/dev/null || true
+        fi
+        echo ""
+        echo "--- Recent events in kube-system namespace ---"
+        kubectl get events -n kube-system --sort-by='.lastTimestamp' --request-timeout=10s | tail -20 2>/dev/null || true
         exit 1
       fi
       
       TRAEFIK_READY=true
       log_ok "Traefik is Running (${TRAEFIK_PODS} pod(s))"
       break
+    elif [ "${TRAEFIK_PODS_ALL}" -gt 0 ]; then
+      # Pods exist but not Running - show status for debugging
+      POD_STATUS="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s --no-headers 2>/dev/null | head -1 | awk '{print $3}' || echo "Unknown")"
+      if [ $((TRAEFIK_WAITED % 20)) -eq 0 ] && [ ${TRAEFIK_WAITED} -gt 0 ]; then
+        log_info "Traefik pods exist but not Running yet (status: ${POD_STATUS})... (${TRAEFIK_WAITED}/${TRAEFIK_TIMEOUT}s)"
+      fi
     fi
     
     sleep 2
     TRAEFIK_WAITED=$((TRAEFIK_WAITED + 2))
-    if [ $((TRAEFIK_WAITED % 10)) -eq 0 ]; then
+    if [ $((TRAEFIK_WAITED % 20)) -eq 0 ] && [ ${TRAEFIK_WAITED} -gt 0 ]; then
       log_info "Waiting for Traefik to be Running... (${TRAEFIK_WAITED}/${TRAEFIK_TIMEOUT}s)"
     fi
   done
   
   if [ "${TRAEFIK_READY}" != "true" ]; then
     log_error "Traefik did not become Running within ${TRAEFIK_TIMEOUT}s"
-    echo "  Traefik pod status:"
-    kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || true
     echo ""
-    echo "  Traefik deployment status:"
-    kubectl get deployments -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || true
+    echo "=== Traefik Diagnostic Information ==="
+    echo ""
+    echo "--- Traefik HelmChart status ---"
+    kubectl get helmchart traefik -n kube-system --request-timeout=10s 2>/dev/null || echo "  HelmChart not found"
+    echo ""
+    echo "--- Traefik HelmChartConfig status ---"
+    kubectl get helmchartconfig traefik -n kube-system --request-timeout=10s 2>/dev/null || echo "  HelmChartConfig not found"
+    echo ""
+    echo "--- Traefik pod status ---"
+    kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || echo "  No Traefik pods found"
+    echo ""
+    echo "--- Traefik deployment status ---"
+    kubectl get deployments -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || echo "  No Traefik deployments found"
+    echo ""
+    echo "--- Traefik daemonset status (if exists) ---"
+    kubectl get daemonsets -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || echo "  No Traefik daemonsets found"
+    echo ""
+    echo "--- Recent events in kube-system namespace ---"
+    kubectl get events -n kube-system --sort-by='.lastTimestamp' --request-timeout=10s | tail -30 2>/dev/null || true
+    echo ""
+    echo "--- Traefik pod logs (if pods exist) ---"
+    TRAEFIK_POD_NAME="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
+    if [ -n "${TRAEFIK_POD_NAME}" ]; then
+      kubectl logs -n kube-system "${TRAEFIK_POD_NAME}" --tail=50 --request-timeout=10s 2>/dev/null || true
+    else
+      echo "  No Traefik pods found to get logs from"
+    fi
+    echo ""
+    log_error "Traefik installation verification failed. Please check the diagnostics above."
+    log_error "Common issues:"
+    log_error "  - Image pull errors: Check network connectivity and image registry access"
+    log_error "  - Resource constraints: Check node resources (CPU/memory)"
+    log_error "  - HelmChart not installing: Check k3s system-agent logs: journalctl -u k3s -n 100"
     exit 1
   fi
 else

@@ -1231,9 +1231,9 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   # E) Traefik middlewares and HelmChartConfig (reverse of installer: Traefik config is applied first)
   log_step "Deleting Traefik resources"
   log_info "Deleting Traefik security middlewares..."
-  run "kubectl delete middleware security-headers rate-limit sql-injection-protection request-size-limit -n kube-system -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete middleware security-headers rate-limit sql-injection-protection request-size-limit -n kube-system -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   log_info "Deleting HelmChartConfig (Traefik entrypoints)..."
-  run "kubectl delete helmchartconfig traefik -n kube-system --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete helmchartconfig traefik -n kube-system --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # F) ClusterIssuers (reverse of installer: ClusterIssuers are applied after cert-manager)
   if [ "${FORCE}" = "true" ] || is_installed "CERT_MANAGER_INSTALLED"; then
