@@ -1383,8 +1383,10 @@ EOF
 # This ensures prompts work in SSH command mode and piped execution
 if [[ -r /dev/tty ]]; then
   PROMPT_IN="/dev/tty"
+  PROMPT_OUT="/dev/tty"
 else
   PROMPT_IN="/dev/stdin"
+  PROMPT_OUT="/dev/stdout"
 fi
 
 # ===== VOXEIL logo (wider spacing + cleaner layout) =====
@@ -1890,7 +1892,8 @@ prompt_with_default() {
   local elapsed=0
   
   while (( elapsed < timeout )); do
-    if read -r -t 5 -p "${label} [${current}]: " input < "${PROMPT_IN}"; then
+    printf "%s [%s]: " "${label}" "${current}" > "${PROMPT_OUT}"
+    if read -r -t 5 input < "${PROMPT_IN}"; then
       if [[ -n "${input}" ]]; then
         printf "%s" "${input}"
         return
@@ -1916,7 +1919,8 @@ prompt_required() {
   
   while (( elapsed < timeout )); do
     if [[ -n "${current}" ]]; then
-      if read -r -t 5 -p "${label} [${current}]: " input < "${PROMPT_IN}"; then
+      printf "%s [%s]: " "${label}" "${current}" > "${PROMPT_OUT}"
+      if read -r -t 5 input < "${PROMPT_IN}"; then
         if [[ -z "${input}" ]]; then
           printf "%s" "${current}"
           return
@@ -1925,7 +1929,8 @@ prompt_required() {
         return
       fi
     else
-      if read -r -t 5 -p "${label}: " input < "${PROMPT_IN}"; then
+      printf "%s: " "${label}" > "${PROMPT_OUT}"
+      if read -r -t 5 input < "${PROMPT_IN}"; then
         if [[ -n "${input}" ]]; then
           printf "%s" "${input}"
           return
@@ -1948,13 +1953,14 @@ prompt_password() {
   local elapsed=0
   
   while (( elapsed < timeout )); do
-    if read -r -s -t 5 -p "${label}: " input < "${PROMPT_IN}"; then
-      echo "" >&2
+    printf "%s: " "${label}" > "${PROMPT_OUT}"
+    if read -r -s -t 5 input < "${PROMPT_IN}"; then
+      printf "\n" > "${PROMPT_OUT}"
       if [[ -n "${input}" ]]; then
         printf "%s" "${input}"
         return
       fi
-      echo "Password cannot be empty. Please try again." >&2
+      printf "Password cannot be empty. Please try again.\n" > "${PROMPT_OUT}"
     fi
     elapsed=$(($(date +%s) - start))
   done
@@ -1979,12 +1985,13 @@ prompt_password_with_confirmation() {
     password=""
     local pass_elapsed=0
     while (( pass_elapsed < timeout )); do
-      if read -r -s -t 5 -p "${label}: " password < "${PROMPT_IN}"; then
-        echo "" >&2
+      printf "%s: " "${label}" > "${PROMPT_OUT}"
+      if read -r -s -t 5 password < "${PROMPT_IN}"; then
+        printf "\n" > "${PROMPT_OUT}"
         if [[ -n "${password}" ]]; then
           break
         fi
-        echo "Password cannot be empty. Please try again." >&2
+        printf "Password cannot be empty. Please try again.\n" > "${PROMPT_OUT}"
       fi
       pass_elapsed=$(($(date +%s) - pass_start))
     done
@@ -2000,12 +2007,13 @@ prompt_password_with_confirmation() {
     confirm=""
     local confirm_elapsed=0
     while (( confirm_elapsed < timeout )); do
-      if read -r -s -t 5 -p "Confirm ${label}: " confirm < "${PROMPT_IN}"; then
-        echo "" >&2
+      printf "Confirm %s: " "${label}" > "${PROMPT_OUT}"
+      if read -r -s -t 5 confirm < "${PROMPT_IN}"; then
+        printf "\n" > "${PROMPT_OUT}"
         if [[ -n "${confirm}" ]]; then
           break
         fi
-        echo "Password cannot be empty. Please try again." >&2
+        printf "Password cannot be empty. Please try again.\n" > "${PROMPT_OUT}"
       fi
       confirm_elapsed=$(($(date +%s) - confirm_start))
     done
@@ -2019,7 +2027,7 @@ prompt_password_with_confirmation() {
       printf "%s" "${password}"
       return
     fi
-    echo "Passwords do not match. Please try again." >&2
+    printf "Passwords do not match. Please try again.\n" > "${PROMPT_OUT}"
     elapsed=$(($(date +%s) - start))
   done
   
