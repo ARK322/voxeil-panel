@@ -556,6 +556,23 @@ echo "== Voxeil Panel Uninstaller =="
 echo ""
 
 # ========= Main uninstaller =========
+# Check kubectl availability FIRST (needed for preflight)
+if ! command -v kubectl >/dev/null 2>&1 || ! kubectl cluster-info >/dev/null 2>&1; then
+  log_warn "kubectl not available or cluster not accessible"
+  echo "  Proceeding with filesystem cleanup only..."
+  KUBECTL_AVAILABLE=false
+else
+  KUBECTL_AVAILABLE=true
+fi
+
+# CRITICAL: Preflight webhook neutralization MUST be FIRST (before any other kubectl operations)
+# This prevents API lock during any subsequent kubectl operations
+if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
+  # Always neutralize webhooks first, regardless of FORCE flag
+  # This is safe and prevents admission deadlock
+  disable_admission_webhooks_preflight
+fi
+
 # Load state
 state_load
 
@@ -1099,14 +1116,8 @@ if [ -n "${KUBECONFIG}" ]; then
   log_info "Using kubeconfig: ${KUBECONFIG}"
 fi
 
-# Check kubectl availability
-if ! command -v kubectl >/dev/null 2>&1 || ! kubectl cluster-info >/dev/null 2>&1; then
-  log_warn "kubectl not available or cluster not accessible"
-  echo "  Proceeding with filesystem cleanup only..."
-  KUBECTL_AVAILABLE=false
-else
-  KUBECTL_AVAILABLE=true
-fi
+# Note: kubectl availability check moved to top of main uninstaller section
+# (before preflight webhook neutralization)
 
 # ========= Deletion Order (Reverse of Installation) =========
 
@@ -1116,13 +1127,8 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     log_warn "Overall timeout reached, proceeding to fallback cleanup..."
   fi
   
-  # Preflight: Disable admission webhooks BEFORE any deletions to prevent API lock
-  # Call if FORCE=true OR if webhookconfigs exist (self-heal)
-  if [ "${FORCE}" = "true" ]; then
-    disable_admission_webhooks_preflight
-  elif kubectl get validatingwebhookconfigurations,mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | grep -qiE 'kyverno|cert-manager'; then
-    disable_admission_webhooks_preflight
-  fi
+  # Note: Preflight webhook neutralization was already done at the very top of the script
+  # This ensures API is never locked during any kubectl operations
   
   # A) Delete ingresses/services/deployments/statefulsets in voxeil namespaces first
   log_step "Deleting ingresses, services, and workloads"

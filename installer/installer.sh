@@ -148,10 +148,23 @@ sed_escape() {
   echo "$1" | sed 's/&/\\&/g'
 }
 backup_apply() {
-  kubectl apply -f "$1" || {
+  local file="$1"
+  local desc="${2:-${file}}"
+  if ! kubectl apply -f "${file}" 2>&1; then
+    log_error "Failed to apply ${desc}"
+    # For backup-service deployment, don't abort - warn and continue
+    # ImagePullBackOff should not break panel installation
+    if echo "${file}" | grep -q "backup-service-deploy"; then
+      log_warn "Backup-service deployment failed (likely ImagePullBackOff)"
+      log_warn "This will not prevent panel access. Backup functionality may be limited."
+      log_warn "To fix: build backup-service:local or push to registry"
+      return 1
+    fi
+    # For other backup manifests, still abort (secrets, RBAC are critical)
     log_error "Backup manifests failed to apply; aborting (backup is required)."
     exit 1
-  }
+  fi
+  return 0
 }
 
 # Idempotent kubectl apply helper
@@ -2850,13 +2863,26 @@ if [ -f "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml" ]; then
         echo "  Job: ${job}"
         kubectl get job "${job}" -n kube-system --request-timeout=10s 2>/dev/null || true
         echo ""
+        echo "  Job status:"
+        JOB_STATUS="$(kubectl get job "${job}" -n kube-system --request-timeout=10s -o jsonpath='{.status.conditions[*].type}' 2>/dev/null || echo "")"
+        if echo "${JOB_STATUS}" | grep -q "Failed"; then
+          echo "    ❌ Job has Failed condition"
+        elif echo "${JOB_STATUS}" | grep -q "Complete"; then
+          echo "    ✓ Job completed successfully"
+        else
+          echo "    ⚠ Job status: ${JOB_STATUS}"
+        fi
+        echo ""
         echo "  Job pods:"
         kubectl get pods -n kube-system --request-timeout=10s -l job-name="${job}" 2>/dev/null || true
         echo ""
-        echo "  Job pod logs:"
+        echo "  Job pod logs (last 100 lines):"
         JOB_POD="$(kubectl get pods -n kube-system --request-timeout=10s -l job-name="${job}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
         if [ -n "${JOB_POD}" ]; then
           kubectl logs -n kube-system "${JOB_POD}" --tail=100 --request-timeout=10s 2>/dev/null || true
+          echo ""
+          echo "  Job pod events:"
+          kubectl get events -n kube-system --field-selector involvedObject.name="${JOB_POD}" --sort-by='.lastTimestamp' --request-timeout=10s 2>/dev/null | tail -20 || true
         else
           echo "    No pods found for job ${job}"
         fi
@@ -2864,6 +2890,7 @@ if [ -f "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml" ]; then
       done
     else
       echo "  No helm-install-traefik jobs found"
+      echo "  This may indicate Traefik HelmChart was not created by k3s"
     fi
     echo ""
     echo "--- HelmChart status (detailed) ---"
@@ -3767,8 +3794,17 @@ label_namespace "backup-system"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-scripts-configmap.yaml"
 backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-secret.yaml"
 # Apply remaining backup-system manifests if they exist
+# Note: backup-service deployment failure is non-critical (ImagePullBackOff won't break panel)
 if [ -f "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml" ]; then
-  backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml"
+  if ! backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-deploy.yaml" "backup-service deployment"; then
+    log_warn "Backup-service deployment failed, but continuing installation..."
+    # Check for ImagePullBackOff after a moment
+    sleep 5
+    if kubectl get pods -n backup-system -l app=backup-service --request-timeout=10s 2>/dev/null | grep -q "ImagePullBackOff"; then
+      log_warn "Backup-service pods in ImagePullBackOff state"
+      log_warn "Panel installation will continue. Fix backup-service later if needed."
+    fi
+  fi
 fi
 if [ -f "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml" ]; then
   backup_apply "${BACKUP_SYSTEM_DIR}/backup-service-svc.yaml"

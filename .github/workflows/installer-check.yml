@@ -82,11 +82,35 @@ jobs:
             exit 1
           fi
 
-      # 7) Kyverno bootstrap logic presence check (soft fail)
+      # 7) Kyverno bootstrap logic presence check (HARD FAIL)
       - name: Check Kyverno webhook bootstrap logic
         run: |
+          set -e
           if ! grep -R 'failurePolicy.*Ignore' installer uninstaller; then
-            echo "⚠️ Kyverno webhook Ignore bootstrap not found"
+            echo "❌ Kyverno webhook Ignore bootstrap not found"
+            exit 1
+          fi
+          if ! grep -R 'safe_bootstrap_kyverno_webhooks\|disable_admission_webhooks_preflight' installer uninstaller; then
+            echo "❌ Kyverno webhook safe bootstrap function not found"
+            exit 1
+          fi
+
+      # 8) Traefik readiness check presence (HARD FAIL)
+      - name: Check Traefik readiness verification
+        run: |
+          set -e
+          if ! grep -R 'TRAEFIK_READY\|Traefik.*Running\|helm-install-traefik' installer; then
+            echo "❌ Traefik readiness check not found in installer"
+            exit 1
+          fi
+
+      # 9) Preflight webhook neutralization in uninstaller (HARD FAIL)
+      - name: Check uninstaller preflight webhook neutralization
+        run: |
+          set -e
+          # Check that disable_admission_webhooks_preflight is called early in uninstaller
+          if ! grep -B 5 -A 5 'disable_admission_webhooks_preflight' uninstaller/uninstaller.sh | grep -q 'Main uninstaller\|CRITICAL.*Preflight'; then
+            echo "❌ Uninstaller may not neutralize webhooks at the very top"
             exit 1
           fi
 
