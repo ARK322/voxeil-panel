@@ -1,22 +1,9 @@
 import { randomBytes } from "node:crypto";
-import { Client } from "pg";
 import { HttpError } from "../http/errors.js";
+import { withAdminClient as poolWithAdminClient } from "../db/pool.js";
 const DEFAULT_DB_NAME_PREFIX = "db_";
 const DEFAULT_DB_USER_PREFIX = "u_";
-function requireAdminConfig() {
-    const host = process.env.POSTGRES_HOST?.trim() ?? process.env.DB_HOST?.trim();
-    const port = Number(process.env.POSTGRES_PORT ?? process.env.DB_PORT ?? "5432");
-    const user = process.env.POSTGRES_ADMIN_USER?.trim() ?? process.env.DB_ADMIN_USER?.trim();
-    const password = process.env.POSTGRES_ADMIN_PASSWORD?.trim() ?? process.env.DB_ADMIN_PASSWORD?.trim();
-    const database = process.env.POSTGRES_DB?.trim() || "postgres";
-    if (!host || !user || !password) {
-        throw new HttpError(500, "Postgres admin configuration missing.");
-    }
-    if (!Number.isInteger(port) || port <= 0) {
-        throw new HttpError(500, "POSTGRES_PORT must be a positive integer.");
-    }
-    return { host, port, user, password, database };
-}
+
 function quoteIdent(value) {
     return `"${value.replace(/"/g, "\"\"")}"`;
 }
@@ -63,22 +50,10 @@ export function resolveDbUser(slug) {
 export function generateDbPassword() {
     return randomBytes(32).toString("base64url");
 }
+
+// Use shared admin connection pool (production-ready: prevents connection exhaustion)
 async function withAdminClient(fn) {
-    const config = requireAdminConfig();
-    const client = new Client({
-        host: config.host,
-        port: config.port,
-        user: config.user,
-        password: config.password,
-        database: config.database
-    });
-    await client.connect();
-    try {
-        return await fn(client);
-    }
-    finally {
-        await client.end();
-    }
+    return poolWithAdminClient(fn);
 }
 export async function ensureRole(username, password) {
     const safeUser = normalizeDbUser(username);
@@ -140,3 +115,6 @@ export async function dropRole(username) {
         await client.query(`DROP ROLE IF EXISTS ${quoteIdent(safeUser)}`);
     });
 }
+
+// Export withAdminClient for backward compatibility if needed elsewhere
+export { withAdminClient };

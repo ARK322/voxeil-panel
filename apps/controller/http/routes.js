@@ -6,6 +6,7 @@ import { logAudit } from "../audit/audit.service.js";
 import { CreateUserSchema, LoginSchema, ToggleUserSchema } from "../users/user.dto.js";
 import { createUser, listUsers, setUserActive, deleteUser, verifyUserCredentials, getUserById, updateUserStatus } from "../users/user.service.js";
 import { signToken } from "../auth/jwt.js";
+import { revokeTokenJti } from "../auth/token-revocation.service.js";
 import { bootstrapUserNamespace } from "../users/user.bootstrap.js";
 import { CreateAppSchema, DeployAppSchema } from "../apps/app.dto.js";
 import { listApps, createApp, deployApp, getAppByIdWithOwnershipCheck } from "../apps/app.service.js";
@@ -92,10 +93,10 @@ function getClientIp(req) {
 export function registerRoutes(app) {
     app.post("/auth/login", async (req, reply) => {
         const body = LoginSchema.parse(req.body ?? {});
-        pruneRateLimitStore();
+        await pruneRateLimitStore();
         const ip = getClientIp(req);
         const rateKey = `${ip ?? "unknown"}:${body.username}`;
-        const limitResult = checkRateLimit(rateKey, {
+        const limitResult = await checkRateLimit(rateKey, {
             limit: Math.max(1, LOGIN_RATE_LIMIT),
             windowMs: Math.max(1, LOGIN_RATE_WINDOW_SECONDS) * 1000
         });
@@ -130,6 +131,45 @@ export function registerRoutes(app) {
         });
         return reply.send({ ok: true, token, user });
     });
+    
+    // Production-ready logout endpoint (for session invalidation tracking)
+    app.post("/auth/logout", async (req, reply) => {
+        const user = requireUser(req);
+        // Production-ready: revoke the current token so logout actually invalidates it.
+        if (user.jti && user.exp) {
+            await revokeTokenJti(user.jti, user.exp);
+        }
+        safeAudit({
+            action: "auth.logout",
+            actorUserId: user.sub,
+            actorUsername: user.username,
+            ip: getClientIp(req),
+            success: true
+        });
+        return reply.send({ ok: true, message: "Logged out successfully" });
+    });
+    
+    // Production-ready token refresh endpoint
+    app.post("/auth/refresh", async (req, reply) => {
+        const user = requireUser(req);
+        // Production-ready: rotate token + revoke current one for immediate invalidation.
+        if (user.jti && user.exp) {
+            await revokeTokenJti(user.jti, user.exp);
+        }
+        const newToken = signToken({
+            sub: user.sub,
+            role: user.role,
+            disabled: user.disabled ?? false
+        });
+        safeAudit({
+            action: "auth.refresh",
+            actorUserId: user.sub,
+            ip: getClientIp(req),
+            success: true
+        });
+        return reply.send({ ok: true, token: newToken });
+    });
+    
     app.get("/admin/users", async (req, reply) => {
         requireAdmin(req);
         const users = await listUsers();
@@ -214,7 +254,6 @@ export function registerRoutes(app) {
         try {
             const { deleteUserNamespace } = await import("../k8s/namespace.js");
             const { dropDatabase, dropRole, revokeAndTerminate, normalizeDbName, normalizeDbUser } = await import("../postgres/admin.js");
-            const namespace = `user-${id}`;
             const dbNamePrefix = process.env.DB_NAME_PREFIX?.trim() || "db_";
             const dbUserPrefix = process.env.DB_USER_PREFIX?.trim() || "u_";
             const dbName = normalizeDbName(`${dbNamePrefix}${id}`);
@@ -429,7 +468,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/deploy", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -440,7 +479,7 @@ export function registerRoutes(app) {
     });
 
     app.patch("/sites/:slug/tls", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -451,7 +490,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/db/enable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -462,7 +501,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/db/disable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -472,18 +511,18 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/db/purge", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
         }
-        const body = ConfirmDeleteSchema.parse(req.body ?? {});
+        ConfirmDeleteSchema.parse(req.body ?? {});
         const result = await purgeSiteDb(slug);
         return reply.send({ ok: true, ...result });
     });
 
     app.post("/sites/:slug/mail/enable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -494,7 +533,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/mail/disable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -504,18 +543,18 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/mail/purge", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
         }
-        const body = ConfirmDeleteSchema.parse(req.body ?? {});
+        ConfirmDeleteSchema.parse(req.body ?? {});
         const result = await purgeSiteMail(slug);
         return reply.send({ ok: true, ...result });
     });
 
     app.get("/sites/:slug/mail/mailboxes", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -525,7 +564,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/mail/mailboxes", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -536,7 +575,7 @@ export function registerRoutes(app) {
     });
 
     app.delete("/sites/:slug/mail/mailboxes/:address", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         const address = String(req.params.address ?? "");
         if (!slug || !address) {
@@ -547,7 +586,7 @@ export function registerRoutes(app) {
     });
 
     app.get("/sites/:slug/mail/aliases", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -557,7 +596,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/mail/aliases", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -568,7 +607,7 @@ export function registerRoutes(app) {
     });
 
     app.delete("/sites/:slug/mail/aliases/:source", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         const source = String(req.params.source ?? "");
         if (!slug || !source) {
@@ -579,7 +618,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/dns/enable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -590,7 +629,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/dns/disable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -600,18 +639,18 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/dns/purge", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
         }
-        const body = ConfirmDeleteSchema.parse(req.body ?? {});
+        ConfirmDeleteSchema.parse(req.body ?? {});
         const result = await purgeSiteDns(slug);
         return reply.send({ ok: true, ...result });
     });
 
     app.post("/sites/:slug/github/enable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -622,7 +661,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/github/disable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -632,7 +671,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/github/deploy", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -643,7 +682,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/registry/credentials", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -654,7 +693,7 @@ export function registerRoutes(app) {
     });
 
     app.delete("/sites/:slug/registry/credentials", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -664,7 +703,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/backup/enable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -678,7 +717,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/backup/disable", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -688,7 +727,7 @@ export function registerRoutes(app) {
     });
 
     app.patch("/sites/:slug/backup/config", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -702,7 +741,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/backup/run", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -712,7 +751,7 @@ export function registerRoutes(app) {
     });
 
     app.get("/sites/:slug/backup/snapshots", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -722,7 +761,7 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/backup/restore", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
@@ -737,12 +776,12 @@ export function registerRoutes(app) {
     });
 
     app.post("/sites/:slug/backup/purge", async (req, reply) => {
-        const user = requireUser(req);
+        requireUser(req);
         const slug = String(req.params.slug ?? "");
         if (!slug) {
             throw new HttpError(400, "Site slug is required.");
         }
-        const body = ConfirmDeleteSchema.parse(req.body ?? {});
+        ConfirmDeleteSchema.parse(req.body ?? {});
         const result = await purgeSiteBackup(slug);
         return reply.send({ ok: true, ...result });
     });
@@ -756,7 +795,7 @@ export function registerRoutes(app) {
         
         try {
             // Get fail2ban status
-            let status = {};
+            const status = {};
             try {
                 const { stdout: statusOutput } = await execAsync("fail2ban-client status 2>/dev/null || echo 'FAIL2BAN_NOT_RUNNING'");
                 if (!statusOutput.includes("FAIL2BAN_NOT_RUNNING")) {

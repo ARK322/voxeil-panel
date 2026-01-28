@@ -1,4 +1,3 @@
-import { promises as fs } from "node:fs";
 import path from "node:path";
 import { HttpError } from "../http/errors.js";
 import { upsertDeployment, upsertIngress, upsertService, upsertConfigMap } from "../k8s/apply.js";
@@ -1378,12 +1377,11 @@ export async function triggerSiteGithubDeploy(slug, input) {
     if (!token) {
         throw new HttpError(409, "GitHub token missing.");
     }
-    // Check for persistent registry credentials first
-    const existingPullSecret = await readSecret(namespace, GHCR_PULL_SECRET_NAME);
-    let registryUsername = input.registryUsername?.trim();
-    let registryToken = input.registryToken?.trim();
-    let registryEmail = input.registryEmail?.trim() || undefined;
-    let registryServer = input.registryServer?.trim() || DEFAULT_REGISTRY_SERVER;
+    // Check for persistent registry credentials first (resolved by deployment imagePullSecret logic)
+    const registryUsername = input.registryUsername?.trim();
+    const registryToken = input.registryToken?.trim();
+    const registryEmail = input.registryEmail?.trim() || undefined;
+    const registryServer = input.registryServer?.trim() || DEFAULT_REGISTRY_SERVER;
     
     // If new credentials provided in deploy, save them as persistent
     if (registryUsername && registryToken) {

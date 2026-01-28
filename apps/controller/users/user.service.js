@@ -1,38 +1,19 @@
 import crypto from "node:crypto";
 import { promisify } from "node:util";
-import { Client } from "pg";
 import { HttpError } from "../http/errors.js";
+import { withClient as poolWithClient } from "../db/pool.js";
 const scryptAsync = promisify(crypto.scrypt);
 let schemaReady = false;
-function requireEnv(name) {
-    const value = process.env[name];
-    if (!value) {
-        throw new HttpError(500, `${name} is required.`);
-    }
-    return value;
-}
-function dbConfig() {
-    return {
-        host: requireEnv("POSTGRES_HOST"),
-        port: Number(process.env.POSTGRES_PORT ?? "5432"),
-        user: requireEnv("POSTGRES_ADMIN_USER"),
-        password: requireEnv("POSTGRES_ADMIN_PASSWORD"),
-        database: requireEnv("POSTGRES_DB")
-    };
-}
+
+// Use shared connection pool (production-ready: prevents connection exhaustion)
 async function withClient(fn) {
-    const client = new Client(dbConfig());
-    await client.connect();
-    try {
+    return poolWithClient(async (client) => {
         if (!schemaReady) {
             await ensureSchema(client);
             schemaReady = true;
         }
         return await fn(client);
-    }
-    finally {
-        await client.end();
-    }
+    });
 }
 async function ensureSchema(client) {
     await client.query(`
