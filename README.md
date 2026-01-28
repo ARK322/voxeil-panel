@@ -255,6 +255,64 @@ bash /tmp/voxeil.sh uninstall --force
 bash /tmp/voxeil.sh purge-node --force
 ```
 
+### Testing Workflow (Fresh VPS)
+
+**Reproducible testing on a fresh Ubuntu VPS:**
+
+This workflow verifies that install, uninstall, and purge-node work correctly on a clean system:
+
+```bash
+# 1. Download voxeil.sh
+curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel/main/voxeil.sh
+chmod +x /tmp/voxeil.sh
+
+# 2. Check initial state (should be clean)
+bash /tmp/voxeil.sh doctor
+
+# 3. Install Voxeil Panel
+bash /tmp/voxeil.sh install
+# Follow prompts for panel domain and admin email
+
+# 4. Verify installation
+bash /tmp/voxeil.sh doctor
+# Should show k3s installed, cluster ready, Traefik/Flux status
+
+# 5. Uninstall (safe, removes only Voxeil resources)
+bash /tmp/voxeil.sh uninstall --force
+
+# 6. Verify uninstall
+bash /tmp/voxeil.sh doctor
+# Should show clean state (k3s still present)
+
+# 7. Reinstall (verify install -> uninstall -> install works)
+bash /tmp/voxeil.sh install
+
+# 8. Verify reinstall
+bash /tmp/voxeil.sh doctor
+
+# 9. Purge node (complete reset, removes k3s)
+bash /tmp/voxeil.sh purge-node --force
+
+# 10. Verify purge
+bash /tmp/voxeil.sh doctor
+# Should show k3s not installed
+
+# 11. Reboot (recommended after purge-node)
+sudo reboot
+
+# 12. After reboot, verify clean state
+bash /tmp/voxeil.sh doctor
+# System should be completely clean
+```
+
+**Expected results:**
+- Install succeeds without deadlocks
+- Traefik installs cleanly (no HelmChartConfig mismatch errors)
+- Uninstall removes all Voxeil resources without stuck namespaces/webhooks
+- Install -> uninstall -> install cycle succeeds
+- Purge-node leaves system clean without requiring OS format
+- No stuck namespaces, webhooks, or helm jobs after uninstall/purge
+
 ### Installation Outputs
 
 After successful installation:

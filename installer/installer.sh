@@ -1379,15 +1379,23 @@ EOF
   exit 1
 }
 
-# Prefer /dev/tty (controlling terminal) when available, fallback to /dev/stdin
+# Bulletproof prompt system: prefer /dev/tty if readable, else /dev/stdin
+# PROMPT_OUT: prefer /dev/tty if writable/readable, else /dev/stdout
 # This ensures prompts work in SSH command mode and piped execution
 if [[ -r /dev/tty ]]; then
   PROMPT_IN="/dev/tty"
-  PROMPT_OUT="/dev/tty"
 else
   PROMPT_IN="/dev/stdin"
+fi
+
+if [[ -w /dev/tty ]] && [[ -r /dev/tty ]]; then
+  PROMPT_OUT="/dev/tty"
+else
   PROMPT_OUT="/dev/stdout"
 fi
+
+# Default prompt timeout (300 seconds = 5 minutes)
+PROMPT_TIMEOUT="${PROMPT_TIMEOUT:-300}"
 
 # ===== VOXEIL logo (wider spacing + cleaner layout) =====
 ORANGE="\033[38;5;208m"
@@ -1650,6 +1658,83 @@ if [ "${DOCTOR}" = "true" ]; then
   
   EXIT_CODE=0
   
+  # OS info
+  echo "=== System Information ==="
+  if [ -f /etc/os-release ]; then
+    echo "OS: $(grep PRETTY_NAME /etc/os-release | cut -d'"' -f2 || echo 'Unknown')"
+  else
+    echo "OS: Unknown"
+  fi
+  echo "Kernel: $(uname -r 2>/dev/null || echo 'Unknown')"
+  echo "Architecture: $(uname -m 2>/dev/null || echo 'Unknown')"
+  echo "Disk space:"
+  df -h / 2>/dev/null | head -2 || echo "  Unable to check disk space"
+  echo "Memory:"
+  free -h 2>/dev/null | head -2 || echo "  Unable to check memory"
+  echo ""
+  
+  # k3s status
+  echo "=== k3s Status ==="
+  if [[ -f /usr/local/bin/k3s ]]; then
+    echo "  ✓ k3s binary found at /usr/local/bin/k3s"
+    if command -v systemctl >/dev/null 2>&1; then
+      if systemctl is-active --quiet k3s 2>/dev/null; then
+        echo "  ✓ k3s service is running"
+      else
+        echo "  ⚠ k3s service is not running"
+        EXIT_CODE=1
+      fi
+    fi
+  else
+    echo "  ⚠ k3s binary not found at /usr/local/bin/k3s"
+    EXIT_CODE=1
+  fi
+  
+  # kubectl availability
+  if command -v kubectl >/dev/null 2>&1; then
+    echo "  ✓ kubectl command available: $(command -v kubectl)"
+  elif [[ -f /usr/local/bin/k3s ]]; then
+    if /usr/local/bin/k3s kubectl version --client >/dev/null 2>&1; then
+      echo "  ✓ kubectl available via k3s kubectl"
+    else
+      echo "  ⚠ kubectl not available (k3s kubectl failed)"
+      EXIT_CODE=1
+    fi
+  else
+    echo "  ⚠ kubectl not available"
+    EXIT_CODE=1
+  fi
+  echo ""
+  
+  # Cluster readiness
+  if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
+    echo "=== Cluster Status ==="
+    echo "Cluster info:"
+    kubectl cluster-info 2>/dev/null | head -3 || echo "  Unable to get cluster info"
+    echo ""
+    echo "Node readiness:"
+    if kubectl get nodes >/dev/null 2>&1; then
+      kubectl get nodes -o wide 2>/dev/null || echo "  Unable to get nodes"
+      READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo "0")
+      TOTAL_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+      if [ "${READY_NODES}" -eq "${TOTAL_NODES}" ] && [ "${TOTAL_NODES}" -gt 0 ]; then
+        echo "  ✓ All ${TOTAL_NODES} node(s) are Ready"
+      else
+        echo "  ⚠ Only ${READY_NODES}/${TOTAL_NODES} node(s) are Ready"
+        EXIT_CODE=1
+      fi
+    else
+      echo "  ⚠ Unable to get nodes"
+      EXIT_CODE=1
+    fi
+    echo ""
+  else
+    echo "=== Cluster Status ==="
+    echo "⚠ kubectl not available or cluster not accessible"
+    echo "  Skipping cluster checks"
+    echo ""
+  fi
+  
   # Check state file
   echo "=== State Registry ==="
   if [ -f "${STATE_FILE}" ]; then
@@ -1662,7 +1747,7 @@ if [ "${DOCTOR}" = "true" ]; then
     echo ""
   fi
   
-  # Check kubectl availability
+  # Check kubectl availability for resource checks
   if ! command -v kubectl >/dev/null 2>&1 || ! kubectl cluster-info >/dev/null 2>&1; then
     echo "⚠ kubectl not available or cluster not accessible"
     echo "  Skipping Kubernetes resource checks"
@@ -1780,11 +1865,68 @@ if [ "${DOCTOR}" = "true" ]; then
     echo "  ✓ None found"
   fi
   
+  # Traefik status
   echo ""
+  echo "=== Traefik Status ==="
+  if kubectl get helmchartconfig traefik -n kube-system >/dev/null 2>&1; then
+    echo "  ✓ Traefik HelmChartConfig found"
+    TRAEFIK_JOBS=$(kubectl get jobs -n kube-system -l app.kubernetes.io/name=traefik --no-headers 2>/dev/null | wc -l || echo "0")
+    if [ "${TRAEFIK_JOBS}" -gt 0 ]; then
+      echo "  Traefik Helm install jobs:"
+      kubectl get jobs -n kube-system -l app.kubernetes.io/name=traefik 2>/dev/null || true
+      FAILED_JOBS=$(kubectl get jobs -n kube-system -l app.kubernetes.io/name=traefik -o jsonpath='{.items[?(@.status.failed==1)].metadata.name}' 2>/dev/null || echo "")
+      if [ -n "${FAILED_JOBS}" ]; then
+        echo "  ⚠ Failed Traefik jobs detected:"
+        for job in ${FAILED_JOBS}; do
+          echo "    - ${job}"
+          echo "    Last 30 lines of logs:"
+          kubectl logs -n kube-system "job/${job}" --tail=30 2>/dev/null | sed 's/^/      /' || echo "      Unable to get logs"
+        done
+        EXIT_CODE=1
+      fi
+    fi
+  else
+    echo "  ⚠ Traefik HelmChartConfig not found"
+  fi
+  echo ""
+  
+  # Flux status
+  echo "=== Flux Status ==="
+  if kubectl get namespace flux-system >/dev/null 2>&1; then
+    echo "  ✓ flux-system namespace exists"
+    FLUX_DEPLOYMENTS=$(kubectl get deployments -n flux-system --no-headers 2>/dev/null | wc -l || echo "0")
+    if [ "${FLUX_DEPLOYMENTS}" -gt 0 ]; then
+      echo "  Flux deployments:"
+      kubectl get deployments -n flux-system 2>/dev/null || true
+      NOT_READY=$(kubectl get deployments -n flux-system -o jsonpath='{.items[?(@.status.readyReplicas!=@.spec.replicas)].metadata.name}' 2>/dev/null || echo "")
+      if [ -n "${NOT_READY}" ]; then
+        echo "  ⚠ Not ready deployments:"
+        for deploy in ${NOT_READY}; do
+          echo "    - ${deploy}"
+          echo "    Last 30 lines of logs:"
+          kubectl logs -n flux-system "deployment/${deploy}" --tail=30 2>/dev/null | sed 's/^/      /' || echo "      Unable to get logs"
+        done
+        EXIT_CODE=1
+      fi
+    fi
+  else
+    echo "  ⚠ flux-system namespace not found"
+  fi
+  echo ""
+  
+  # Summary with recommendations
+  echo ""
+  echo "=== Summary ==="
   if [ ${EXIT_CODE} -eq 0 ]; then
     echo "✓ System appears clean - no Voxeil resources detected"
   else
     echo "⚠ System has Voxeil resources or potential leftovers"
+    echo ""
+    echo "Recommended next steps:"
+    echo "  bash /tmp/voxeil.sh uninstall --force"
+    if kubectl get namespace flux-system >/dev/null 2>&1 || kubectl get namespace kyverno >/dev/null 2>&1 || kubectl get namespace cert-manager >/dev/null 2>&1; then
+      echo "  bash /tmp/voxeil.sh purge-node --force  (if you want to completely reset the node)"
+    fi
   fi
   
   exit ${EXIT_CODE}
@@ -1896,15 +2038,15 @@ prompt_with_default() {
     if read -r -t 5 input < "${PROMPT_IN}"; then
       if [[ -n "${input}" ]]; then
         printf "%s" "${input}"
-        return
+        return 0
       fi
       printf "%s" "${current}"
-      return
+      return 0
     fi
     elapsed=$(($(date +%s) - start))
   done
   
-  log_error "Timeout waiting for input: ${label}"
+  log_error "Timeout waiting for input after ${timeout}s: ${label}"
   exit 1
 }
 
@@ -1923,24 +2065,24 @@ prompt_required() {
       if read -r -t 5 input < "${PROMPT_IN}"; then
         if [[ -z "${input}" ]]; then
           printf "%s" "${current}"
-          return
+          return 0
         fi
         printf "%s" "${input}"
-        return
+        return 0
       fi
     else
       printf "%s: " "${label}" > "${PROMPT_OUT}"
       if read -r -t 5 input < "${PROMPT_IN}"; then
         if [[ -n "${input}" ]]; then
           printf "%s" "${input}"
-          return
+          return 0
         fi
       fi
     fi
     elapsed=$(($(date +%s) - start))
   done
   
-  log_error "Timeout waiting for required input: ${label}"
+  log_error "Timeout waiting for required input after ${timeout}s: ${label}"
   exit 1
 }
 
@@ -1958,14 +2100,14 @@ prompt_password() {
       printf "\n" > "${PROMPT_OUT}"
       if [[ -n "${input}" ]]; then
         printf "%s" "${input}"
-        return
+        return 0
       fi
       printf "Password cannot be empty. Please try again.\n" > "${PROMPT_OUT}"
     fi
     elapsed=$(($(date +%s) - start))
   done
   
-  log_error "Timeout waiting for password input: ${label}"
+  log_error "Timeout waiting for password input after ${timeout}s: ${label}"
   exit 1
 }
 
@@ -1997,7 +2139,7 @@ prompt_password_with_confirmation() {
     done
     
     if [[ -z "${password}" ]]; then
-      log_error "Timeout waiting for password input: ${label}"
+      log_error "Timeout waiting for password input after ${timeout}s: ${label}"
       exit 1
     fi
     
@@ -2019,19 +2161,19 @@ prompt_password_with_confirmation() {
     done
     
     if [[ -z "${confirm}" ]]; then
-      log_error "Timeout waiting for password confirmation: ${label}"
+      log_error "Timeout waiting for password confirmation after ${timeout}s: ${label}"
       exit 1
     fi
     
     if [[ "${password}" == "${confirm}" ]]; then
       printf "%s" "${password}"
-      return
+      return 0
     fi
     printf "Passwords do not match. Please try again.\n" > "${PROMPT_OUT}"
     elapsed=$(($(date +%s) - start))
   done
   
-  log_error "Timeout waiting for password confirmation: ${label}"
+  log_error "Timeout waiting for password confirmation after ${timeout}s: ${label}"
   exit 1
 }
 
@@ -2287,7 +2429,22 @@ if [ "${SKIP_K3S}" = "true" ]; then
 elif [ "${INSTALL_K3S}" = "true" ]; then
   if ! command -v kubectl >/dev/null 2>&1; then
     log_info "Installing k3s..."
-    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+    if ! curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644; then
+      log_error "k3s installation failed"
+      exit 1
+    fi
+    # Verify k3s binary exists after installation
+    if [[ ! -f /usr/local/bin/k3s ]]; then
+      log_error "k3s installation failed: /usr/local/bin/k3s not found after install"
+      exit 1
+    fi
+    # Verify kubectl is available (either symlink or use k3s kubectl)
+    if ! command -v kubectl >/dev/null 2>&1 && ! /usr/local/bin/k3s kubectl version --client >/dev/null 2>&1; then
+      log_error "k3s installation failed: kubectl not available after install"
+      log_error "  Check: ls -la /usr/local/bin/k3s"
+      log_error "  Check: /usr/local/bin/k3s kubectl version --client"
+      exit 1
+    fi
     write_state_flag "K3S_INSTALLED"
   else
     log_info "k3s already present (kubectl found), not reinstalling"
@@ -2299,7 +2456,22 @@ else
   # Default behavior: install if kubectl not found, otherwise use existing
   if ! command -v kubectl >/dev/null 2>&1; then
     log_info "kubectl not found, installing k3s..."
-    curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+    if ! curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644; then
+      log_error "k3s installation failed"
+      exit 1
+    fi
+    # Verify k3s binary exists after installation
+    if [[ ! -f /usr/local/bin/k3s ]]; then
+      log_error "k3s installation failed: /usr/local/bin/k3s not found after install"
+      exit 1
+    fi
+    # Verify kubectl is available (either symlink or use k3s kubectl)
+    if ! command -v kubectl >/dev/null 2>&1 && ! /usr/local/bin/k3s kubectl version --client >/dev/null 2>&1; then
+      log_error "k3s installation failed: kubectl not available after install"
+      log_error "  Check: ls -la /usr/local/bin/k3s"
+      log_error "  Check: /usr/local/bin/k3s kubectl version --client"
+      exit 1
+    fi
     write_state_flag "K3S_INSTALLED"
   else
     log_info "kubectl found, using existing cluster"

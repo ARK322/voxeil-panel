@@ -1481,8 +1481,37 @@ if [ "${PURGE_NODE}" = "true" ]; then
     # Remove k3s binaries and directories (fallback if scripts hang)
     log_info "Removing k3s binaries and directories..."
     rm -f /usr/local/bin/k3s /usr/local/bin/kubectl /usr/local/bin/crictl /usr/local/bin/ctr 2>/dev/null || true
-    rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /opt/cni /run/flannel /var/log/k3s 2>/dev/null || true
+    rm -rf /etc/rancher /var/lib/rancher /var/lib/kubelet /var/lib/cni /opt/cni /run/flannel /run/k3s /var/log/k3s 2>/dev/null || true
     rm -f /etc/systemd/system/k3s.service 2>/dev/null || true
+    
+    # Remove leftover network interfaces if they exist
+    log_info "Removing leftover network interfaces..."
+    if command -v ip >/dev/null 2>&1; then
+      if ip link show cni0 >/dev/null 2>&1; then
+        log_info "Removing cni0 interface..."
+        ip link delete cni0 2>/dev/null || true
+      fi
+      if ip link show flannel.1 >/dev/null 2>&1; then
+        log_info "Removing flannel.1 interface..."
+        ip link delete flannel.1 2>/dev/null || true
+      fi
+    fi
+    
+    # Reset iptables/nft rules safely (with warnings)
+    log_info "Resetting iptables/nft rules..."
+    if command -v iptables >/dev/null 2>&1; then
+      log_warn "Flushing iptables rules (this may affect firewall configuration)..."
+      iptables -F 2>/dev/null || true
+      iptables -t nat -F 2>/dev/null || true
+      iptables -t mangle -F 2>/dev/null || true
+      iptables -X 2>/dev/null || true
+      iptables -t nat -X 2>/dev/null || true
+      iptables -t mangle -X 2>/dev/null || true
+    fi
+    if command -v nft >/dev/null 2>&1; then
+      log_warn "Flushing nft ruleset (this may affect firewall configuration)..."
+      nft flush ruleset 2>/dev/null || true
+    fi
     
     if command -v systemctl >/dev/null 2>&1; then
       systemctl daemon-reload 2>/dev/null || true
@@ -1537,6 +1566,9 @@ if [ "${PURGE_NODE}" = "true" ]; then
     
     echo ""
     log_ok "Node purge complete - k3s and all Voxeil files removed"
+    echo ""
+    log_warn "IMPORTANT: A system reboot is recommended to ensure all changes take effect"
+    log_warn "  Run: sudo reboot"
     echo ""
   fi
 fi
@@ -1697,6 +1729,36 @@ if [ "${DRY_RUN}" = "true" ]; then
   log_info "Dry run - no changes were made"
 else
   log_ok "All Voxeil Panel components removed"
+  echo ""
+  echo "=== Summary ==="
+  echo "Removed:"
+  echo "  - All Voxeil namespaces (platform, infra-db, dns-zone, mail-zone, backup-system, kyverno, flux-system, cert-manager)"
+  echo "  - All user-* and tenant-* namespaces"
+  echo "  - All resources labeled app.kubernetes.io/part-of=voxeil"
+  echo "  - HelmChartConfig and Traefik middlewares"
+  echo "  - ClusterIssuers, webhooks, ClusterRoles, ClusterRoleBindings, CRDs"
+  if [ "${KEEP_VOLUMES}" != "true" ]; then
+    echo "  - PersistentVolumes (unless --keep-volumes was used)"
+  else
+    echo "  - PersistentVolumes were kept (--keep-volumes was used)"
+  fi
+  echo "  - Filesystem files (/etc/voxeil, /var/lib/voxeil, etc.)"
+  if [ "${PURGE_NODE}" = "true" ]; then
+    echo "  - k3s installation and all k3s directories"
+    echo "  - Network interfaces (cni0, flannel.1)"
+    echo "  - iptables/nft rules (flushed)"
+  fi
+  echo ""
+  echo "Remaining (not removed):"
+  echo "  - k3s (unless --purge-node was used)"
+  echo "  - System namespaces (kube-system, default, kube-public, kube-node-lease)"
+  echo "  - Other workloads on the cluster (if any)"
+  echo "  - /tmp/voxeil.sh (ephemeral script, user-managed)"
+  if [ "${PURGE_NODE}" = "true" ]; then
+    echo ""
+    log_warn "A system reboot is recommended to ensure all changes take effect"
+    log_warn "  Run: sudo reboot"
+  fi
   if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     echo ""
     log_info "Run 'bash /tmp/voxeil.sh doctor' to verify cleanup"
