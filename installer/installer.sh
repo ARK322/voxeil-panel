@@ -2849,11 +2849,39 @@ if [ -f "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml" ]; then
       echo "  No Traefik pods found to get logs from"
     fi
     echo ""
+    echo "--- Helm install job status (critical for Traefik installation) ---"
+    HELM_JOBS="$(kubectl get jobs -n kube-system --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E 'helm-install-traefik' || true)"
+    if [ -n "${HELM_JOBS}" ]; then
+      echo "${HELM_JOBS}" | while read -r job; do
+        echo "  Job: ${job}"
+        kubectl get job "${job}" -n kube-system --request-timeout=10s 2>/dev/null || true
+        echo ""
+        echo "  Job pods:"
+        kubectl get pods -n kube-system --request-timeout=10s -l job-name="${job}" 2>/dev/null || true
+        echo ""
+        echo "  Job pod logs:"
+        JOB_POD="$(kubectl get pods -n kube-system --request-timeout=10s -l job-name="${job}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")"
+        if [ -n "${JOB_POD}" ]; then
+          kubectl logs -n kube-system "${JOB_POD}" --tail=100 --request-timeout=10s 2>/dev/null || true
+        else
+          echo "    No pods found for job ${job}"
+        fi
+        echo ""
+      done
+    else
+      echo "  No helm-install-traefik jobs found"
+    fi
+    echo ""
+    echo "--- HelmChart status (detailed) ---"
+    kubectl get helmchart traefik -n kube-system --request-timeout=10s -o yaml 2>/dev/null | head -50 || true
+    echo ""
     log_error "Traefik installation verification failed. Please check the diagnostics above."
     log_error "Common issues:"
+    log_error "  - Helm install job failing: Check job logs above for errors"
     log_error "  - Image pull errors: Check network connectivity and image registry access"
     log_error "  - Resource constraints: Check node resources (CPU/memory)"
-    log_error "  - HelmChart not installing: Check k3s system-agent logs: journalctl -u k3s -n 100"
+    log_error "  - HelmChart configuration error: Check HelmChartConfig values"
+    log_error "  - k3s system-agent issues: Check k3s logs: journalctl -u k3s -n 100"
     exit 1
   fi
 else
