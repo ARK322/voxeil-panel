@@ -143,6 +143,23 @@ label_namespace() {
 # ========= helpers =========
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing: $1"; exit 1; }; }
 rand() { tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 || true; }
+
+# kubectl wrapper with k3s fallback (ensures kubectl works even if not in PATH)
+# Check if kubectl is a real binary (not this function) using type -t
+kubectl() {
+  local kubectl_type
+  kubectl_type="$(type -t kubectl 2>/dev/null || echo "")"
+  if [[ "${kubectl_type}" == "file" ]]; then
+    # kubectl is an actual binary, use it
+    command kubectl "$@"
+  elif [[ -f /usr/local/bin/k3s ]]; then
+    # Fall back to k3s kubectl
+    /usr/local/bin/k3s kubectl "$@"
+  else
+    echo "ERROR: kubectl not found and k3s not available" >&2
+    return 1
+  fi
+}
 # Escape special characters for sed replacement string (| delimiter used, so only & needs escaping)
 sed_escape() {
   echo "$1" | sed 's/&/\\&/g'
@@ -586,25 +603,48 @@ kubectl_with_webhook_heal() {
   return ${exit_code}
 }
 
-# Check kubectl context
+# Check kubectl context (uses k3s kubectl fallback)
 check_kubectl_context() {
-  if ! kubectl cluster-info >/dev/null 2>&1; then
+  # Use k3s kubectl if kubectl not in PATH
+  local kubectl_cmd
+  if command -v kubectl >/dev/null 2>&1; then
+    kubectl_cmd="kubectl"
+  elif [[ -f /usr/local/bin/k3s ]]; then
+    kubectl_cmd="/usr/local/bin/k3s kubectl"
+  else
+    log_error "kubectl not found and k3s not available"
+    return 1
+  fi
+  
+  if ! ${kubectl_cmd} cluster-info >/dev/null 2>&1; then
     log_error "kubectl cannot reach cluster. Check k3s installation."
     return 1
   fi
   local current_context
-  current_context="$(kubectl config current-context 2>/dev/null || echo "default")"
+  current_context="$(${kubectl_cmd} config current-context 2>/dev/null || echo "default")"
   echo "Current kubectl context: ${current_context}"
   return 0
 }
 
-# Wait for k3s API to be ready
+# Wait for k3s API to be ready (uses k3s kubectl fallback)
 wait_for_k3s_api() {
   log_step "Waiting for k3s API to be ready"
   local max_attempts=60
   local attempt=0
+  
+  # Use k3s kubectl if kubectl not in PATH
+  local kubectl_cmd
+  if command -v kubectl >/dev/null 2>&1; then
+    kubectl_cmd="kubectl"
+  elif [[ -f /usr/local/bin/k3s ]]; then
+    kubectl_cmd="/usr/local/bin/k3s kubectl"
+  else
+    log_error "kubectl not found and k3s not available"
+    return 1
+  fi
+  
   while [ ${attempt} -lt ${max_attempts} ]; do
-    if kubectl get --raw=/healthz >/dev/null 2>&1; then
+    if ${kubectl_cmd} get --raw=/healthz >/dev/null 2>&1; then
       echo "k3s API is ready"
       return 0
     fi
@@ -1706,17 +1746,26 @@ if [ "${DOCTOR}" = "true" ]; then
   fi
   echo ""
   
-  # Cluster readiness
-  if command -v kubectl >/dev/null 2>&1 && kubectl cluster-info >/dev/null 2>&1; then
+  # Cluster readiness (use k3s kubectl fallback if kubectl not in PATH)
+  local kubectl_cmd=""
+  local kubectl_type
+  kubectl_type="$(type -t kubectl 2>/dev/null || echo "")"
+  if [[ "${kubectl_type}" == "file" ]]; then
+    kubectl_cmd="kubectl"
+  elif [[ -f /usr/local/bin/k3s ]]; then
+    kubectl_cmd="/usr/local/bin/k3s kubectl"
+  fi
+  
+  if [[ -n "${kubectl_cmd}" ]] && ${kubectl_cmd} cluster-info >/dev/null 2>&1; then
     echo "=== Cluster Status ==="
     echo "Cluster info:"
-    kubectl cluster-info 2>/dev/null | head -3 || echo "  Unable to get cluster info"
+    ${kubectl_cmd} cluster-info 2>/dev/null | head -3 || echo "  Unable to get cluster info"
     echo ""
     echo "Node readiness:"
-    if kubectl get nodes >/dev/null 2>&1; then
-      kubectl get nodes -o wide 2>/dev/null || echo "  Unable to get nodes"
-      READY_NODES=$(kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo "0")
-      TOTAL_NODES=$(kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
+    if ${kubectl_cmd} get nodes >/dev/null 2>&1; then
+      ${kubectl_cmd} get nodes -o wide 2>/dev/null || echo "  Unable to get nodes"
+      READY_NODES=$(${kubectl_cmd} get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo "0")
+      TOTAL_NODES=$(${kubectl_cmd} get nodes --no-headers 2>/dev/null | wc -l || echo "0")
       if [ "${READY_NODES}" -eq "${TOTAL_NODES}" ] && [ "${TOTAL_NODES}" -gt 0 ]; then
         echo "  ✓ All ${TOTAL_NODES} node(s) are Ready"
       else
@@ -2445,6 +2494,15 @@ elif [ "${INSTALL_K3S}" = "true" ]; then
       log_error "  Check: /usr/local/bin/k3s kubectl version --client"
       exit 1
     fi
+    # Verify cluster API is reachable (truthful check)
+    log_info "Verifying k3s cluster API is reachable..."
+    if ! /usr/local/bin/k3s kubectl get --raw=/healthz >/dev/null 2>&1; then
+      log_error "k3s installation failed: cluster API not reachable after install"
+      log_error "  Check: systemctl status k3s"
+      log_error "  Check: journalctl -u k3s -n 50"
+      exit 1
+    fi
+    log_ok "k3s installed and cluster API is reachable"
     write_state_flag "K3S_INSTALLED"
   else
     log_info "k3s already present (kubectl found), not reinstalling"
@@ -2472,16 +2530,35 @@ else
       log_error "  Check: /usr/local/bin/k3s kubectl version --client"
       exit 1
     fi
+    # Verify cluster API is reachable (truthful check)
+    log_info "Verifying k3s cluster API is reachable..."
+    if ! /usr/local/bin/k3s kubectl get --raw=/healthz >/dev/null 2>&1; then
+      log_error "k3s installation failed: cluster API not reachable after install"
+      log_error "  Check: systemctl status k3s"
+      log_error "  Check: journalctl -u k3s -n 50"
+      exit 1
+    fi
+    log_ok "k3s installed and cluster API is reachable"
     write_state_flag "K3S_INSTALLED"
   else
     log_info "kubectl found, using existing cluster"
+    # Verify existing cluster is reachable (truthful check)
+    if ! kubectl cluster-info >/dev/null 2>&1; then
+      log_error "kubectl found but cluster is not reachable"
+      log_error "  Check: kubectl cluster-info"
+      exit 1
+    fi
     if ! is_installed "K3S_INSTALLED"; then
       write_state_flag "K3S_INSTALLED"
     fi
   fi
 fi
 
-need_cmd kubectl
+# Verify kubectl is available (with k3s fallback)
+if ! command -v kubectl >/dev/null 2>&1 && [[ ! -f /usr/local/bin/k3s ]]; then
+  log_error "kubectl not found and k3s not available"
+  exit 1
+fi
 
 # Set KUBECONFIG if provided
 if [ -n "${KUBECONFIG}" ]; then
@@ -4173,6 +4250,8 @@ ports_udp=(53)
 ufw_retry "--force reset" || true
 ufw_retry "default deny incoming" || true
 ufw_retry "default allow outgoing" || true
+# CRITICAL: Allow forwarding for k3s/flannel CNI (required for pod networking)
+ufw_retry "default allow forward" || true
 
 # CRITICAL: Always allow SSH (port 22) from anywhere to prevent lockout
 # This must be done BEFORE any allowlist restrictions

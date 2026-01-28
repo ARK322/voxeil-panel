@@ -45,15 +45,36 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
+# Bulletproof prompt system: prefer /dev/tty if readable, else /dev/stdin
+# PROMPT_OUT: prefer /dev/tty if writable/readable, else /dev/stdout
+# This ensures prompts work in SSH command mode and piped execution
+if [[ -r /dev/tty ]]; then
+  PROMPT_IN="/dev/tty"
+else
+  PROMPT_IN="/dev/stdin"
+fi
+
+if [[ -w /dev/tty ]] && [[ -r /dev/tty ]]; then
+  PROMPT_OUT="/dev/tty"
+else
+  PROMPT_OUT="/dev/stdout"
+fi
+
 # Check if logged in to GHCR (if pushing)
 if [ "$PUSH" = true ]; then
   if ! docker info | grep -q "Username"; then
     echo "Warning: Not logged in to Docker. You may need to:"
     echo "  echo \$GHCR_TOKEN | docker login ghcr.io -u \$GHCR_USERNAME --password-stdin"
     echo ""
-    read -p "Continue anyway? (y/N) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    printf "Continue anyway? (y/N) " > "${PROMPT_OUT}"
+    if read -r -n 1 -t 30 reply < "${PROMPT_IN}"; then
+      printf "\n" > "${PROMPT_OUT}"
+      if [[ ! "${reply}" =~ ^[Yy]$ ]]; then
+        exit 1
+      fi
+    else
+      printf "\n" > "${PROMPT_OUT}"
+      echo "No input received, exiting."
       exit 1
     fi
   fi
