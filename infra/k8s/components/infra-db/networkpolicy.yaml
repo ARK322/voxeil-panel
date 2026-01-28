@@ -32,10 +32,6 @@ spec:
           podSelector:
             matchLabels:
               app: controller
-        # Allow from backup namespace
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: backup
       ports:
         - protocol: TCP
           port: 5432

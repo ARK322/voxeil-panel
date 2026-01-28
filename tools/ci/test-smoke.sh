@@ -52,7 +52,7 @@ fi
 # Check namespaces
 echo ""
 echo "2. Checking required namespaces..."
-REQUIRED_NS=("platform" "infra-db" "backup-system" "dns-zone" "mail-zone" "cert-manager" "kyverno" "flux-system")
+REQUIRED_NS=("platform" "infra-db" "dns-zone" "mail-zone" "cert-manager" "kyverno" "flux-system")
 for ns in "${REQUIRED_NS[@]}"; do
     if kubectl get namespace "${ns}" >/dev/null 2>&1; then
         test_pass "Namespace ${ns} exists"

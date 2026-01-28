@@ -9,7 +9,6 @@ export type {
   MailInfo,
   DbInfo,
   DnsInfo,
-  BackupInfo,
 } from "@voxeil/shared/types";
 
 export type HealthResponse = {
@@ -112,16 +111,5 @@ export type DnsInfo = {
   zones: Array<{
     domain: string;
     recordsCount: number;
-  }>;
-};
-
-export type BackupInfo = {
-  status: "enabled" | "disabled";
-  lastBackupAt?: string;
-  snapshots: Array<{
-    id: string;
-    timestamp: string;
-    sizeBytes: number;
-    type: "full" | "incremental";
   }>;
 };

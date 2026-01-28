@@ -8,7 +8,6 @@ resources:
   - ../../base
   - ../../components/cert-manager
   - ../../components/kyverno
-  - ../../components/backup-system
   - ../../components/dns-zone
   - ../../components/infra-db
   - ../../components/mail-zone

@@ -51,14 +51,7 @@ import {
     disableSiteGithub,
     triggerSiteGithubDeploy,
     saveSiteRegistryCredentials,
-    deleteSiteRegistryCredentials,
-    enableSiteBackup,
-    disableSiteBackup,
-    updateSiteBackupConfig,
-    runSiteBackup,
-    listSiteBackupSnapshots,
-    restoreSiteBackup,
-    purgeSiteBackup
+    deleteSiteRegistryCredentials
 } from "../sites/site.service.js";
 const AllowlistSchema = z.object({
     items: z.array(z.string().min(1)).default([])
@@ -699,90 +692,6 @@ export function registerRoutes(app) {
             throw new HttpError(400, "Site slug is required.");
         }
         const result = await deleteSiteRegistryCredentials(slug);
-        return reply.send({ ok: true, ...result });
-    });
-
-    app.post("/sites/:slug/backup/enable", async (req, reply) => {
-        requireUser(req);
-        const slug = String(req.params.slug ?? "");
-        if (!slug) {
-            throw new HttpError(400, "Site slug is required.");
-        }
-        const body = z.object({
-            retentionDays: z.number().int().positive().optional(),
-            schedule: z.string().min(1).optional()
-        }).parse(req.body ?? {});
-        const result = await enableSiteBackup(slug, body);
-        return reply.send({ ok: true, ...result });
-    });
-
-    app.post("/sites/:slug/backup/disable", async (req, reply) => {
-        requireUser(req);
-        const slug = String(req.params.slug ?? "");
-        if (!slug) {
-            throw new HttpError(400, "Site slug is required.");
-        }
-        const result = await disableSiteBackup(slug);
-        return reply.send({ ok: true, ...result });
-    });
-
-    app.patch("/sites/:slug/backup/config", async (req, reply) => {
-        requireUser(req);
-        const slug = String(req.params.slug ?? "");
-        if (!slug) {
-            throw new HttpError(400, "Site slug is required.");
-        }
-        const body = z.object({
-            retentionDays: z.number().int().positive().optional(),
-            schedule: z.string().min(1).optional()
-        }).parse(req.body ?? {});
-        const result = await updateSiteBackupConfig(slug, body);
-        return reply.send({ ok: true, ...result });
-    });
-
-    app.post("/sites/:slug/backup/run", async (req, reply) => {
-        requireUser(req);
-        const slug = String(req.params.slug ?? "");
-        if (!slug) {
-            throw new HttpError(400, "Site slug is required.");
-        }
-        const result = await runSiteBackup(slug);
-        return reply.send({ ok: true, ...result });
-    });
-
-    app.get("/sites/:slug/backup/snapshots", async (req, reply) => {
-        requireUser(req);
-        const slug = String(req.params.slug ?? "");
-        if (!slug) {
-            throw new HttpError(400, "Site slug is required.");
-        }
-        const result = await listSiteBackupSnapshots(slug);
-        return reply.send({ ok: true, ...result });
-    });
-
-    app.post("/sites/:slug/backup/restore", async (req, reply) => {
-        requireUser(req);
-        const slug = String(req.params.slug ?? "");
-        if (!slug) {
-            throw new HttpError(400, "Site slug is required.");
-        }
-        const body = z.object({
-            snapshotId: z.string().min(1),
-            restoreFiles: z.boolean().optional(),
-            restoreDb: z.boolean().optional()
-        }).parse(req.body ?? {});
-        const result = await restoreSiteBackup(slug, body);
-        return reply.send({ ok: true, ...result });
-    });
-
-    app.post("/sites/:slug/backup/purge", async (req, reply) => {
-        requireUser(req);
-        const slug = String(req.params.slug ?? "");
-        if (!slug) {
-            throw new HttpError(400, "Site slug is required.");
-        }
-        ConfirmDeleteSchema.parse(req.body ?? {});
-        const result = await purgeSiteBackup(slug);
         return reply.send({ ok: true, ...result });
     });
 

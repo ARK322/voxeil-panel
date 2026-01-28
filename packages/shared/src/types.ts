@@ -105,17 +105,6 @@ export type DnsInfo = {
   }>;
 };
 
-export type BackupInfo = {
-  status: "enabled" | "disabled";
-  lastBackupAt?: string;
-  snapshots: Array<{
-    id: string;
-    timestamp: string;
-    sizeBytes: number;
-    type: "full" | "incremental";
-  }>;
-};
-
 export type SiteInfo = {
   slug: string;
   namespace: string;
@@ -141,10 +130,6 @@ export type SiteInfo = {
   dnsEnabled?: boolean;
   dnsDomain?: string;
   dnsTarget?: string;
-  backupEnabled?: boolean;
-  backupRetentionDays?: number;
-  backupSchedule?: string;
-  backupLastRunAt?: string;
   cpu?: number;
   ramGi?: number;
   diskGi?: number;
@@ -158,11 +143,4 @@ export type PanelUser = {
   siteSlug?: string | null;
   active: boolean;
   createdAt: string;
-};
-
-export type BackupSnapshot = {
-  id: string;
-  hasFiles: boolean;
-  hasDb: boolean;
-  sizeBytes?: number;
 };

@@ -1,7 +1,7 @@
 // Wrapper around @voxeil/api-client that uses panel's session management
 import { getSessionToken } from "./session";
 import { createControllerClient } from "@voxeil/api-client";
-import type { SiteInfo, PanelUser, BackupSnapshot } from "@voxeil/api-client";
+import type { SiteInfo, PanelUser } from "@voxeil/api-client";
 
 const CONTROLLER_BASE =
   process.env.CONTROLLER_BASE_URL ?? "http://controller.platform.svc.cluster.local:8080";
@@ -9,7 +9,7 @@ const CONTROLLER_BASE =
 const client = createControllerClient(() => getSessionToken(), CONTROLLER_BASE);
 
 // Re-export types for backward compatibility
-export type { SiteInfo, PanelUser, BackupSnapshot };
+export type { SiteInfo, PanelUser };
 
 // Re-export all functions with same signatures
 export const listSites = client.sites.list;
@@ -39,13 +39,6 @@ export const deleteSiteAlias = client.sites.deleteAlias;
 export const enableSiteDns = client.sites.enableDns;
 export const disableSiteDns = client.sites.disableDns;
 export const purgeSiteDns = client.sites.purgeDns;
-export const enableSiteBackup = client.sites.enableBackup;
-export const disableSiteBackup = client.sites.disableBackup;
-export const updateSiteBackupConfig = client.sites.updateBackupConfig;
-export const runSiteBackup = client.sites.runBackup;
-export const listSiteBackupSnapshots = client.sites.listBackupSnapshots;
-export const restoreSiteBackup = client.sites.restoreBackup;
-export const purgeSiteBackup = client.sites.purgeBackup;
 export const listUsers = client.users.list;
 export const createUser = client.users.create;
 export const setUserActive = client.users.setActive;

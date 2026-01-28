@@ -68,15 +68,7 @@ rules:
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["rolebindings"]
     verbs: ["get","create","patch"]
-  # CronJobs: create, replace, delete, get (backup cronjob yönetimi)
-  - apiGroups: ["batch"]
-    resources: ["cronjobs"]
-    verbs: ["get","create","replace","delete"]
-  # Jobs: create, get (backup job oluşturma)
-  - apiGroups: ["batch"]
-    resources: ["jobs"]
-    verbs: ["get","create"]
-  # Pods: create, delete, get (backup restore için)
+  # Pods: create, delete, get
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get","create","delete"]

@@ -9,7 +9,6 @@ async function DashboardPage() {
   const sites = await api.sites.list();
   const mail = await api.mail.get();
   const db = await api.db.get();
-  const backups = await api.backups.get();
 
   const stats = [
     {
@@ -46,13 +45,6 @@ async function DashboardPage() {
       href: "/panel/dns",
       icon: "🔗",
       color: "bg-indigo-500",
-    },
-    {
-      label: "Backups",
-      value: backups.snapshots.length,
-      href: "/panel/backups",
-      icon: "💿",
-      color: "bg-red-500",
     },
   ];
 
@@ -107,9 +99,6 @@ async function DashboardPage() {
         <div className="flex flex-wrap gap-3">
           <button className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">
             Create Site
-          </button>
-          <button className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700">
-            Run Backup Now
           </button>
           <button className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700">
             Provision Tenant

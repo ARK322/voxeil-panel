@@ -83,7 +83,7 @@ run_checks_once() {
   # 2) Check namespace leftovers
   echo ""
   echo "=== Checking for Voxeil namespaces ==="
-  VOXEIL_NAMESPACES="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|backup-system|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
+  VOXEIL_NAMESPACES="$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -E '^(platform|infra-db|dns-zone|mail-zone|kyverno|flux-system|cert-manager|user-|tenant-)' || true)"
   
   if [ -n "${VOXEIL_NAMESPACES}" ]; then
     echo "  ⚠ Found Voxeil-related namespaces:"
@@ -106,7 +106,7 @@ run_checks_once() {
   echo ""
   echo "=== Checking PersistentVolumes ==="
   VOXEIL_PVS=0
-  VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone backup-system kyverno flux-system cert-manager"
+  VOXEIL_NS_LIST="platform infra-db dns-zone mail-zone kyverno flux-system cert-manager"
   
   for ns in ${VOXEIL_NS_LIST}; do
     # Check if namespace exists

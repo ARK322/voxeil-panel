@@ -25,21 +25,14 @@ import {
   deleteAliasAction,
   enableDnsAction,
   disableDnsAction,
-  purgeDnsAction,
-  enableBackupAction,
-  disableBackupAction,
-  updateBackupConfigAction,
-  runBackupAction,
-  restoreBackupAction,
-  purgeBackupAction
+  purgeDnsAction
 } from "./actions";
 import {
   getAllowlist,
   listSites,
   listUsers,
   listSiteMailboxes,
-  listSiteAliases,
-  listSiteBackupSnapshots
+  listSiteAliases
 } from "./lib/controller";
 import { requireSession } from "./lib/session";
 import { LogStream } from "./components/log-stream";
@@ -53,7 +46,6 @@ export default async function HomePage() {
     : sites.filter((site) => site.slug === session.user.siteSlug);
   const mailboxMap = new Map<string, string[]>();
   const aliasMap = new Map<string, string[]>();
-  const backupMap = new Map<string, { id: string; hasFiles: boolean; hasDb: boolean; sizeBytes?: number }[]>();
   for (const site of visibleSites) {
     if (site.mailEnabled) {
       const [mailboxes, aliases] = await Promise.all([
@@ -62,10 +54,6 @@ export default async function HomePage() {
       ]);
       mailboxMap.set(site.slug, mailboxes);
       aliasMap.set(site.slug, aliases);
-    }
-    if (site.backupEnabled) {
-      const snapshots = await listSiteBackupSnapshots(site.slug);
-      backupMap.set(site.slug, snapshots);
     }
   }
   const allowlist = isAdmin ? await getAllowlist() : [];
@@ -560,87 +548,6 @@ export default async function HomePage() {
                               <input type="hidden" name="slug" value={site.slug} />
                               <button type="submit" style={{ color: "crimson" }}>Purge DNS</button>
                             </form>
-                          </>
-                        )}
-                      </div>
-                    </section>
-
-                    <section>
-                      <h4 style={{ margin: "0 0 8px 0" }}>Backups</h4>
-                      <div style={{ display: "grid", gap: 8, maxWidth: 520 }}>
-                        {!site.backupEnabled ? (
-                          <form action={enableBackupAction} style={{ display: "grid", gap: 8 }}>
-                            <input type="hidden" name="slug" value={site.slug} />
-                            <label style={{ display: "grid", gap: 6 }}>
-                              <span>Retention days</span>
-                              <input
-                                name="retentionDays"
-                                type="number"
-                                min={1}
-                                defaultValue={site.backupRetentionDays ?? 14}
-                              />
-                            </label>
-                            <label style={{ display: "grid", gap: 6 }}>
-                              <span>Cron schedule</span>
-                              <input name="schedule" defaultValue={site.backupSchedule ?? "0 3 * * *"} />
-                            </label>
-                            <button type="submit">Enable backups</button>
-                          </form>
-                        ) : (
-                          <>
-                            <form action={updateBackupConfigAction} style={{ display: "grid", gap: 8 }}>
-                              <input type="hidden" name="slug" value={site.slug} />
-                              <label style={{ display: "grid", gap: 6 }}>
-                                <span>Retention days</span>
-                                <input
-                                  name="retentionDays"
-                                  type="number"
-                                  min={1}
-                                  defaultValue={site.backupRetentionDays ?? 14}
-                                />
-                              </label>
-                              <label style={{ display: "grid", gap: 6 }}>
-                                <span>Cron schedule</span>
-                                <input name="schedule" defaultValue={site.backupSchedule ?? "0 3 * * *"} />
-                              </label>
-                              <button type="submit">Update backup config</button>
-                            </form>
-                            <form action={runBackupAction}>
-                              <input type="hidden" name="slug" value={site.slug} />
-                              <button type="submit">Run backup now</button>
-                            </form>
-                            <form action={disableBackupAction}>
-                              <input type="hidden" name="slug" value={site.slug} />
-                              <button type="submit">Disable backups</button>
-                            </form>
-                            <form action={purgeBackupAction}>
-                              <input type="hidden" name="slug" value={site.slug} />
-                              <button type="submit" style={{ color: "crimson" }}>Purge backups</button>
-                            </form>
-                            <div>
-                              <strong>Snapshots</strong>
-                              {(backupMap.get(site.slug) ?? []).length === 0 ? (
-                                <div style={{ color: "#475569", marginTop: 6 }}>No snapshots.</div>
-                              ) : (
-                                <ul style={{ listStyle: "none", padding: 0, marginTop: 6 }}>
-                                  {(backupMap.get(site.slug) ?? []).map((snap) => (
-                                    <li key={snap.id} style={{ display: "grid", gap: 6, marginBottom: 8 }}>
-                                      <div style={{ color: "#475569" }}>
-                                        {snap.id} • Files: {snap.hasFiles ? "yes" : "no"} • DB:{" "}
-                                        {snap.hasDb ? "yes" : "no"}
-                                      </div>
-                                      <form action={restoreBackupAction} style={{ display: "flex", gap: 8 }}>
-                                        <input type="hidden" name="slug" value={site.slug} />
-                                        <input type="hidden" name="snapshotId" value={snap.id} />
-                                        <input type="hidden" name="restoreFiles" value={snap.hasFiles ? "true" : "false"} />
-                                        <input type="hidden" name="restoreDb" value={snap.hasDb ? "true" : "false"} />
-                                        <button type="submit">Restore</button>
-                                      </form>
-                                    </li>
-                                  ))}
-                                </ul>
-                              )}
-                            </div>
                           </>
                         )}
                       </div>

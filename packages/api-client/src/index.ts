@@ -4,7 +4,6 @@
 import type {
   SiteInfo,
   PanelUser,
-  BackupSnapshot,
 } from "@voxeil/shared/types";
 
 export type TokenGetter = () => string | null;
@@ -212,40 +211,6 @@ export function createControllerClient(
         method: "POST",
         body: JSON.stringify({ confirm: "DELETE" })
       }),
-      enableBackup: (
-        slug: string,
-        retentionDays?: number,
-        schedule?: string
-      ) => fetch(`/sites/${slug}/backup/enable`, {
-        method: "POST",
-        body: JSON.stringify({ retentionDays, schedule })
-      }),
-      disableBackup: (slug: string) => fetch(`/sites/${slug}/backup/disable`, { method: "POST" }),
-      updateBackupConfig: (
-        slug: string,
-        retentionDays?: number,
-        schedule?: string
-      ) => fetch(`/sites/${slug}/backup/config`, {
-        method: "PATCH",
-        body: JSON.stringify({ retentionDays, schedule })
-      }),
-      runBackup: (slug: string) => fetch(`/sites/${slug}/backup/run`, { method: "POST" }),
-      listBackupSnapshots: (slug: string): Promise<BackupSnapshot[]> => fetch(`/sites/${slug}/backup/snapshots`, { method: "GET" })
-        .then(r => r.json())
-        .then(payload => Array.isArray(payload.items) ? payload.items : []),
-      restoreBackup: (
-        slug: string,
-        snapshotId: string,
-        restoreFiles: boolean,
-        restoreDb: boolean
-      ) => fetch(`/sites/${slug}/backup/restore`, {
-        method: "POST",
-        body: JSON.stringify({ snapshotId, restoreFiles, restoreDb })
-      }),
-      purgeBackup: (slug: string) => fetch(`/sites/${slug}/backup/purge`, {
-        method: "POST",
-        body: JSON.stringify({ confirm: "DELETE" })
-      }),
     },
     security: {
       getAllowlist: (): Promise<string[]> => fetch("/security/allowlist", { method: "GET" })
@@ -283,4 +248,4 @@ export function createControllerClient(
 }
 
 // Re-export types for convenience
-export type { SiteInfo, PanelUser, BackupSnapshot } from "@voxeil/shared/types";
+export type { SiteInfo, PanelUser } from "@voxeil/shared/types";

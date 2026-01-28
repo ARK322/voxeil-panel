@@ -29,13 +29,7 @@ import {
   deleteSiteAlias,
   enableSiteDns,
   disableSiteDns,
-  purgeSiteDns,
-  enableSiteBackup,
-  disableSiteBackup,
-  updateSiteBackupConfig,
-  runSiteBackup,
-  restoreSiteBackup,
-  purgeSiteBackup
+  purgeSiteDns
 } from "./lib/controller";
 import { clearSession, requireSession } from "./lib/session";
 
@@ -403,70 +397,5 @@ export async function purgeDnsAction(formData: FormData) {
   const slug = String(formData.get("slug") ?? "").trim();
   if (!slug) throw new Error("slug is required.");
   await purgeSiteDns(slug);
-  revalidatePath("/");
-}
-
-export async function enableBackupAction(formData: FormData) {
-  await requireSession();
-  const slug = String(formData.get("slug") ?? "").trim();
-  const retentionDays = Number(formData.get("retentionDays") ?? "");
-  const schedule = String(formData.get("schedule") ?? "").trim();
-  if (!slug) throw new Error("slug is required.");
-  await enableSiteBackup(
-    slug,
-    Number.isNaN(retentionDays) ? undefined : retentionDays,
-    schedule || undefined
-  );
-  revalidatePath("/");
-}
-
-export async function disableBackupAction(formData: FormData) {
-  await requireSession();
-  const slug = String(formData.get("slug") ?? "").trim();
-  if (!slug) throw new Error("slug is required.");
-  await disableSiteBackup(slug);
-  revalidatePath("/");
-}
-
-export async function updateBackupConfigAction(formData: FormData) {
-  await requireSession();
-  const slug = String(formData.get("slug") ?? "").trim();
-  const retentionDays = Number(formData.get("retentionDays") ?? "");
-  const schedule = String(formData.get("schedule") ?? "").trim();
-  if (!slug) throw new Error("slug is required.");
-  await updateSiteBackupConfig(
-    slug,
-    Number.isNaN(retentionDays) ? undefined : retentionDays,
-    schedule || undefined
-  );
-  revalidatePath("/");
-}
-
-export async function runBackupAction(formData: FormData) {
-  await requireSession();
-  const slug = String(formData.get("slug") ?? "").trim();
-  if (!slug) throw new Error("slug is required.");
-  await runSiteBackup(slug);
-  revalidatePath("/");
-}
-
-export async function restoreBackupAction(formData: FormData) {
-  await requireSession();
-  const slug = String(formData.get("slug") ?? "").trim();
-  const snapshotId = String(formData.get("snapshotId") ?? "").trim();
-  const restoreFiles = String(formData.get("restoreFiles") ?? "") === "true";
-  const restoreDb = String(formData.get("restoreDb") ?? "") === "true";
-  if (!slug || !snapshotId) {
-    throw new Error("slug and snapshotId are required.");
-  }
-  await restoreSiteBackup(slug, snapshotId, restoreFiles, restoreDb);
-  revalidatePath("/");
-}
-
-export async function purgeBackupAction(formData: FormData) {
-  await requireSession();
-  const slug = String(formData.get("slug") ?? "").trim();
-  if (!slug) throw new Error("slug is required.");
-  await purgeSiteBackup(slug);
   revalidatePath("/");
 }

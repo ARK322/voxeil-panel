@@ -49,8 +49,6 @@ spec:
             failureThreshold: 3
             successThreshold: 1
           volumeMounts:
-            - name: backups
-              mountPath: /backups
             - name: voxeil-config
               mountPath: /etc/voxeil
           env:
@@ -144,9 +142,6 @@ spec:
               drop:
                 - ALL
       volumes:
-        - name: backups
-          persistentVolumeClaim:
-            claimName: controller-backups-pvc
         - name: voxeil-config
           persistentVolumeClaim:
             claimName: controller-config-pvc

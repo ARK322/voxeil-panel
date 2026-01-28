@@ -9,7 +9,6 @@ import type {
   MailInfo,
   DbInfo,
   DnsInfo,
-  BackupInfo,
 } from "./types";
 
 const API_BASE = "/api";
@@ -55,8 +54,5 @@ export const api = {
   },
   dns: {
     get: (): Promise<DnsInfo> => fetchAPI("/dns"),
-  },
-  backups: {
-    get: (): Promise<BackupInfo> => fetchAPI("/backups"),
   },
 };
