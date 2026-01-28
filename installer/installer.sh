@@ -1379,9 +1379,12 @@ EOF
   exit 1
 }
 
-PROMPT_IN="/dev/stdin"
-if [[ ! -t 0 && -r /dev/tty ]]; then
+# Prefer /dev/tty (controlling terminal) when available, fallback to /dev/stdin
+# This ensures prompts work in SSH command mode and piped execution
+if [[ -r /dev/tty ]]; then
   PROMPT_IN="/dev/tty"
+else
+  PROMPT_IN="/dev/stdin"
 fi
 
 # ===== VOXEIL logo (wider spacing + cleaner layout) =====
@@ -1881,12 +1884,25 @@ prompt_with_default() {
   local label="$1"
   local current="$2"
   local input=""
-  read -r -p "${label} [${current}]: " input < "${PROMPT_IN}"
-  if [[ -n "${input}" ]]; then
-    printf "%s" "${input}"
-  else
-    printf "%s" "${current}"
-  fi
+  local timeout="${PROMPT_TIMEOUT:-300}"
+  local start
+  start=$(date +%s)
+  local elapsed=0
+  
+  while (( elapsed < timeout )); do
+    if read -r -t 5 -p "${label} [${current}]: " input < "${PROMPT_IN}"; then
+      if [[ -n "${input}" ]]; then
+        printf "%s" "${input}"
+        return
+      fi
+      printf "%s" "${current}"
+      return
+    fi
+    elapsed=$(($(date +%s) - start))
+  done
+  
+  log_error "Timeout waiting for input: ${label}"
+  exit 1
 }
 
 prompt_required() {
@@ -1900,7 +1916,7 @@ prompt_required() {
   
   while (( elapsed < timeout )); do
     if [[ -n "${current}" ]]; then
-      if read -r -t 5 -p "${label} [${current}]: " input < "${PROMPT_IN}" 2>/dev/null; then
+      if read -r -t 5 -p "${label} [${current}]: " input < "${PROMPT_IN}"; then
         if [[ -z "${input}" ]]; then
           printf "%s" "${current}"
           return
@@ -1909,7 +1925,7 @@ prompt_required() {
         return
       fi
     else
-      if read -r -t 5 -p "${label}: " input < "${PROMPT_IN}" 2>/dev/null; then
+      if read -r -t 5 -p "${label}: " input < "${PROMPT_IN}"; then
         if [[ -n "${input}" ]]; then
           printf "%s" "${input}"
           return
@@ -1932,7 +1948,7 @@ prompt_password() {
   local elapsed=0
   
   while (( elapsed < timeout )); do
-    if read -r -s -t 5 -p "${label}: " input < "${PROMPT_IN}" 2>/dev/null; then
+    if read -r -s -t 5 -p "${label}: " input < "${PROMPT_IN}"; then
       echo "" >&2
       if [[ -n "${input}" ]]; then
         printf "%s" "${input}"
@@ -1963,7 +1979,7 @@ prompt_password_with_confirmation() {
     password=""
     local pass_elapsed=0
     while (( pass_elapsed < timeout )); do
-      if read -r -s -t 5 -p "${label}: " password < "${PROMPT_IN}" 2>/dev/null; then
+      if read -r -s -t 5 -p "${label}: " password < "${PROMPT_IN}"; then
         echo "" >&2
         if [[ -n "${password}" ]]; then
           break
@@ -1984,7 +2000,7 @@ prompt_password_with_confirmation() {
     confirm=""
     local confirm_elapsed=0
     while (( confirm_elapsed < timeout )); do
-      if read -r -s -t 5 -p "Confirm ${label}: " confirm < "${PROMPT_IN}" 2>/dev/null; then
+      if read -r -s -t 5 -p "Confirm ${label}: " confirm < "${PROMPT_IN}"; then
         echo "" >&2
         if [[ -n "${confirm}" ]]; then
           break
