@@ -33,14 +33,31 @@ jobs:
       # 3) Detect dangerous webhook patch patterns (HARD FAIL)
       - name: Detect unsafe webhook patching
         run: |
-          set -e
-          # Exclude .github directory and .git directory from search
-          if grep -R --line-number --exclude-dir=.git --exclude-dir=.github -E 'kubectl patch .*webhookconfiguration .*--type=json' .; then
+          set -euo pipefail
+
+          # Only scan files that can actually affect runtime (no docs)
+          FILES="$(git ls-files \
+            'voxeil.sh' \
+            'installer/*.sh' \
+            'uninstaller/*.sh' \
+            'nuke/*.sh' \
+            'scripts/*.sh' \
+            '*.yml' '*.yaml' \
+            || true)"
+
+          if [ -z "$FILES" ]; then
+            echo "⚠️ No matching files found to scan"
+            exit 0
+          fi
+
+          # 1) Unsafe --type=json usage for webhookconfiguration patch
+          if echo "$FILES" | xargs -r grep -nE 'kubectl patch .*webhookconfiguration .*--type=json' ; then
             echo "❌ Unsafe kubectl patch --type=json on webhookconfiguration"
             exit 1
           fi
 
-          if grep -R --line-number --exclude-dir=.git --exclude-dir=.github -E '\{"webhooks":\[\{"failurePolicy"' .; then
+          # 2) Unsafe webhook array overwrite pattern
+          if echo "$FILES" | xargs -r grep -nE '\{"webhooks":\[\{"failurePolicy"' ; then
             echo "❌ Unsafe webhook array overwrite detected"
             exit 1
           fi
@@ -76,8 +93,10 @@ jobs:
       # 6) Infinite loop detection (basic)
       - name: Detect infinite loops
         run: |
-          set -e
-          if grep -R --line-number -E 'while true|while\s+\[\s*1\s*\]' .; then
+          set -euo pipefail
+          FILES="$(git ls-files 'voxeil.sh' 'installer/*.sh' 'uninstaller/*.sh' 'nuke/*.sh' 'scripts/*.sh' || true)"
+          if [ -z "$FILES" ]; then exit 0; fi
+          if echo "$FILES" | xargs -r grep -nE 'while true|while\s+\[\s*1\s*\]' ; then
             echo "❌ Infinite loop detected"
             exit 1
           fi
