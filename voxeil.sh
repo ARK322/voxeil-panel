@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # Voxeil Panel - Single Entrypoint Script
-# Supports: install, uninstall, purge-node, doctor, help
+# Supports: install, uninstall, purge-node, doctor, help, nuke
 
 OWNER="${OWNER:-ARK322}"
 REPO="${REPO:-voxeil-panel}"
@@ -81,6 +81,7 @@ Subcommands:
   install          Install Voxeil Panel (default if no subcommand)
   uninstall        Uninstall Voxeil Panel (safe, removes only Voxeil resources)
   purge-node       Complete node wipe (removes k3s, requires --force)
+  nuke             Alias for purge-node (IRREVERSIBLE, requires --force)
   doctor           Check installation status (read-only)
   help             Show this help message
 
@@ -113,6 +114,9 @@ Examples:
   # Purge node (full reset)
   bash /tmp/voxeil.sh purge-node --force
 
+  # Nuke (alias for purge-node)
+  bash /tmp/voxeil.sh nuke --force
+
 Note: Downloading to a file is recommended over curl|bash due to occasional pipe glitches.
 
 EOF
@@ -129,7 +133,7 @@ while [[ $# -gt 0 ]]; do
       REF="$2"
       shift 2
       ;;
-    install|uninstall|purge-node|doctor|help)
+    install|uninstall|purge-node|doctor|help|nuke)
       if [[ -z "${SUBCMD}" ]]; then
         SUBCMD="$1"
       else
@@ -161,14 +165,31 @@ if [[ "${SUBCMD}" == "help" ]]; then
   exit 0
 fi
 
-# Handle doctor (can use installer or uninstaller, prefer installer)
+# Handle nuke (alias for purge-node)
+if [[ "${SUBCMD}" == "nuke" ]]; then
+  SUBCMD="purge-node"
+  # Ensure --force is present
+  HAS_FORCE=false
+  for arg in "${SUBCMD_ARGS[@]}"; do
+    if [[ "${arg}" == "--force" ]]; then
+      HAS_FORCE=true
+      break
+    fi
+  done
+  if [[ "${HAS_FORCE}" != "true" ]]; then
+    SUBCMD_ARGS+=("--force")
+  fi
+fi
+
+# Handle doctor
 if [[ "${SUBCMD}" == "doctor" ]]; then
   INSTALLER_TMP="$(mktemp)"
   cleanup() { rm -f "${INSTALLER_TMP}"; }
   trap cleanup EXIT
   
-  download_script "installer/installer.sh" "${INSTALLER_TMP}" "installer"
-  exec bash "${INSTALLER_TMP}" --doctor "${SUBCMD_ARGS[@]}"
+  # Download cmd/doctor.sh
+  download_script "cmd/doctor.sh" "${INSTALLER_TMP}" "doctor"
+  exec bash "${INSTALLER_TMP}" "${SUBCMD_ARGS[@]}"
 fi
 
 # Handle purge-node (security guard)
@@ -189,25 +210,21 @@ if [[ "${SUBCMD}" == "purge-node" ]]; then
   
   # Remove --keep-volumes from args if present (not relevant for purge-node)
   FILTERED_ARGS=()
-  SKIP_NEXT=false
   for arg in "${SUBCMD_ARGS[@]}"; do
-    if [[ "${SKIP_NEXT}" == "true" ]]; then
-      SKIP_NEXT=false
-      continue
-    fi
     if [[ "${arg}" == "--keep-volumes" ]]; then
       log_warn "Ignoring --keep-volumes for purge-node (volumes will be removed)"
       continue
     fi
-    FILTERED_ARGS+=("$arg")
+    FILTERED_ARGS+=("${arg}")
   done
   
   UNINSTALLER_TMP="$(mktemp)"
   cleanup() { rm -f "${UNINSTALLER_TMP}"; }
   trap cleanup EXIT
   
-  download_script "uninstaller/uninstaller.sh" "${UNINSTALLER_TMP}" "uninstaller"
-  exec bash "${UNINSTALLER_TMP}" --purge-node "${FILTERED_ARGS[@]}"
+  # Download cmd/purge-node.sh
+  download_script "cmd/purge-node.sh" "${UNINSTALLER_TMP}" "purge-node"
+  exec bash "${UNINSTALLER_TMP}" "${FILTERED_ARGS[@]}"
 fi
 
 # Handle install
@@ -216,7 +233,8 @@ if [[ "${SUBCMD}" == "install" ]]; then
   cleanup() { rm -f "${INSTALLER_TMP}"; }
   trap cleanup EXIT
   
-  download_script "installer/installer.sh" "${INSTALLER_TMP}" "installer"
+  # Download cmd/install.sh (or installer.sh wrapper for backward compatibility)
+  download_script "cmd/install.sh" "${INSTALLER_TMP}" "install"
   
   # Pass --version if --ref was used (installer uses --version)
   INSTALLER_ARGS=()
@@ -234,7 +252,8 @@ if [[ "${SUBCMD}" == "uninstall" ]]; then
   cleanup() { rm -f "${UNINSTALLER_TMP}"; }
   trap cleanup EXIT
   
-  download_script "uninstaller/uninstaller.sh" "${UNINSTALLER_TMP}" "uninstaller"
+  # Download cmd/uninstall.sh (or uninstaller.sh wrapper for backward compatibility)
+  download_script "cmd/uninstall.sh" "${UNINSTALLER_TMP}" "uninstall"
   exec bash "${UNINSTALLER_TMP}" "${SUBCMD_ARGS[@]}"
 fi
 

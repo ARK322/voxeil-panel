@@ -31,10 +31,18 @@ curl -fL -o /tmp/voxeil.sh https://raw.githubusercontent.com/ARK322/voxeil-panel
 - **Deleting `/tmp/voxeil.sh` does NOT affect the installed system** - the script is ephemeral and can be safely removed
 - **`uninstall` and `purge-node` do NOT automatically delete `/tmp/voxeil.sh`** - you must manually delete it if needed
 - You can safely delete and re-download it at any time
-- The script orchestrates everything and downloads internal scripts (installer/uninstaller) from GitHub as needed
+- The script orchestrates everything and downloads internal scripts (`cmd/*.sh` orchestrators) from GitHub as needed
 - **Repository cloning is NOT required for end users** - this repo is for development only
 
-**Note:** The `installer/`, `uninstaller/`, and `scripts/` directories are **internal only** and should **never** be accessed directly by end users.
+**Internal Structure:**
+- `voxeil.sh` → dispatcher (arg parsing + cmd dispatch)
+- `cmd/` → orchestrators (`install.sh`, `uninstall.sh`, `purge-node.sh`, `doctor.sh`)
+- `phases/` → phase scripts (modular, numbered execution order: `00-preflight.sh`, `10-k3s.sh`, `20-core.sh`, etc.)
+- `lib/` → shared utilities (`common.sh`, `kube.sh`, `k3s.sh`, `net.sh`, `fs.sh`, `validate.sh`)
+- `tools/` → CI/ops scripts (`ci/`, `ops/`) - moved from `scripts/`
+- `installer/installer.sh`, `uninstaller/uninstaller.sh`, `nuke/nuke.sh` → backward-compatible wrappers
+
+**Note:** The `installer/`, `uninstaller/`, `cmd/`, `lib/`, `phases/`, and `tools/` directories are **internal only** and should **never** be accessed directly by end users. Use `voxeil.sh` as the single entrypoint.
 
 ### Commands
 
@@ -244,13 +252,13 @@ bash /tmp/voxeil.sh --ref v1.0.0 uninstall --force
 **For local development or custom builds:**
 ```bash
 # Build images locally
-./scripts/build-images.sh --tag local
+./tools/ci/build-images.sh --tag local
 
 # Build and push to GHCR
-./scripts/build-images.sh --push --tag latest
+./tools/ci/build-images.sh --push --tag latest
 ```
 
-**Note:** The `scripts/` directory is for internal use only. End users should use `voxeil.sh` commands.
+**Note:** The `tools/` directory is for internal CI/ops use only. End users should use `voxeil.sh` commands.
 
 ### Common Scenarios
 
@@ -509,6 +517,23 @@ Internal/admin endpoints (UI does not use):
 - `DELETE /sites/:slug` (soft delete)
   - Deletes tenant namespace only. DB, mail, and backups are preserved.
   - Response: `{ "ok": true, "slug": "app-example-com" }`
+
+### Legacy Cleanup
+
+**Refactoring Notes:**
+- Eski monolitik scriptler (`installer.sh`, `uninstaller.sh`, `nuke.sh`) fazlara bölündü ve modüler hale getirildi
+- Gereksiz / duplicate / unreachable kodlar kaldırıldı
+- Tüm iş mantığı `phases/` altında modüler phase scriptlerine taşındı
+- Ortak fonksiyonlar `lib/` altında merkezileştirildi
+- `tools/` altındaki scriptler (`ci/`, `ops/`) prod kurulumun parçası değildir - bunlar CI/CD ve operasyonel yardımcı scriptlerdir
+- `installer/installer.sh`, `uninstaller/uninstaller.sh`, `nuke/nuke.sh` artık sadece wrapper görevi görür (backward compatibility için)
+
+**Script Yapısı:**
+- `voxeil.sh` → tek entrypoint (dispatcher)
+- `cmd/*.sh` → orchestrators (phase'leri sırayla çalıştırır)
+- `phases/**/*.sh` → modüler phase scriptleri (numara sırasıyla çalışır)
+- `lib/*.sh` → paylaşılan utility fonksiyonları
+- `tools/**/*.sh` → CI/ops helper scriptleri (prod kurulumun parçası değil)
 
 ### Future TODOs
 - Add HTTPS/ingress once domain support is enabled.
