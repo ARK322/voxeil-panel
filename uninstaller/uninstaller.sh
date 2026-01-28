@@ -745,8 +745,8 @@ print(json.dumps(data))
     | tr ' ' '\n' | grep -iE 'flux' | xargs -r -I {} kubectl delete mutatingwebhookconfiguration {} --request-timeout=20s --ignore-not-found >/dev/null 2>&1 || true
 
   # Also delete labeled webhooks (with request-timeout)
-  kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration \
-    -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true >/dev/null 2>&1 || true
+  kubectl delete validatingwebhookconfiguration,mutatingwebhookconfiguration --request-timeout=20s \
+    -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true >/dev/null 2>&1 || true
   
   log_ok "Admission webhooks disabled (fail-open mode)"
 }

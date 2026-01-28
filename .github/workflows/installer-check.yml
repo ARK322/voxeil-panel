@@ -60,11 +60,15 @@ jobs:
       - name: Check kubectl delete safety
         run: |
           set -e
+          # Check for kubectl delete commands, excluding DRY-RUN echo statements and comments
           BAD=$(grep -R --line-number 'kubectl delete' installer uninstaller nuke \
-            | grep -v 'request-timeout' || true)
+            | grep -v 'request-timeout' \
+            | grep -v '\[DRY-RUN\]' \
+            | grep -v '^[^:]*:[^:]*:.*#' \
+            | grep -v 'echo.*kubectl delete' || true)
 
           if [ -n "$BAD" ]; then
-            echo "⚠️ kubectl delete without --request-timeout:"
+            echo "⚠️ kubectl delete without --request-timeout (excluding DRY-RUN and comments):"
             echo "$BAD"
             exit 1
           fi
