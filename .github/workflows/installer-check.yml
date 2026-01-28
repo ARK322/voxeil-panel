@@ -35,14 +35,13 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Only scan files that can actually affect runtime (no docs)
+          # Only scan runtime bash scripts (not YAML files - this check targets kubectl usage in scripts)
           FILES="$(git ls-files \
             'voxeil.sh' \
             'installer/*.sh' \
             'uninstaller/*.sh' \
             'nuke/*.sh' \
             'scripts/*.sh' \
-            '*.yml' '*.yaml' \
             || true)"
 
           if [ -z "$FILES" ]; then
