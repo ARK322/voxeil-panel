@@ -1264,30 +1264,32 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   fi
   
   # H) ClusterRoles / ClusterRoleBindings by label (reverse of installer: RBAC is applied in platform base)
+  # NOTE: Only deleting Voxeil-owned resources (by label)
   log_step "Deleting ClusterRoles and ClusterRoleBindings"
-  run "kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+  run "kubectl delete clusterrole,clusterrolebinding -l app.kubernetes.io/part-of=voxeil --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
   
   # Also delete by name (backward compatibility) - try multiple times if needed
+  # NOTE: Only deleting Voxeil-owned ClusterRoles/ClusterRoleBindings by name pattern
   log_info "Deleting ClusterRoles by name..."
   for cr in controller-bootstrap user-operator; do
-    if kubectl get clusterrole "${cr}" >/dev/null 2>&1; then
-      run "kubectl delete clusterrole \"${cr}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    if kubectl get clusterrole "${cr}" --request-timeout=5s >/dev/null 2>&1; then
+      run "kubectl delete clusterrole \"${cr}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
       # If still exists, try removing finalizers
-      if kubectl get clusterrole "${cr}" >/dev/null 2>&1; then
-        run "kubectl patch clusterrole \"${cr}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
-        run "kubectl delete clusterrole \"${cr}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      if kubectl get clusterrole "${cr}" --request-timeout=5s >/dev/null 2>&1; then
+        run "kubectl patch clusterrole \"${cr}\" --request-timeout=10s -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        run "kubectl delete clusterrole \"${cr}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
       fi
     fi
   done
   
   log_info "Deleting ClusterRoleBindings by name..."
   for crb in controller-bootstrap-binding; do
-    if kubectl get clusterrolebinding "${crb}" >/dev/null 2>&1; then
-      run "kubectl delete clusterrolebinding \"${crb}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+    if kubectl get clusterrolebinding "${crb}" --request-timeout=5s >/dev/null 2>&1; then
+      run "kubectl delete clusterrolebinding \"${crb}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
       # If still exists, try removing finalizers
-      if kubectl get clusterrolebinding "${crb}" >/dev/null 2>&1; then
-        run "kubectl patch clusterrolebinding \"${crb}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
-        run "kubectl delete clusterrolebinding \"${crb}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      if kubectl get clusterrolebinding "${crb}" --request-timeout=5s >/dev/null 2>&1; then
+        run "kubectl patch clusterrolebinding \"${crb}\" --request-timeout=10s -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        run "kubectl delete clusterrolebinding \"${crb}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
       fi
     fi
   done
@@ -1347,16 +1349,17 @@ if [ "${KUBECTL_AVAILABLE}" = "true" ]; then
     
     # Delete remaining cluster resources
     log_info "Cleaning up cluster roles and bindings..."
+    # NOTE: Only deleting Voxeil-owned ClusterRoles/ClusterRoleBindings by name pattern
     for cr in controller-bootstrap user-operator; do
-      if kubectl get clusterrole "${cr}" >/dev/null 2>&1; then
-        run "kubectl patch clusterrole \"${cr}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
-        run "kubectl delete clusterrole \"${cr}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      if kubectl get clusterrole "${cr}" --request-timeout=5s >/dev/null 2>&1; then
+        run "kubectl patch clusterrole \"${cr}\" --request-timeout=10s -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        run "kubectl delete clusterrole \"${cr}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
       fi
     done
     for crb in controller-bootstrap-binding; do
-      if kubectl get clusterrolebinding "${crb}" >/dev/null 2>&1; then
-        run "kubectl patch clusterrolebinding \"${crb}\" -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
-        run "kubectl delete clusterrolebinding \"${crb}\" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
+      if kubectl get clusterrolebinding "${crb}" --request-timeout=5s >/dev/null 2>&1; then
+        run "kubectl patch clusterrolebinding \"${crb}\" --request-timeout=10s -p '{\"metadata\":{\"finalizers\":[]}}' --type=merge >/dev/null 2>&1 || true"
+        run "kubectl delete clusterrolebinding \"${crb}\" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true"
       fi
     done
     
@@ -1646,18 +1649,19 @@ if [ "${DRY_RUN}" != "true" ] && [ "${KUBECTL_AVAILABLE}" = "true" ]; then
   fi
   
   # Final check for ClusterRoles and ClusterRoleBindings
+  # NOTE: Only deleting Voxeil-owned ClusterRoles/ClusterRoleBindings by name pattern
   for cr in controller-bootstrap user-operator; do
-    if kubectl get clusterrole "${cr}" >/dev/null 2>&1; then
+    if kubectl get clusterrole "${cr}" --request-timeout=5s >/dev/null 2>&1; then
       log_info "Final cleanup: removing ClusterRole ${cr}..."
-      kubectl patch clusterrole "${cr}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-      kubectl delete clusterrole "${cr}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+      kubectl patch clusterrole "${cr}" --request-timeout=10s -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      kubectl delete clusterrole "${cr}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
     fi
   done
   for crb in controller-bootstrap-binding; do
-    if kubectl get clusterrolebinding "${crb}" >/dev/null 2>&1; then
+    if kubectl get clusterrolebinding "${crb}" --request-timeout=5s >/dev/null 2>&1; then
       log_info "Final cleanup: removing ClusterRoleBinding ${crb}..."
-      kubectl patch clusterrolebinding "${crb}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
-      kubectl delete clusterrolebinding "${crb}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+      kubectl patch clusterrolebinding "${crb}" --request-timeout=10s -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+      kubectl delete clusterrolebinding "${crb}" --request-timeout=20s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
     fi
   done
   

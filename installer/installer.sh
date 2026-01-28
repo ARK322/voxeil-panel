@@ -328,7 +328,7 @@ safe_bootstrap_kyverno_webhooks() {
     log_info "Patching validating webhook: ${wh}"
     # Use python3 or jq to properly patch ALL webhooks entries
     if command -v python3 >/dev/null 2>&1; then
-      kubectl get validatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+      kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
         python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -337,17 +337,17 @@ if 'webhooks' in data:
         webhook['failurePolicy'] = 'Ignore'
         webhook['timeoutSeconds'] = 5
 print(json.dumps(data))
-" 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+" 2>/dev/null | kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     elif command -v jq >/dev/null 2>&1; then
-      kubectl get validatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+      kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
         jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
-        kubectl apply -f - >/dev/null 2>&1 || true
+        kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     else
       # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
-      kubectl patch validatingwebhookconfiguration "${wh}" \
+      kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
         -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
         --type=json 2>/dev/null || \
-      kubectl patch validatingwebhookconfiguration "${wh}" \
+      kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
         -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
         --type=merge 2>/dev/null || true
     fi
@@ -358,7 +358,7 @@ print(json.dumps(data))
     log_info "Patching mutating webhook: ${wh}"
     # Use python3 or jq to properly patch ALL webhooks entries
     if command -v python3 >/dev/null 2>&1; then
-      kubectl get mutatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+      kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
         python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -367,17 +367,17 @@ if 'webhooks' in data:
         webhook['failurePolicy'] = 'Ignore'
         webhook['timeoutSeconds'] = 5
 print(json.dumps(data))
-" 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+" 2>/dev/null | kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     elif command -v jq >/dev/null 2>&1; then
-      kubectl get mutatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+      kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
         jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 5}' 2>/dev/null | \
-        kubectl apply -f - >/dev/null 2>&1 || true
+        kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     else
       # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
-      kubectl patch mutatingwebhookconfiguration "${wh}" \
+      kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
         -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
         --type=json 2>/dev/null || \
-      kubectl patch mutatingwebhookconfiguration "${wh}" \
+      kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
         -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":5}]}' \
         --type=merge 2>/dev/null || true
     fi
@@ -419,7 +419,40 @@ check_kyverno_service_reachable() {
 
 # Harden Kyverno webhooks: set failurePolicy=Fail after service is reachable
 # This restores proper security posture once Kyverno is healthy
+# MUST wait for service endpoints to be ready before hardening
 harden_kyverno_webhooks() {
+  log_info "Hardening Kyverno webhooks: Waiting for service endpoints to be ready..."
+  
+  # Wait for Kyverno deployments to be Available
+  log_info "Waiting for Kyverno deployments to be Available..."
+  if ! kubectl wait --for=condition=Available deployment -n kyverno --all --timeout=120s --request-timeout=10s >/dev/null 2>&1; then
+    log_warn "Kyverno deployments did not become Available within 120s"
+    log_warn "Keeping webhooks in Ignore mode for safety"
+    return 1
+  fi
+  
+  # Wait for kyverno-svc endpoints to be ready
+  log_info "Waiting for kyverno-svc endpoints to be ready..."
+  local endpoint_timeout=60
+  local endpoint_waited=0
+  while [ ${endpoint_waited} -lt ${endpoint_timeout} ]; do
+    if check_kyverno_service_reachable "kyverno" "kyverno-svc" 10; then
+      log_ok "Kyverno service endpoints are ready"
+      break
+    fi
+    sleep 2
+    endpoint_waited=$((endpoint_waited + 2))
+    if [ $((endpoint_waited % 10)) -eq 0 ]; then
+      log_info "Waiting for Kyverno service endpoints... (${endpoint_waited}/${endpoint_timeout}s)"
+    fi
+  done
+  
+  if ! check_kyverno_service_reachable "kyverno" "kyverno-svc" 10; then
+    log_warn "Kyverno service endpoints not ready after ${endpoint_timeout}s"
+    log_warn "Keeping webhooks in Ignore mode for safety"
+    return 1
+  fi
+  
   log_info "Hardening Kyverno webhooks: Setting failurePolicy=Fail (service is reachable)..."
   
   # Find all Kyverno webhook configurations
@@ -433,7 +466,7 @@ harden_kyverno_webhooks() {
     log_info "Hardening validating webhook: ${wh}"
     # Use python3 or jq to properly patch ALL webhooks entries
     if command -v python3 >/dev/null 2>&1; then
-      kubectl get validatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+      kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
         python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -444,17 +477,17 @@ if 'webhooks' in data:
         if 'timeoutSeconds' not in webhook or webhook.get('timeoutSeconds', 0) < 5:
             webhook['timeoutSeconds'] = 10
 print(json.dumps(data))
-" 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+" 2>/dev/null | kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     elif command -v jq >/dev/null 2>&1; then
-      kubectl get validatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+      kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
         jq '.webhooks[] |= . + {"failurePolicy": "Fail", "timeoutSeconds": 10}' 2>/dev/null | \
-        kubectl apply -f - >/dev/null 2>&1 || true
+        kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     else
       # Fallback: try patch with type=json
-      kubectl patch validatingwebhookconfiguration "${wh}" \
+      kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
         -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
         --type=json 2>/dev/null || \
-      kubectl patch validatingwebhookconfiguration "${wh}" \
+      kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
         -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
         --type=merge 2>/dev/null || true
     fi
@@ -465,7 +498,7 @@ print(json.dumps(data))
     log_info "Hardening mutating webhook: ${wh}"
     # Use python3 or jq to properly patch ALL webhooks entries
     if command -v python3 >/dev/null 2>&1; then
-      kubectl get mutatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+      kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
         python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -476,17 +509,17 @@ if 'webhooks' in data:
         if 'timeoutSeconds' not in webhook or webhook.get('timeoutSeconds', 0) < 5:
             webhook['timeoutSeconds'] = 10
 print(json.dumps(data))
-" 2>/dev/null | kubectl apply -f - >/dev/null 2>&1 || true
+" 2>/dev/null | kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     elif command -v jq >/dev/null 2>&1; then
-      kubectl get mutatingwebhookconfiguration "${wh}" -o json 2>/dev/null | \
+      kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
         jq '.webhooks[] |= . + {"failurePolicy": "Fail", "timeoutSeconds": 10}' 2>/dev/null | \
-        kubectl apply -f - >/dev/null 2>&1 || true
+        kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
     else
       # Fallback: try patch with type=json
-      kubectl patch mutatingwebhookconfiguration "${wh}" \
+      kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
         -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
         --type=json 2>/dev/null || \
-      kubectl patch mutatingwebhookconfiguration "${wh}" \
+      kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
         -p '{"webhooks":[{"failurePolicy":"Fail","timeoutSeconds":10}]}' \
         --type=merge 2>/dev/null || true
     fi
@@ -649,8 +682,17 @@ validate_image() {
   # Also check if image exists in k3s containerd (if k3s is installed)
   if command -v ctr >/dev/null 2>&1; then
     # ctr output format: IMAGE TAG DIGEST SIZE
-    # Use grep with word boundary to match exact image name
-    if ctr -n k8s.io images ls 2>/dev/null | grep -qE "^${image}[[:space:]]|^${image}$"; then
+    # Image variable is in IMAGE:TAG format, but ctr output has them separated
+    # Extract IMAGE and TAG from image variable
+    local image_name="${image%%:*}"
+    local image_tag="${image##*:}"
+    # If image doesn't contain ':', treat entire string as image name and use 'latest' as tag
+    if [ "${image_name}" = "${image}" ]; then
+      image_name="${image}"
+      image_tag="latest"
+    fi
+    # Check if image exists with matching tag
+    if ctr -n k8s.io images ls 2>/dev/null | awk -v img="${image_name}" -v tag="${image_tag}" '$1 == img && $2 == tag {found=1} END {exit !found}'; then
       echo "✓ Image ${image} exists locally in k3s containerd"
       return 0
     fi
@@ -842,8 +884,10 @@ check_image_pull_errors() {
         echo ""
         echo "3. Or build locally and use local images:"
         echo "   ./scripts/build-images.sh --tag local"
-        echo "   export CONTROLLER_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-controller:local"
-        echo "   export PANEL_IMAGE=ghcr.io/${GHCR_OWNER}/voxeil-panel:local"
+        # Use GHCR_OWNER if available, otherwise use placeholder
+        local ghcr_owner_placeholder="${GHCR_OWNER:-OWNER}"
+        echo "   export CONTROLLER_IMAGE=ghcr.io/${ghcr_owner_placeholder}/voxeil-controller:local"
+        echo "   export PANEL_IMAGE=ghcr.io/${ghcr_owner_placeholder}/voxeil-panel:local"
         echo "   Then re-run the installer"
       else
         echo "1. Check if the image exists: docker pull ${image_name}"
@@ -2223,37 +2267,83 @@ log_info "Preflight: Patching admission webhooks to prevent API lock..."
 webhook_patterns="kyverno cert-manager flux toolkit"
 for pattern in ${webhook_patterns}; do
   # ValidatingWebhookConfigurations
-  validating_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
+  validating_webhooks="$(kubectl get validatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
   if [ -n "${validating_webhooks}" ]; then
     for wh in ${validating_webhooks}; do
       # Patch failurePolicy to Ignore to prevent API lock
-      kubectl patch validatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=json 2>/dev/null || \
-      kubectl patch validatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=merge 2>/dev/null || true
+      # Use python3 or jq to properly patch ALL webhooks entries
+      if command -v python3 >/dev/null 2>&1; then
+        kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+          python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if 'webhooks' in data:
+    for webhook in data['webhooks']:
+        webhook['failurePolicy'] = 'Ignore'
+        webhook['timeoutSeconds'] = 3
+print(json.dumps(data))
+" 2>/dev/null | kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
+      elif command -v jq >/dev/null 2>&1; then
+        kubectl get validatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+          jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 3}' 2>/dev/null | \
+          kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
+      else
+        # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
+        kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
+          -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":3}]}' \
+          --type=json 2>/dev/null || \
+        kubectl patch validatingwebhookconfiguration "${wh}" --request-timeout=20s \
+          -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":3}]}' \
+          --type=merge 2>/dev/null || true
+      fi
     done
   fi
   
   # MutatingWebhookConfigurations
-  mutating_webhooks="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
+  mutating_webhooks="$(kubectl get mutatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE "${pattern}" || true)"
   if [ -n "${mutating_webhooks}" ]; then
     for wh in ${mutating_webhooks}; do
       # Patch failurePolicy to Ignore to prevent API lock
-      kubectl patch mutatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=json 2>/dev/null || \
-      kubectl patch mutatingwebhookconfiguration "${wh}" -p '{"webhooks":[{"failurePolicy":"Ignore"}]}' --type=merge 2>/dev/null || true
+      # Use python3 or jq to properly patch ALL webhooks entries
+      if command -v python3 >/dev/null 2>&1; then
+        kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+          python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+if 'webhooks' in data:
+    for webhook in data['webhooks']:
+        webhook['failurePolicy'] = 'Ignore'
+        webhook['timeoutSeconds'] = 3
+print(json.dumps(data))
+" 2>/dev/null | kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
+      elif command -v jq >/dev/null 2>&1; then
+        kubectl get mutatingwebhookconfiguration "${wh}" --request-timeout=10s -o json 2>/dev/null | \
+          jq '.webhooks[] |= . + {"failurePolicy": "Ignore", "timeoutSeconds": 3}' 2>/dev/null | \
+          kubectl apply --request-timeout=20s -f - >/dev/null 2>&1 || true
+      else
+        # Fallback: try patch with type=json (may only patch first webhook, but better than nothing)
+        kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
+          -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":3}]}' \
+          --type=json 2>/dev/null || \
+        kubectl patch mutatingwebhookconfiguration "${wh}" --request-timeout=20s \
+          -p '{"webhooks":[{"failurePolicy":"Ignore","timeoutSeconds":3}]}' \
+          --type=merge 2>/dev/null || true
+      fi
     done
   fi
 done
 
 # Clean up orphaned webhooks (if namespace deleted but webhooks remain)
-orphaned_webhooks="$(kubectl get validatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux)' || true)"
-orphaned_mutating="$(kubectl get mutatingwebhookconfigurations -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux)' || true)"
+orphaned_webhooks="$(kubectl get validatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux)' || true)"
+orphaned_mutating="$(kubectl get mutatingwebhookconfigurations --request-timeout=10s -o jsonpath='{.items[*].metadata.name}' 2>/dev/null | tr ' ' '\n' | grep -iE '(kyverno|cert-manager|flux)' || true)"
 
 if [ -n "${orphaned_webhooks}" ] || [ -n "${orphaned_mutating}" ]; then
   echo "  Found orphaned webhooks, attempting to delete..."
   for webhook in ${orphaned_webhooks}; do
-    kubectl delete validatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
+    kubectl delete validatingwebhookconfiguration "${webhook}" --request-timeout=20s --ignore-not-found=true >/dev/null 2>&1 || true
   done
   for webhook in ${orphaned_mutating}; do
-    kubectl delete mutatingwebhookconfiguration "${webhook}" --ignore-not-found=true >/dev/null 2>&1 || true
+    kubectl delete mutatingwebhookconfiguration "${webhook}" --request-timeout=20s --ignore-not-found=true >/dev/null 2>&1 || true
   done
   echo "  ✓ Orphaned webhooks cleaned up"
 fi
@@ -2267,7 +2357,7 @@ for ns in platform infra-db dns-zone mail-zone backup-system; do
     if [ -n "${pvcs}" ]; then
       echo "  Found leftover PVCs for namespace ${ns}, cleaning up..."
       for pvc in ${pvcs}; do
-        kubectl delete pvc "${pvc}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        kubectl delete pvc "${pvc}" -n "${ns}" --request-timeout=15s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
       done
     fi
   else
@@ -2278,12 +2368,12 @@ for ns in platform infra-db dns-zone mail-zone backup-system; do
       for pvc in ${terminating_pvcs}; do
         echo "    Fixing PVC: ${pvc}"
         # Remove finalizers to allow PVC to be deleted
-        kubectl patch pvc "${pvc}" -n "${ns}" -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+        kubectl patch pvc "${pvc}" -n "${ns}" --request-timeout=10s -p '{"metadata":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
         # Wait a moment for PVC to be deleted
         sleep 2
         # If still exists, try force delete
-        if kubectl get pvc "${pvc}" -n "${ns}" >/dev/null 2>&1; then
-          kubectl delete pvc "${pvc}" -n "${ns}" --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
+        if kubectl get pvc "${pvc}" -n "${ns}" --request-timeout=5s >/dev/null 2>&1; then
+          kubectl delete pvc "${pvc}" -n "${ns}" --request-timeout=15s --ignore-not-found=true --grace-period=0 --force >/dev/null 2>&1 || true
         fi
       done
       # Wait a bit more for PVCs to be fully deleted
@@ -2329,7 +2419,7 @@ for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system
   if [ "${ns_phase}" = "Terminating" ]; then
     echo "  Found namespace ${ns} stuck in Terminating, attempting to fix..."
     # First try patch
-    kubectl patch namespace "${ns}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+    kubectl patch namespace "${ns}" --request-timeout=10s -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
     
     # Wait up to 60 seconds for namespace to be deleted
     waited=0
@@ -2343,15 +2433,15 @@ for ns in platform infra-db dns-zone mail-zone backup-system kyverno flux-system
     done
     
     # If still exists, use /finalize endpoint
-    if kubectl get namespace "${ns}" >/dev/null 2>&1; then
+    if kubectl get namespace "${ns}" --request-timeout=5s >/dev/null 2>&1; then
       echo "    Attempting finalize endpoint cleanup for ${ns}..."
       if command -v python3 >/dev/null 2>&1; then
-        kubectl get namespace "${ns}" -o json | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+        kubectl get namespace "${ns}" --request-timeout=10s -o json 2>/dev/null | python3 -c "import sys, json; data=json.load(sys.stdin); data['spec']['finalizers']=[]; print(json.dumps(data))" 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" --request-timeout=15s -f - >/dev/null 2>&1 || true
       elif command -v jq >/dev/null 2>&1; then
-        kubectl get namespace "${ns}" -o json | jq '.spec.finalizers=[]' | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" -f - >/dev/null 2>&1 || true
+        kubectl get namespace "${ns}" --request-timeout=10s -o json 2>/dev/null | jq '.spec.finalizers=[]' 2>/dev/null | kubectl replace --raw "/api/v1/namespaces/${ns}/finalize" --request-timeout=15s -f - >/dev/null 2>&1 || true
       else
         # Fallback: try patch again
-        kubectl patch namespace "${ns}" -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
+        kubectl patch namespace "${ns}" --request-timeout=10s -p '{"spec":{"finalizers":[]}}' --type=merge >/dev/null 2>&1 || true
       fi
     fi
   fi
@@ -2645,20 +2735,62 @@ if [ -f "${PLATFORM_DIR}/panel-auth.yaml" ] && grep -q "REPLACE_PANEL_BASICAUTH"
   exit 1
 fi
 
-# Validate that all REPLACE_* placeholders are replaced
-log_step "Validating all REPLACE_* placeholders are replaced"
-REMAINING_PLACEHOLDERS=$(find "${SERVICES_DIR}" "${PLATFORM_DIR}" -type f \( -name "*.yaml" -o -name "*.yml" \) -exec grep -l "REPLACE_" {} + 2>/dev/null | xargs grep -h "REPLACE_" 2>/dev/null | grep -v "REPLACE_SITE_SLUG\|REPLACE_TENANT_NAMESPACE\|REPLACE_DB_" | sort -u || true)
-if [[ -n "${REMAINING_PLACEHOLDERS}" ]]; then
-  echo "ERROR: The following REPLACE_* placeholders were not replaced:"
-  echo "${REMAINING_PLACEHOLDERS}"
-  exit 1
-fi
+# Note: REPLACE_* placeholder validation will be done AFTER image validation and templating
+# This ensures REPLACE_CONTROLLER_IMAGE and REPLACE_PANEL_IMAGE are replaced before validation
 
 # ========= apply =========
 log_step "Applying Traefik entrypoints config"
 if [ -f "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml" ]; then
   kubectl apply -f "${SERVICES_DIR}/traefik/helmchartconfig-traefik.yaml"
   write_state_flag "TRAEFIK_INSTALLED"
+  
+  # Verify Traefik is Running before proceeding
+  log_info "Verifying Traefik installation..."
+  TRAEFIK_READY=false
+  TRAEFIK_TIMEOUT=120
+  TRAEFIK_WAITED=0
+  while [ ${TRAEFIK_WAITED} -lt ${TRAEFIK_TIMEOUT} ]; do
+    TRAEFIK_PODS="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s --no-headers 2>/dev/null | grep -c Running || echo "0")"
+    TRAEFIK_PODS="${TRAEFIK_PODS//[^0-9]/}"
+    TRAEFIK_PODS="${TRAEFIK_PODS:-0}"
+    
+    if [ "${TRAEFIK_PODS}" -gt 0 ]; then
+      # Check if any pod is in CrashLoopBackOff
+      CRASH_LOOP="$(kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s --no-headers 2>/dev/null | grep -c CrashLoopBackOff || echo "0")"
+      CRASH_LOOP="${CRASH_LOOP//[^0-9]/}"
+      CRASH_LOOP="${CRASH_LOOP:-0}"
+      
+      if [ "${CRASH_LOOP}" -gt 0 ]; then
+        log_error "Traefik pods are in CrashLoopBackOff state"
+        echo "  Traefik pod status:"
+        kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || true
+        echo ""
+        echo "  Traefik pod logs:"
+        kubectl logs -n kube-system -l app.kubernetes.io/name=traefik --tail=50 --request-timeout=10s 2>/dev/null || true
+        exit 1
+      fi
+      
+      TRAEFIK_READY=true
+      log_ok "Traefik is Running (${TRAEFIK_PODS} pod(s))"
+      break
+    fi
+    
+    sleep 2
+    TRAEFIK_WAITED=$((TRAEFIK_WAITED + 2))
+    if [ $((TRAEFIK_WAITED % 10)) -eq 0 ]; then
+      log_info "Waiting for Traefik to be Running... (${TRAEFIK_WAITED}/${TRAEFIK_TIMEOUT}s)"
+    fi
+  done
+  
+  if [ "${TRAEFIK_READY}" != "true" ]; then
+    log_error "Traefik did not become Running within ${TRAEFIK_TIMEOUT}s"
+    echo "  Traefik pod status:"
+    kubectl get pods -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || true
+    echo ""
+    echo "  Traefik deployment status:"
+    kubectl get deployments -n kube-system -l app.kubernetes.io/name=traefik --request-timeout=10s 2>/dev/null || true
+    exit 1
+  fi
 else
   log_warn "Traefik config not found, skipping"
 fi
@@ -3099,7 +3231,15 @@ auto_build_images() {
       # Use ctr (containerd CLI) to import image
       if docker save "${build_image}" 2>/dev/null | ctr -n k8s.io images import - 2>/dev/null; then
         # Verify import was successful by checking if image exists in containerd
-        if ctr -n k8s.io images ls 2>/dev/null | grep -qE "^${build_image}[[:space:]]|^${build_image}$"; then
+        # Extract IMAGE and TAG from build_image (format: IMAGE:TAG)
+        local build_image_name="${build_image%%:*}"
+        local build_image_tag="${build_image##*:}"
+        # If build_image doesn't contain ':', treat entire string as image name and use 'latest' as tag
+        if [ "${build_image_name}" = "${build_image}" ]; then
+          build_image_name="${build_image}"
+          build_image_tag="latest"
+        fi
+        if ctr -n k8s.io images ls 2>/dev/null | awk -v img="${build_image_name}" -v tag="${build_image_tag}" '$1 == img && $2 == tag {found=1} END {exit !found}'; then
           log_ok "Image imported to k3s containerd successfully"
           import_success=true
         else
@@ -3169,6 +3309,11 @@ if [[ "${SKIP_IMAGE_VALIDATION:-false}" != "true" ]]; then
       # Update CONTROLLER_IMAGE to use the built image
       CONTROLLER_IMAGE="ghcr.io/${GHCR_OWNER}/voxeil-controller:${IMAGE_TAG:-latest}"
       log_info "Using built image: ${CONTROLLER_IMAGE}"
+      # Verify the built image is now available (should be in containerd after import)
+      if ! validate_image "${CONTROLLER_IMAGE}"; then
+        log_warn "Built image not found in containerd, but build succeeded. Continuing anyway..."
+        log_warn "k3s will attempt to pull from registry when pods start."
+      fi
     else
       log_error "Failed to auto-build controller image"
       log_error "Installation cannot continue without controller image."
@@ -3202,6 +3347,11 @@ if [[ "${SKIP_IMAGE_VALIDATION:-false}" != "true" ]]; then
       # Update PANEL_IMAGE to use the built image
       PANEL_IMAGE="ghcr.io/${GHCR_OWNER}/voxeil-panel:${IMAGE_TAG:-latest}"
       log_info "Using built image: ${PANEL_IMAGE}"
+      # Verify the built image is now available (should be in containerd after import)
+      if ! validate_image "${PANEL_IMAGE}"; then
+        log_warn "Built image not found in containerd, but build succeeded. Continuing anyway..."
+        log_warn "k3s will attempt to pull from registry when pods start."
+      fi
     else
       log_error "Failed to auto-build panel image"
       log_error "Installation cannot continue without panel image."
@@ -3224,6 +3374,15 @@ CONTROLLER_IMAGE_ESC="$(sed_escape "${CONTROLLER_IMAGE}")"
 PANEL_IMAGE_ESC="$(sed_escape "${PANEL_IMAGE}")"
 [ -f "${PLATFORM_DIR}/controller-deploy.yaml" ] && sed -i "s|REPLACE_CONTROLLER_IMAGE|${CONTROLLER_IMAGE_ESC}|g" "${PLATFORM_DIR}/controller-deploy.yaml"
 [ -f "${PLATFORM_DIR}/panel-deploy.yaml" ] && sed -i "s|REPLACE_PANEL_IMAGE|${PANEL_IMAGE_ESC}|g" "${PLATFORM_DIR}/panel-deploy.yaml"
+
+# Validate that all REPLACE_* placeholders are replaced (AFTER image templating)
+log_step "Validating all REPLACE_* placeholders are replaced"
+REMAINING_PLACEHOLDERS=$(find "${SERVICES_DIR}" "${PLATFORM_DIR}" -type f \( -name "*.yaml" -o -name "*.yml" \) -exec grep -l "REPLACE_" {} + 2>/dev/null | xargs grep -h "REPLACE_" 2>/dev/null | grep -v "REPLACE_SITE_SLUG\|REPLACE_TENANT_NAMESPACE\|REPLACE_DB_" | sort -u || true)
+if [[ -n "${REMAINING_PLACEHOLDERS}" ]]; then
+  echo "ERROR: The following REPLACE_* placeholders were not replaced:"
+  echo "${REMAINING_PLACEHOLDERS}"
+  exit 1
+fi
 
 log_step "Applying infra DB manifests"
 # Check if namespace exists before creating
