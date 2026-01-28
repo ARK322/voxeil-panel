@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - controller-deploy.yaml
+  - controller-svc.yaml
+  - panel-auth.yaml
+  - panel-deploy.yaml
+  - panel-ingress.yaml
+  - panel-redirect.yaml
+  - panel-svc.yaml
+  - rbac.yaml

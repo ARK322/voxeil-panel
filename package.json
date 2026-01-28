@@ -1,0 +1,18 @@
+{
+  "name": "voxeil-panel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Voxeil Panel - K3s/Kubernetes hosting panel infrastructure",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

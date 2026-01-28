@@ -1,0 +1,157 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-scripts
+  namespace: backup-system
+data:
+  run.sh: |
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    BACKUP_ROOT="/backups"
+    RETENTION_DAYS="${BACKUP_RETENTION_DAYS:-14}"
+    DB_NAME_PREFIX="${DB_NAME_PREFIX:-db_}"
+    SITE_SLUG="${SITE_SLUG:-}"
+    USER_NAMESPACE="${USER_NAMESPACE:-}"
+    DB_ENABLED="${DB_ENABLED:-false}"
+
+    ensure_kubeconfig() {
+      if [[ -n "${KUBECONFIG:-}" ]]; then
+        return
+      fi
+      if [[ -f /var/run/secrets/kubernetes.io/serviceaccount/token ]]; then
+        cat > /tmp/kubeconfig <<EOF
+    apiVersion: v1
+    kind: Config
+    clusters:
+    - name: in-cluster
+      cluster:
+        certificate-authority: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        server: https://kubernetes.default.svc
+    users:
+    - name: sa
+      user:
+        tokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
+    contexts:
+    - name: in-cluster
+      context:
+        cluster: in-cluster
+        user: sa
+        namespace: ${USER_NAMESPACE}
+    current-context: in-cluster
+    EOF
+        export KUBECONFIG=/tmp/kubeconfig
+      fi
+    }
+
+    ensure_kubeconfig
+
+    mkdir -p "${BACKUP_ROOT}"
+
+    if [[ -z "${SITE_SLUG}" ]]; then
+      echo "SITE_SLUG is required."
+      exit 1
+    fi
+
+    if [[ -z "${USER_NAMESPACE}" ]]; then
+      echo "USER_NAMESPACE is required."
+      exit 1
+    fi
+
+    timestamp="$(date -u +"%Y%m%dT%H%M%SZ")"
+    files_dir="${BACKUP_ROOT}/${SITE_SLUG}/files"
+    db_dir="${BACKUP_ROOT}/${SITE_SLUG}/db"
+    mkdir -p "${files_dir}" "${db_dir}"
+
+    files_status="skipped"
+    files_path=""
+    if kubectl -n "${USER_NAMESPACE}" get pvc pvc-user-home >/dev/null 2>&1; then
+      pod_name="backup-export-${SITE_SLUG}-$(date +%s)"
+      cat <<EOF | kubectl -n "${USER_NAMESPACE}" apply -f -
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: ${pod_name}
+      labels:
+        app.kubernetes.io/name: backup-export
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: exporter
+        image: alpine:3.19
+        command: ["sleep","3600"]
+        volumeMounts:
+        - name: user-home
+          mountPath: /home
+          subPath: sites/${SITE_SLUG}
+          readOnly: true
+      volumes:
+      - name: user-home
+        persistentVolumeClaim:
+          claimName: pvc-user-home
+          readOnly: true
+    EOF
+
+      if kubectl -n "${USER_NAMESPACE}" wait --for=condition=Ready pod/"${pod_name}" --timeout=120s; then
+        files_path="${files_dir}/${timestamp}.tar.gz"
+        if kubectl -n "${USER_NAMESPACE}" exec "${pod_name}" -- tar -C /home -cf - . | gzip -c > "${files_path}"; then
+          files_status="ok"
+        else
+          files_status="error"
+          rm -f "${files_path}"
+        fi
+      else
+        files_status="error"
+      fi
+
+      kubectl -n "${USER_NAMESPACE}" delete pod "${pod_name}" --ignore-not-found >/dev/null 2>&1 || true
+    else
+      echo "Missing PVC pvc-user-home in ${USER_NAMESPACE}; skipping file backup."
+      echo "Missing PVC pvc-user-home" > "${files_dir}/SKIPPED.txt"
+      files_status="missing_pvc"
+    fi
+
+    db_status="skipped"
+    db_path=""
+    db_user="${DB_ADMIN_USER:-${DB_USER:-}}"
+    db_password="${DB_ADMIN_PASSWORD:-${DB_PASSWORD:-}}"
+    if [[ "${DB_ENABLED}" == "true" && -n "${DB_HOST:-}" && -n "${db_user}" && -n "${db_password}" ]]; then
+      db_port="${DB_PORT:-5432}"
+      # Extract userId from USER_NAMESPACE (user-<userId>)
+      user_id="${USER_NAMESPACE#user-}"
+      db_name="${DB_NAME_PREFIX}${user_id}"
+      db_path="${db_dir}/${timestamp}.sql.gz"
+      if PGPASSWORD="${db_password}" pg_dump -h "${DB_HOST}" -p "${db_port}" -U "${db_user}" \
+        "${db_name}" | gzip -c > "${db_path}"; then
+        db_status="ok"
+      else
+        db_status="error"
+        rm -f "${db_path}"
+      fi
+    else
+      echo "DB backup skipped" > "${db_dir}/SKIPPED.txt"
+      db_status="skipped"
+    fi
+
+    cat > "${files_dir}/${timestamp}.meta.json" <<EOF
+    {
+      "timestamp": "${timestamp}",
+      "namespace": "${USER_NAMESPACE}",
+      "slug": "${SITE_SLUG}",
+      "files": {
+        "status": "${files_status}",
+        "path": "${files_path}"
+      },
+      "db": {
+        "status": "${db_status}",
+        "path": "${db_path}"
+      }
+    }
+    EOF
+
+    kubectl annotate namespace "${USER_NAMESPACE}" \
+      "voxeil.io/site-${SITE_SLUG}-backupLastRunAt=${timestamp}" \
+      --overwrite >/dev/null 2>&1 || true
+
+    find "${files_dir}" -type f \( -name "*.tar.gz" -o -name "*.tar.zst" \) -mtime +"${RETENTION_DAYS}" -delete || true
+    find "${db_dir}" -type f -name "*.sql.gz" -mtime +"${RETENTION_DAYS}" -delete || true

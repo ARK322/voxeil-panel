@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - backup-job-templates-configmap.yaml
+  - backup-scripts-configmap.yaml
+  - backup-service-deploy.yaml
+  - backup-service-secret.yaml
+  - backup-service-svc.yaml
+  - rbac.yaml
+  - serviceaccount.yaml

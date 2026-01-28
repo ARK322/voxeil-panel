@@ -1,0 +1,99 @@
+apiVersion: helm.cattle.io/v1
+kind: HelmChartConfig
+metadata:
+  name: traefik
+  namespace: kube-system
+  labels:
+    app.kubernetes.io/part-of: voxeil
+spec:
+  valuesContent: |-
+    # Access logs configuration
+    accessLog:
+      enabled: true
+      filePath: /var/log/traefik/access.log
+      format: json
+      fields:
+        defaultMode: keep
+        headers:
+          defaultMode: keep
+          names:
+            User-Agent: keep
+            Authorization: drop
+            Cookie: drop
+    
+    # Additional security settings
+    globalArguments:
+      - "--log.level=INFO"
+      - "--accesslog=true"
+      - "--accesslog.format=json"
+      - "--accesslog.filepath=/var/log/traefik/access.log"
+    
+    ports:
+      web:
+        port: 80
+        expose:
+          default: true
+        exposedPort: 80
+        protocol: TCP
+      websecure:
+        port: 443
+        expose:
+          default: true
+        exposedPort: 443
+        protocol: TCP
+        tls:
+          enabled: true
+      dns-tcp:
+        port: 53
+        expose:
+          default: true
+        exposedPort: 53
+        protocol: TCP
+      dns-udp:
+        port: 53
+        expose:
+          default: true
+        exposedPort: 53
+        protocol: UDP
+      smtp:
+        port: 25
+        expose:
+          default: true
+        exposedPort: 25
+        protocol: TCP
+      smtps:
+        port: 465
+        expose:
+          default: true
+        exposedPort: 465
+        protocol: TCP
+      submission:
+        port: 587
+        expose:
+          default: true
+        exposedPort: 587
+        protocol: TCP
+      imap:
+        port: 143
+        expose:
+          default: true
+        exposedPort: 143
+        protocol: TCP
+      imaps:
+        port: 993
+        expose:
+          default: true
+        exposedPort: 993
+        protocol: TCP
+      pop3:
+        port: 110
+        expose:
+          default: true
+        exposedPort: 110
+        protocol: TCP
+      pop3s:
+        port: 995
+        expose:
+          default: true
+        exposedPort: 995
+        protocol: TCP

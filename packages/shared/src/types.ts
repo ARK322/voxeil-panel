@@ -1,16 +1,6 @@
-// Re-export shared types from @voxeil/shared
-export type {
-  HealthStatus,
-  HealthResponse,
-  Tenant,
-  TenantDetail,
-  Site,
-  SiteDetail,
-  MailInfo,
-  DbInfo,
-  DnsInfo,
-  BackupInfo,
-} from "@voxeil/shared/types";
+// Shared types for Voxeil Panel (runtime-independent)
+
+export type HealthStatus = "healthy" | "degraded" | "down";
 
 export type HealthResponse = {
   status: HealthStatus;
@@ -124,4 +114,55 @@ export type BackupInfo = {
     sizeBytes: number;
     type: "full" | "incremental";
   }>;
+};
+
+export type SiteInfo = {
+  slug: string;
+  namespace: string;
+  ready: boolean;
+  domain?: string;
+  image?: string;
+  containerPort?: number;
+  tlsEnabled?: boolean;
+  tlsIssuer?: string;
+  githubEnabled?: boolean;
+  githubRepo?: string;
+  githubBranch?: string;
+  githubWorkflow?: string;
+  githubImage?: string;
+  dbEnabled?: boolean;
+  dbName?: string;
+  dbUser?: string;
+  dbHost?: string;
+  dbPort?: number;
+  dbSecret?: string;
+  mailEnabled?: boolean;
+  mailDomain?: string;
+  dnsEnabled?: boolean;
+  dnsDomain?: string;
+  dnsTarget?: string;
+  backupEnabled?: boolean;
+  backupRetentionDays?: number;
+  backupSchedule?: string;
+  backupLastRunAt?: string;
+  cpu?: number;
+  ramGi?: number;
+  diskGi?: number;
+};
+
+export type PanelUser = {
+  id: string;
+  username: string;
+  email: string;
+  role: "admin" | "site";
+  siteSlug?: string | null;
+  active: boolean;
+  createdAt: string;
+};
+
+export type BackupSnapshot = {
+  id: string;
+  hasFiles: boolean;
+  hasDb: boolean;
+  sizeBytes?: number;
 };

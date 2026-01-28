@@ -1,0 +1,102 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: backup-job-templates
+  namespace: backup-system
+data:
+  site-backup-job.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: site-backup-REPLACE_SITE_SLUG
+      namespace: backup-system
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: backup-service
+          restartPolicy: Never
+          containers:
+            - name: backup-runner
+              image: backup-runner:local
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh","-c"]
+              args: ["chmod +x /scripts/run.sh && /scripts/run.sh"]
+              env:
+                - name: SITE_SLUG
+                  value: "REPLACE_SITE_SLUG"
+                - name: TENANT_NAMESPACE
+                  value: "REPLACE_TENANT_NAMESPACE"
+                - name: DB_ENABLED
+                  value: "REPLACE_DB_ENABLED"
+                - name: DB_HOST
+                  value: "REPLACE_DB_HOST"
+                - name: DB_PORT
+                  value: "REPLACE_DB_PORT"
+                - name: DB_ADMIN_USER
+                  value: "REPLACE_DB_ADMIN_USER"
+                - name: DB_ADMIN_PASSWORD
+                  value: "REPLACE_DB_ADMIN_PASSWORD"
+                - name: DB_NAME_PREFIX
+                  value: "REPLACE_DB_NAME_PREFIX"
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: scripts
+              configMap:
+                name: backup-scripts
+                defaultMode: 0755
+            - name: backups
+              persistentVolumeClaim:
+                claimName: backups-pvc
+  db-dump-job.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: db-dump-REPLACE_SITE_SLUG
+      namespace: backup-system
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          serviceAccountName: backup-service
+          restartPolicy: Never
+          containers:
+            - name: backup-runner
+              image: backup-runner:local
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/sh","-c"]
+              args: ["chmod +x /scripts/run.sh && /scripts/run.sh"]
+              env:
+                - name: SITE_SLUG
+                  value: "REPLACE_SITE_SLUG"
+                - name: TENANT_NAMESPACE
+                  value: "REPLACE_TENANT_NAMESPACE"
+                - name: DB_ENABLED
+                  value: "true"
+                - name: DB_HOST
+                  value: "REPLACE_DB_HOST"
+                - name: DB_PORT
+                  value: "REPLACE_DB_PORT"
+                - name: DB_ADMIN_USER
+                  value: "REPLACE_DB_ADMIN_USER"
+                - name: DB_ADMIN_PASSWORD
+                  value: "REPLACE_DB_ADMIN_PASSWORD"
+                - name: DB_NAME_PREFIX
+                  value: "REPLACE_DB_NAME_PREFIX"
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                - name: backups
+                  mountPath: /backups
+          volumes:
+            - name: scripts
+              configMap:
+                name: backup-scripts
+                defaultMode: 0755
+            - name: backups
+              persistentVolumeClaim:
+                claimName: backups-pvc

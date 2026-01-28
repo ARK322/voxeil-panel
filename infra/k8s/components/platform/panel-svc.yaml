@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: panel
+  namespace: platform
+  labels:
+    app.kubernetes.io/part-of: voxeil
+spec:
+  type: ClusterIP
+  selector:
+    app: panel
+  ports:
+    - name: http
+      port: 3000
+      targetPort: 3000

@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: controller
+  namespace: platform
+  labels:
+    app.kubernetes.io/part-of: voxeil
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: controller
+  template:
+    metadata:
+      labels:
+        app: controller
+        app.kubernetes.io/part-of: voxeil
+    spec:
+      serviceAccountName: controller-sa
+      containers:
+        - name: controller
+          image: REPLACE_CONTROLLER_IMAGE
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+            successThreshold: 1
+          volumeMounts:
+            - name: backups
+              mountPath: /backups
+            - name: voxeil-config
+              mountPath: /etc/voxeil
+          env:
+            - name: PORT
+              value: "8080"
+            - name: ALLOWLIST_PATH
+              value: "/etc/voxeil/allowlist.txt"
+
+            - name: ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: ADMIN_API_KEY
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: JWT_SECRET
+            - name: PANEL_ADMIN_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_USERNAME
+            - name: PANEL_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_PASSWORD
+            - name: PANEL_ADMIN_EMAIL
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: PANEL_ADMIN_EMAIL
+            - name: SITE_NODEPORT_START
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: SITE_NODEPORT_START
+            - name: SITE_NODEPORT_END
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: SITE_NODEPORT_END
+            - name: MAILCOW_API_URL
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: MAILCOW_API_URL
+            - name: MAILCOW_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: MAILCOW_API_KEY
+            - name: MAILCOW_VERIFY_TLS
+              value: "true"
+            - name: POSTGRES_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: POSTGRES_HOST
+            - name: POSTGRES_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: POSTGRES_PORT
+            - name: POSTGRES_ADMIN_USER
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: POSTGRES_ADMIN_USER
+            - name: POSTGRES_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: POSTGRES_ADMIN_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: platform-secrets
+                  key: POSTGRES_DB
+            - name: DB_NAME_PREFIX
+              value: "db_"
+            - name: DB_USER_PREFIX
+              value: "u_"
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: backups
+          persistentVolumeClaim:
+            claimName: controller-backups-pvc
+        - name: voxeil-config
+          persistentVolumeClaim:
+            claimName: controller-config-pvc
