@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install phase: Applications (infra-db, backup-system, dns-zone, mail-zone)
+# Install phase: Applications (controller, panel)
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,12 +8,15 @@ source "${SCRIPT_DIR}/../../lib/kube.sh"
 
 log_phase "install/30-apps"
 
-# This phase will contain the application installation logic from installer.sh
-# For now, it's a placeholder that will be populated with actual installer.sh code
-# The installer.sh code for infra-db, backup-system, dns-zone, and mail-zone
-# will be moved here in subsequent refactoring steps.
+# Ensure kubectl is available and context is valid
+ensure_kubectl || exit 1
+check_kubectl_context || exit 1
 
-log_info "Applications installation phase"
-log_warn "This phase is a placeholder - actual implementation will be migrated from installer.sh"
+# Apply applications
+log_info "Applying application manifests..."
+if ! kubectl apply -k "${SCRIPT_DIR}/../../apps/deploy/clusters/prod"; then
+  log_error "Failed to apply applications"
+  exit 1
+fi
 
 log_ok "Applications phase complete"

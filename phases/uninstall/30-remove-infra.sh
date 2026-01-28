@@ -8,10 +8,13 @@ source "${SCRIPT_DIR}/../../lib/kube.sh"
 
 log_phase "uninstall/30-remove-infra"
 
-# This phase will contain infrastructure removal logic from uninstaller.sh
-# For now, it's a placeholder that will be populated with actual uninstaller.sh code
+# Ensure kubectl is available
+ensure_kubectl || exit 1
 
-log_info "Removing infrastructure phase"
-log_warn "This phase is a placeholder - actual implementation will be migrated from uninstaller.sh"
+# Remove infrastructure (after applications)
+log_info "Removing infrastructure..."
+if ! kubectl delete -k "${SCRIPT_DIR}/../../infra/k8s/clusters/prod" --ignore-not-found; then
+  log_warn "Some resources may not have been found (this is expected during uninstall)"
+fi
 
 log_ok "Infrastructure removal phase complete"

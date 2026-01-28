@@ -8,12 +8,15 @@ source "${SCRIPT_DIR}/../../lib/kube.sh"
 
 log_phase "install/20-core"
 
-# This phase will contain the core installation logic from installer.sh
-# For now, it's a placeholder that will be populated with actual installer.sh code
-# The installer.sh code for cert-manager, kyverno, flux, traefik, and platform
-# will be moved here in subsequent refactoring steps.
+# Ensure kubectl is available and context is valid
+ensure_kubectl || exit 1
+check_kubectl_context || exit 1
 
-log_info "Core infrastructure installation phase"
-log_warn "This phase is a placeholder - actual implementation will be migrated from installer.sh"
+# Apply core infrastructure
+log_info "Applying core infrastructure manifests..."
+if ! kubectl apply -k "${SCRIPT_DIR}/../../infra/k8s/clusters/prod"; then
+  log_error "Failed to apply core infrastructure"
+  exit 1
+fi
 
 log_ok "Core infrastructure phase complete"

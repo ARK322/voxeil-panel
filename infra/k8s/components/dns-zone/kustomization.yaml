@@ -3,5 +3,4 @@ kind: Kustomization
 
 resources:
   - bind9.yaml
-  - tsig-secret.yaml
   - traefik-tcp/dns-routes.yaml

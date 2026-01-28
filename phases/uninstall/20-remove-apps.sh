@@ -8,10 +8,13 @@ source "${SCRIPT_DIR}/../../lib/kube.sh"
 
 log_phase "uninstall/20-remove-apps"
 
-# This phase will contain application removal logic from uninstaller.sh
-# For now, it's a placeholder that will be populated with actual uninstaller.sh code
+# Ensure kubectl is available
+ensure_kubectl || exit 1
 
-log_info "Removing applications phase"
-log_warn "This phase is a placeholder - actual implementation will be migrated from uninstaller.sh"
+# Remove applications first (before infrastructure)
+log_info "Removing applications..."
+if ! kubectl delete -k "${SCRIPT_DIR}/../../apps/deploy/clusters/prod" --ignore-not-found; then
+  log_warn "Some resources may not have been found (this is expected during uninstall)"
+fi
 
 log_ok "Applications removal phase complete"

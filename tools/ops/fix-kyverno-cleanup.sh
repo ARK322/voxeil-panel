@@ -42,7 +42,7 @@ fi
 
 # Update CronJobs with correct image
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KYVERNO_MANIFEST="${SCRIPT_DIR}/../infra/k8s/services/kyverno/install.yaml"
+KYVERNO_MANIFEST="${SCRIPT_DIR}/../infra/k8s/components/kyverno/install.yaml"
 
 if [ -f "${KYVERNO_MANIFEST}" ]; then
   echo "Updating CronJobs with correct image..."
