@@ -21,14 +21,38 @@ jobs:
       - name: Bash syntax validation
         run: |
           set -e
-          for f in voxeil.sh installer/*.sh uninstaller/*.sh nuke/*.sh; do
-            [ -f "$f" ] && bash -n "$f"
+          # Check voxeil.sh (dispatcher)
+          bash -n voxeil.sh
+          
+          # Check cmd orchestrators
+          find cmd -name "*.sh" -type f | while read -r f; do
+            bash -n "$f"
           done
+          
+          # Check lib utilities
+          find lib -name "*.sh" -type f | while read -r f; do
+            bash -n "$f"
+          done
+          
+          # Check phase scripts
+          find phases -name "*.sh" -type f | while read -r f; do
+            bash -n "$f"
+          done
+          
+          # Check tools scripts
+          find tools -name "*.sh" -type f | while read -r f; do
+            bash -n "$f"
+          done
+          
+          # Note: Legacy wrappers (installer/, uninstaller/, nuke/) removed
+          # All commands now use cmd/*.sh directly
 
       # 2) Shellcheck (logic & antipatterns)
       - name: Shellcheck
         run: |
-          shellcheck voxeil.sh installer/*.sh uninstaller/*.sh nuke/*.sh || true
+          shellcheck voxeil.sh || true
+          shellcheck cmd/*.sh lib/*.sh phases/**/*.sh tools/**/*.sh || true
+          # Note: Legacy wrappers (installer/, uninstaller/, nuke/) removed
 
       # 3) Detect dangerous webhook patch patterns (HARD FAIL)
       - name: Detect unsafe webhook patching
@@ -38,10 +62,10 @@ jobs:
           # Only scan runtime bash scripts (not YAML files - this check targets kubectl usage in scripts)
           FILES="$(git ls-files \
             'voxeil.sh' \
-            'installer/*.sh' \
-            'uninstaller/*.sh' \
-            'nuke/*.sh' \
-            'scripts/*.sh' \
+            'cmd/*.sh' \
+            'lib/*.sh' \
+            'phases/**/*.sh' \
+            'tools/**/*.sh' \
             || true)"
 
           if [ -z "$FILES" ]; then
@@ -77,7 +101,8 @@ jobs:
         run: |
           set -e
           # Check for kubectl delete commands, excluding DRY-RUN echo statements and comments
-          BAD=$(grep -R --line-number 'kubectl delete' installer uninstaller nuke \
+          # Note: Legacy wrappers (installer/, uninstaller/, nuke/) removed - checking cmd/ and phases/
+          BAD=$(grep -R --line-number 'kubectl delete' cmd phases lib \
             | grep -v 'request-timeout' \
             | grep -v '\[DRY-RUN\]' \
             | grep -v '^[^:]*:[^:]*:.*#' \
@@ -93,7 +118,7 @@ jobs:
       - name: Detect infinite loops
         run: |
           set -euo pipefail
-          FILES="$(git ls-files 'voxeil.sh' 'installer/*.sh' 'uninstaller/*.sh' 'nuke/*.sh' 'scripts/*.sh' || true)"
+          FILES="$(git ls-files 'voxeil.sh' 'cmd/*.sh' 'lib/*.sh' 'phases/**/*.sh' 'tools/**/*.sh' || true)"
           if [ -z "$FILES" ]; then exit 0; fi
           if echo "$FILES" | xargs -r grep -nE 'while true|while\s+\[\s*1\s*\]' ; then
             echo "❌ Infinite loop detected"
@@ -104,11 +129,12 @@ jobs:
       - name: Check Kyverno webhook bootstrap logic
         run: |
           set -e
-          if ! grep -R 'failurePolicy.*Ignore' installer uninstaller; then
+          # Check in phases and lib (new structure)
+          if ! grep -R 'failurePolicy.*Ignore' phases lib cmd 2>/dev/null; then
             echo "❌ Kyverno webhook Ignore bootstrap not found"
             exit 1
           fi
-          if ! grep -R 'safe_bootstrap_kyverno_webhooks\|disable_admission_webhooks_preflight' installer uninstaller; then
+          if ! grep -R 'safe_bootstrap_kyverno_webhooks\|disable_admission_webhooks_preflight' phases lib cmd 2>/dev/null; then
             echo "❌ Kyverno webhook safe bootstrap function not found"
             exit 1
           fi
@@ -117,17 +143,20 @@ jobs:
       - name: Check Traefik readiness verification
         run: |
           set -e
-          if ! grep -R 'TRAEFIK_READY\|Traefik.*Running\|helm-install-traefik' installer; then
-            echo "❌ Traefik readiness check not found in installer"
+          if ! grep -R 'TRAEFIK_READY\|Traefik.*Running\|helm-install-traefik' phases cmd 2>/dev/null; then
+            echo "❌ Traefik readiness check not found"
             exit 1
           fi
 
       # 9) Preflight webhook neutralization in uninstaller (HARD FAIL)
+      # Note: This is now in phases/uninstall/00-preflight.sh
       - name: Check uninstaller preflight webhook neutralization
         run: |
           set -e
-          # Check that disable_admission_webhooks_preflight is called early in uninstaller
-          if ! grep -B 5 -A 5 'disable_admission_webhooks_preflight' uninstaller/uninstaller.sh | grep -q 'Main uninstaller\|CRITICAL.*Preflight'; then
+          # Check in phases (new structure)
+          if grep -q 'disable_admission_webhooks_preflight\|webhook.*neutralization' phases/uninstall/00-preflight.sh 2>/dev/null; then
+            echo "✅ Preflight webhook neutralization found in phases/uninstall/00-preflight.sh"
+          else
             echo "❌ Uninstaller may not neutralize webhooks at the very top"
             exit 1
           fi

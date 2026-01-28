@@ -243,7 +243,8 @@ if [ "${NO_WAIT}" = "true" ]; then
     echo "⚠ System has leftover Voxeil resources"
     echo ""
     echo "To clean up, run:"
-    echo "  ./uninstaller/uninstaller.sh --force"
+    echo "  bash voxeil.sh uninstall --force"
+    echo "  or: bash cmd/uninstall.sh --force"
     echo ""
     exit 1
   fi

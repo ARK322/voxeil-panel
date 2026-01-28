@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 # Voxeil Panel - Single Entrypoint Script
 # Supports: install, uninstall, purge-node, doctor, help, nuke
+# Downloads repo archive and runs cmd/*.sh orchestrators
 
 OWNER="${OWNER:-ARK322}"
 REPO="${REPO:-voxeil-panel}"
@@ -26,47 +27,141 @@ log_error() {
   echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
-# Ensure curl is available
-ensure_curl() {
-  if ! command -v curl >/dev/null 2>&1; then
-    log_error "curl is required but not installed."
-    if command -v apt-get >/dev/null 2>&1; then
-      log_info "Attempting to install curl..."
-      apt-get update -qq >/dev/null 2>&1 || true
-      apt-get install -y curl >/dev/null 2>&1 || {
-        log_error "Failed to install curl. Please install manually: apt-get install -y curl"
-        exit 1
-      }
-    else
-      log_error "Please install curl manually."
+# Ensure curl or wget is available
+ensure_downloader() {
+  if command -v curl >/dev/null 2>&1; then
+    DOWNLOADER="curl"
+    DOWNLOADER_FLAGS="-fL"
+    return 0
+  elif command -v wget >/dev/null 2>&1; then
+    DOWNLOADER="wget"
+    DOWNLOADER_FLAGS="-qO-"
+    return 0
+  fi
+  
+  log_error "Neither curl nor wget is available."
+  if command -v apt-get >/dev/null 2>&1; then
+    log_info "Attempting to install curl..."
+    apt-get update -qq >/dev/null 2>&1 || true
+    apt-get install -y curl >/dev/null 2>&1 || {
+      log_error "Failed to install curl. Please install curl manually: apt-get install -y curl"
       exit 1
-    fi
+    }
+    DOWNLOADER="curl"
+    DOWNLOADER_FLAGS="-fL"
+    return 0
+  else
+    log_error "Please install curl or wget manually."
+    exit 1
   fi
 }
 
-# Download a script from GitHub
-download_script() {
-  local script_path="$1"
-  local output_path="$2"
-  local desc="${3:-${script_path}}"
+# Download repo archive
+download_repo_archive() {
+  local temp_dir="$1"
+  local branch="$2"
+  local archive_path="${temp_dir}/repo.tar.gz"
   
-  ensure_curl
+  ensure_downloader
   
-  local url="https://raw.githubusercontent.com/${OWNER}/${REPO}/${REF}/${script_path}"
+  # GitHub archive URL format: https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.tar.gz
+  local url="https://github.com/${OWNER}/${REPO}/archive/refs/heads/${branch}.tar.gz"
   
-  log_info "Downloading ${desc}..."
-  if ! curl -fL --retry 5 --retry-delay 1 --max-time 60 -o "${output_path}" "${url}"; then
-    log_error "Failed to download ${desc} from ${url}"
-    exit 1
+  log_info "Downloading repository archive (${branch})..."
+  
+  if [[ "${DOWNLOADER}" == "curl" ]]; then
+    if ! curl ${DOWNLOADER_FLAGS} --retry 5 --retry-delay 1 --max-time 120 -o "${archive_path}" "${url}"; then
+      log_error "Failed to download repository archive from ${url}"
+      return 1
+    fi
+  elif [[ "${DOWNLOADER}" == "wget" ]]; then
+    if ! wget --quiet --tries=5 --timeout=120 -O "${archive_path}" "${url}"; then
+      log_error "Failed to download repository archive from ${url}"
+      return 1
+    fi
   fi
   
-  if [[ ! -s "${output_path}" ]]; then
-    log_error "Downloaded ${desc} is empty"
-    exit 1
+  if [[ ! -s "${archive_path}" ]]; then
+    log_error "Downloaded archive is empty"
+    return 1
   fi
   
-  chmod +x "${output_path}"
-  log_info "Downloaded ${desc} successfully"
+  log_info "Downloaded repository archive successfully"
+  echo "${archive_path}"
+}
+
+# Extract archive and find root directory
+extract_repo_archive() {
+  local archive_path="$1"
+  local extract_dir="$2"
+  
+  log_info "Extracting repository archive..."
+  
+  # Extract archive
+  if ! tar -xzf "${archive_path}" -C "${extract_dir}" 2>/dev/null; then
+    log_error "Failed to extract archive"
+    return 1
+  fi
+  
+  # Find extracted root directory (format: repo-branch/)
+  local extracted_root
+  extracted_root=$(find "${extract_dir}" -maxdepth 1 -type d -name "${REPO}-*" | head -1)
+  
+  if [[ -z "${extracted_root}" ]]; then
+    log_error "Could not find extracted repository root"
+    return 1
+  fi
+  
+  log_info "Extracted repository to ${extracted_root}"
+  echo "${extracted_root}"
+}
+
+# Make scripts executable
+make_scripts_executable() {
+  local repo_root="$1"
+  
+  log_info "Making scripts executable..."
+  
+  # Make cmd scripts executable
+  if [[ -d "${repo_root}/cmd" ]]; then
+    find "${repo_root}/cmd" -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
+  fi
+  
+  # Make phase scripts executable
+  if [[ -d "${repo_root}/phases" ]]; then
+    find "${repo_root}/phases" -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
+  fi
+  
+  # Make tools scripts executable (optional)
+  if [[ -d "${repo_root}/tools" ]]; then
+    find "${repo_root}/tools" -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
+  fi
+}
+
+# Download and extract repo, return extracted root
+setup_repo() {
+  local temp_dir
+  temp_dir="$(mktemp -d)"
+  
+  # Cleanup trap (unless VOXEIL_KEEP_TMP is set)
+  if [[ "${VOXEIL_KEEP_TMP:-0}" != "1" ]]; then
+    trap "rm -rf '${temp_dir}'" EXIT
+  else
+    log_warn "VOXEIL_KEEP_TMP=1: keeping temp directory: ${temp_dir}"
+  fi
+  
+  # Download archive
+  local archive_path
+  archive_path=$(download_repo_archive "${temp_dir}" "${REF}") || exit 1
+  
+  # Extract archive
+  local extracted_root
+  extracted_root=$(extract_repo_archive "${archive_path}" "${temp_dir}") || exit 1
+  
+  # Make scripts executable
+  make_scripts_executable "${extracted_root}"
+  
+  echo "${extracted_root}"
 }
 
 # Show help
@@ -181,16 +276,8 @@ if [[ "${SUBCMD}" == "nuke" ]]; then
   fi
 fi
 
-# Handle doctor
-if [[ "${SUBCMD}" == "doctor" ]]; then
-  INSTALLER_TMP="$(mktemp)"
-  cleanup() { rm -f "${INSTALLER_TMP}"; }
-  trap cleanup EXIT
-  
-  # Download cmd/doctor.sh
-  download_script "cmd/doctor.sh" "${INSTALLER_TMP}" "doctor"
-  exec bash "${INSTALLER_TMP}" "${SUBCMD_ARGS[@]}"
-fi
+# Setup repo (download and extract)
+REPO_ROOT=$(setup_repo)
 
 # Handle purge-node (security guard)
 if [[ "${SUBCMD}" == "purge-node" ]]; then
@@ -218,24 +305,18 @@ if [[ "${SUBCMD}" == "purge-node" ]]; then
     FILTERED_ARGS+=("${arg}")
   done
   
-  UNINSTALLER_TMP="$(mktemp)"
-  cleanup() { rm -f "${UNINSTALLER_TMP}"; }
-  trap cleanup EXIT
-  
-  # Download cmd/purge-node.sh
-  download_script "cmd/purge-node.sh" "${UNINSTALLER_TMP}" "purge-node"
-  exec bash "${UNINSTALLER_TMP}" "${FILTERED_ARGS[@]}"
+  # Run cmd/purge-node.sh from extracted repo
+  exec bash "${REPO_ROOT}/cmd/purge-node.sh" "${FILTERED_ARGS[@]}"
+fi
+
+# Handle doctor
+if [[ "${SUBCMD}" == "doctor" ]]; then
+  # Run cmd/doctor.sh from extracted repo
+  exec bash "${REPO_ROOT}/cmd/doctor.sh" "${SUBCMD_ARGS[@]}"
 fi
 
 # Handle install
 if [[ "${SUBCMD}" == "install" ]]; then
-  INSTALLER_TMP="$(mktemp)"
-  cleanup() { rm -f "${INSTALLER_TMP}"; }
-  trap cleanup EXIT
-  
-  # Download cmd/install.sh (or installer.sh wrapper for backward compatibility)
-  download_script "cmd/install.sh" "${INSTALLER_TMP}" "install"
-  
   # Pass --version if --ref was used (installer uses --version)
   INSTALLER_ARGS=()
   if [[ "${REF}" != "main" ]]; then
@@ -243,18 +324,14 @@ if [[ "${SUBCMD}" == "install" ]]; then
   fi
   INSTALLER_ARGS+=("${SUBCMD_ARGS[@]}")
   
-  exec bash "${INSTALLER_TMP}" "${INSTALLER_ARGS[@]}"
+  # Run cmd/install.sh from extracted repo
+  exec bash "${REPO_ROOT}/cmd/install.sh" "${INSTALLER_ARGS[@]}"
 fi
 
 # Handle uninstall
 if [[ "${SUBCMD}" == "uninstall" ]]; then
-  UNINSTALLER_TMP="$(mktemp)"
-  cleanup() { rm -f "${UNINSTALLER_TMP}"; }
-  trap cleanup EXIT
-  
-  # Download cmd/uninstall.sh (or uninstaller.sh wrapper for backward compatibility)
-  download_script "cmd/uninstall.sh" "${UNINSTALLER_TMP}" "uninstall"
-  exec bash "${UNINSTALLER_TMP}" "${SUBCMD_ARGS[@]}"
+  # Run cmd/uninstall.sh from extracted repo
+  exec bash "${REPO_ROOT}/cmd/uninstall.sh" "${SUBCMD_ARGS[@]}"
 fi
 
 # Unknown subcommand
