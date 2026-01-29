@@ -46,7 +46,6 @@ jobs:
         working-directory: apps/controller
       - name: Run tests
         run: npm test
-        continue-on-error: true
 
   syntax-check:
     name: JavaScript Syntax Check
