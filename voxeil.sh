@@ -113,6 +113,25 @@ extract_repo_archive() {
   fi
 
   log_info "Extracted repository to ${extracted_root}"
+  
+  # Verify critical directories exist in extracted archive
+  local missing_dirs=()
+  for dir in "cmd" "phases" "lib"; do
+    if [[ ! -d "${extracted_root}/${dir}" ]]; then
+      missing_dirs+=("${dir}")
+    fi
+  done
+  
+  if [[ ${#missing_dirs[@]} -gt 0 ]]; then
+    log_error "Critical directories missing from archive: ${missing_dirs[*]}"
+    log_error "This usually means these directories haven't been pushed to the remote repository."
+    log_error "Please ensure all files are committed and pushed:"
+    log_error "  git add ${missing_dirs[*]}"
+    log_error "  git commit -m 'Add missing directories'"
+    log_error "  git push origin main"
+    return 1
+  fi
+  
   echo "${extracted_root}"
 }
 
@@ -164,12 +183,20 @@ setup_repo() {
   # Make scripts executable
   make_scripts_executable "${extracted_root}"
 
-  # Debug: Verify critical files exist
+  # Debug: Verify critical files exist and show archive structure
   if [[ ! -f "${extracted_root}/cmd/install.sh" ]]; then
     log_warn "cmd/install.sh not found in extracted archive"
     log_warn "Extracted root: ${extracted_root}"
-    log_warn "Contents of cmd directory:"
-    ls -la "${extracted_root}/cmd/" 2>/dev/null || log_warn "cmd directory does not exist"
+    log_warn "Top-level contents of extracted archive:"
+    ls -la "${extracted_root}/" 2>/dev/null | head -20 || log_warn "Cannot list extracted root"
+    if [[ -d "${extracted_root}/cmd" ]]; then
+      log_warn "Contents of cmd directory:"
+      ls -la "${extracted_root}/cmd/" 2>/dev/null || true
+    else
+      log_warn "cmd directory does not exist"
+      log_warn "This usually means the cmd/ directory hasn't been pushed to the remote repository."
+      log_warn "Please ensure all files in cmd/ are committed and pushed: git push origin main"
+    fi
   fi
 
   echo "${extracted_root}"
