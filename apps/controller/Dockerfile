@@ -4,11 +4,15 @@ WORKDIR /app
 
 # Copy root package.json and workspace config
 COPY package.json ./
+COPY package-lock.json* ./
 COPY packages ./packages
 COPY apps/controller ./apps/controller
 
-# Install dependencies (workspace-aware)
-RUN npm install --workspace=apps/controller --only=production
+# Install all workspace dependencies at root (resolves workspace:*)
+RUN npm ci
+
+# Prune to production dependencies only for controller workspace
+RUN npm prune --omit=dev --workspace=apps/controller
 
 # Set working directory to controller app
 WORKDIR /app/apps/controller
