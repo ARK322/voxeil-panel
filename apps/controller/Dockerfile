@@ -9,7 +9,7 @@ COPY packages ./packages
 COPY apps/controller ./apps/controller
 
 # Install all workspace dependencies at root (resolves workspace:*)
-RUN npm ci
+RUN npm ci --workspaces
 
 # Prune to production dependencies only for controller workspace
 RUN npm prune --omit=dev --workspace=apps/controller

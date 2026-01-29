@@ -8,7 +8,7 @@ COPY packages ./packages
 COPY apps/panel ./apps/panel
 
 # Install all workspace dependencies at root (resolves workspace:*)
-RUN npm ci
+RUN npm ci --workspaces
 
 # Build panel app
 WORKDIR /app/apps/panel
@@ -24,7 +24,7 @@ COPY packages ./packages
 COPY apps/panel ./apps/panel
 
 # Install all workspace dependencies at root (resolves workspace:*)
-RUN npm ci
+RUN npm ci --workspaces
 
 # Prune to production dependencies only for panel workspace
 RUN npm prune --omit=dev --workspace=apps/panel

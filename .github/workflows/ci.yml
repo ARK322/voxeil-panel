@@ -19,7 +19,7 @@ jobs:
           cache-dependency-path: package-lock.json
         continue-on-error: true
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --workspaces
       - name: Run ESLint
         run: npm run lint --workspace=apps/controller
 
@@ -35,7 +35,7 @@ jobs:
           cache-dependency-path: package-lock.json
         continue-on-error: true
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --workspaces
       - name: Run tests
         run: npm test --workspace=apps/controller
 
