@@ -1,12 +1,16 @@
-import { describe, it, expect } from '@jest/globals';
-import crypto from 'node:crypto';
+import { describe, it, expect, jest } from '@jest/globals';
 
-// Mock JWT_SECRET for tests - MUST be set before importing jwt.js
-process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
-process.env.JWT_EXPIRES_IN = '1h';
+// Mock token revocation service before importing jwt.js
+// This must be done before any imports that use the token revocation service
+jest.unstable_mockModule('../auth/token-revocation.service.js', () => ({
+    isTokenRevoked: jest.fn().mockResolvedValue(false),
+    revokeTokenJti: jest.fn().mockResolvedValue(undefined),
+    pruneExpiredRevocations: jest.fn().mockResolvedValue(0),
+}));
 
-// Import after setting environment variables
-import { signToken, verifyToken } from '../auth/jwt.js';
+// JWT_SECRET is set in jest.setup.js before any modules are loaded
+// Import jwt.js after setting up the mock
+const { signToken, verifyToken } = await import('../auth/jwt.js');
 
 describe('JWT Authentication', () => {
     describe('signToken', () => {
