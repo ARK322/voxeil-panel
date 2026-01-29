@@ -19,4 +19,18 @@ if ! run_kubectl apply -k "${SCRIPT_DIR}/../../infra/k8s/clusters/prod"; then
   exit 1
 fi
 
+# Wait for critical core infrastructure deployments to be ready
+log_info "Waiting for core infrastructure deployments to be ready..."
+TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"
+
+# Wait for cert-manager (critical for TLS)
+if run_kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
+  wait_rollout_status "cert-manager" "deployment" "cert-manager" "${TIMEOUT}" || log_warn "cert-manager deployment not ready (may continue)"
+fi
+
+# Wait for kyverno admission controller (critical for policy enforcement)
+if run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
+  wait_rollout_status "kyverno" "deployment" "kyverno-admission-controller" "${TIMEOUT}" || log_warn "kyverno-admission-controller deployment not ready (may continue)"
+fi
+
 log_ok "Core infrastructure phase complete"

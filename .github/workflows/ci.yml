@@ -17,7 +17,6 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: package-lock.json
-        continue-on-error: true
       - name: Install dependencies
         run: npm ci --workspaces
       - name: Run ESLint
@@ -33,7 +32,6 @@ jobs:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: package-lock.json
-        continue-on-error: true
       - name: Install dependencies
         run: npm ci --workspaces
       - name: Run tests
@@ -107,7 +105,6 @@ jobs:
             echo "Validating $file"
             python3 /tmp/validate_yaml_single.py "$file" || exit 1
           done
-        continue-on-error: true
       - name: Install kubeconform
         run: |
           wget -qO- https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz | tar -xz
@@ -121,10 +118,14 @@ jobs:
               echo "Skipping template file: $file"
               continue
             fi
+            # Skip vendor YAML files (cert-manager, kyverno) - these are third-party manifests
+            if echo "$file" | grep -qE 'infra/k8s/components/(cert-manager|kyverno)'; then
+              echo "Skipping vendor YAML: $file"
+              continue
+            fi
             echo "Validating schema: $file"
             kubeconform -strict -summary "$file" || exit 1
           done
-        continue-on-error: true
 
   bash-validation:
     name: Bash Script Validation
@@ -141,7 +142,6 @@ jobs:
             echo "Validating $file"
             shellcheck "$file" || exit 1
           done
-        continue-on-error: true
 
   docker-build:
     name: Docker Build Check

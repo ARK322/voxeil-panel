@@ -1,0 +1,136 @@
+name: Integration Test (k3s)
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  integration:
+    name: k3s Integration Test
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install k3s
+        run: |
+          curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--container-runtime-endpoint=unix:///run/containerd/containerd.sock" sh -
+          sudo mkdir -p /etc/rancher/k3s
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml || true
+          export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+          echo "KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >> $GITHUB_ENV
+          # Wait for k3s to be ready
+          timeout 120 bash -c 'until kubectl cluster-info &>/dev/null; do sleep 2; done'
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Configure kubectl access
+        run: |
+          sudo chmod 644 /etc/rancher/k3s/k3s.yaml
+          mkdir -p ~/.kube
+          cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+          export KUBECONFIG=~/.kube/config
+          echo "KUBECONFIG=~/.kube/config" >> $GITHUB_ENV
+          kubectl cluster-info
+
+      - name: Setup GHCR image pull secret (if private images)
+        if: github.event_name != 'pull_request'
+        run: |
+          # NOTE: This step is only needed if images are private in GHCR.
+          # If images are public, this step can be skipped.
+          # To use private images, uncomment the following:
+          #
+          # echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin || true
+          # kubectl create namespace platform --dry-run=client -o yaml | kubectl apply -f -
+          # kubectl create secret docker-registry ghcr-pull-secret \
+          #   --docker-server=ghcr.io \
+          #   --docker-username=${{ github.actor }} \
+          #   --docker-password="${{ secrets.GITHUB_TOKEN }}" \
+          #   -n platform \
+          #   --dry-run=client -o yaml | kubectl apply -f -
+          #
+          # For now, assuming images are public or will be pulled from a public registry.
+          echo "Skipping GHCR secret setup (assuming public images or local build)"
+
+      - name: First install
+        run: |
+          export KUBECONFIG=~/.kube/config
+          bash voxeil.sh install --skip-k3s
+
+      - name: Collect logs after first install
+        if: failure()
+        run: |
+          export KUBECONFIG=~/.kube/config
+          echo "=== Pods Status ==="
+          kubectl get pods -A || true
+          echo ""
+          echo "=== Recent Events ==="
+          kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 200 || true
+          echo ""
+          echo "=== Pod Descriptions ==="
+          kubectl describe pods -A | tail -n 200 || true
+
+      - name: First doctor check
+        run: |
+          export KUBECONFIG=~/.kube/config
+          bash voxeil.sh doctor
+
+      - name: Uninstall
+        run: |
+          export KUBECONFIG=~/.kube/config
+          bash voxeil.sh uninstall --force
+
+      - name: Collect logs after uninstall
+        if: failure()
+        run: |
+          export KUBECONFIG=~/.kube/config
+          echo "=== Pods Status ==="
+          kubectl get pods -A || true
+          echo ""
+          echo "=== Recent Events ==="
+          kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 200 || true
+          echo ""
+          echo "=== Pod Descriptions ==="
+          kubectl describe pods -A | tail -n 200 || true
+
+      - name: Second install
+        run: |
+          export KUBECONFIG=~/.kube/config
+          bash voxeil.sh install --skip-k3s
+
+      - name: Collect logs after second install
+        if: failure()
+        run: |
+          export KUBECONFIG=~/.kube/config
+          echo "=== Pods Status ==="
+          kubectl get pods -A || true
+          echo ""
+          echo "=== Recent Events ==="
+          kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 200 || true
+          echo ""
+          echo "=== Pod Descriptions ==="
+          kubectl describe pods -A | tail -n 200 || true
+
+      - name: Final doctor check
+        run: |
+          export KUBECONFIG=~/.kube/config
+          bash voxeil.sh doctor
+
+      - name: Cleanup (collect final state)
+        if: always()
+        run: |
+          export KUBECONFIG=~/.kube/config
+          echo "=== Final Pods Status ==="
+          kubectl get pods -A || true
+          echo ""
+          echo "=== Final Namespaces ==="
+          kubectl get namespaces || true

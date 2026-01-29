@@ -38,7 +38,7 @@ ensure_downloader() {
     DOWNLOADER_FLAGS="-qO-"
     return 0
   fi
-  
+
   log_error "Neither curl nor wget is available."
   if command -v apt-get >/dev/null 2>&1; then
     log_info "Attempting to install curl..."
@@ -61,14 +61,14 @@ download_repo_archive() {
   local temp_dir="$1"
   local branch="$2"
   local archive_path="${temp_dir}/repo.tar.gz"
-  
+
   ensure_downloader
-  
+
   # GitHub archive URL format: https://github.com/<owner>/<repo>/archive/refs/heads/<branch>.tar.gz
   local url="https://github.com/${OWNER}/${REPO}/archive/refs/heads/${branch}.tar.gz"
-  
+
   log_info "Downloading repository archive (${branch})..."
-  
+
   if [[ "${DOWNLOADER}" == "curl" ]]; then
     if ! curl ${DOWNLOADER_FLAGS} --retry 5 --retry-delay 1 --max-time 120 -o "${archive_path}" "${url}"; then
       log_error "Failed to download repository archive from ${url}"
@@ -80,12 +80,12 @@ download_repo_archive() {
       return 1
     fi
   fi
-  
+
   if [[ ! -s "${archive_path}" ]]; then
     log_error "Downloaded archive is empty"
     return 1
   fi
-  
+
   log_info "Downloaded repository archive successfully"
   echo "${archive_path}"
 }
@@ -94,24 +94,24 @@ download_repo_archive() {
 extract_repo_archive() {
   local archive_path="$1"
   local extract_dir="$2"
-  
+
   log_info "Extracting repository archive..."
-  
+
   # Extract archive
   if ! tar -xzf "${archive_path}" -C "${extract_dir}" 2>/dev/null; then
     log_error "Failed to extract archive"
     return 1
   fi
-  
+
   # Find extracted root directory (format: repo-branch/)
   local extracted_root
   extracted_root=$(find "${extract_dir}" -maxdepth 1 -type d -name "${REPO}-*" | head -1)
-  
+
   if [[ -z "${extracted_root}" ]]; then
     log_error "Could not find extracted repository root"
     return 1
   fi
-  
+
   log_info "Extracted repository to ${extracted_root}"
   echo "${extracted_root}"
 }
@@ -119,19 +119,19 @@ extract_repo_archive() {
 # Make scripts executable
 make_scripts_executable() {
   local repo_root="$1"
-  
+
   log_info "Making scripts executable..."
-  
+
   # Make cmd scripts executable
   if [[ -d "${repo_root}/cmd" ]]; then
     find "${repo_root}/cmd" -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
   fi
-  
+
   # Make phase scripts executable
   if [[ -d "${repo_root}/phases" ]]; then
     find "${repo_root}/phases" -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
   fi
-  
+
   # Make tools scripts executable (optional)
   if [[ -d "${repo_root}/tools" ]]; then
     find "${repo_root}/tools" -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
@@ -142,25 +142,25 @@ make_scripts_executable() {
 setup_repo() {
   local temp_dir
   temp_dir="$(mktemp -d)"
-  
+
   # Cleanup trap (unless VOXEIL_KEEP_TMP is set)
   if [[ "${VOXEIL_KEEP_TMP:-0}" != "1" ]]; then
     trap "rm -rf '${temp_dir}'" EXIT
   else
     log_warn "VOXEIL_KEEP_TMP=1: keeping temp directory: ${temp_dir}"
   fi
-  
+
   # Download archive
   local archive_path
   archive_path=$(download_repo_archive "${temp_dir}" "${REF}") || exit 1
-  
+
   # Extract archive
   local extracted_root
   extracted_root=$(extract_repo_archive "${archive_path}" "${temp_dir}") || exit 1
-  
+
   # Make scripts executable
   make_scripts_executable "${extracted_root}"
-  
+
   echo "${extracted_root}"
 }
 
@@ -288,13 +288,13 @@ if [[ "${SUBCMD}" == "purge-node" ]]; then
       break
     fi
   done
-  
+
   if [[ "${HAS_FORCE}" != "true" ]]; then
     log_error "purge-node requires --force flag for safety"
     log_error "Usage: voxeil.sh purge-node --force [other flags...]"
     exit 1
   fi
-  
+
   # Remove --keep-volumes from args if present (not relevant for purge-node)
   FILTERED_ARGS=()
   for arg in "${SUBCMD_ARGS[@]}"; do
@@ -304,7 +304,7 @@ if [[ "${SUBCMD}" == "purge-node" ]]; then
     fi
     FILTERED_ARGS+=("${arg}")
   done
-  
+
   # Run cmd/purge-node.sh from extracted repo
   exec bash "${REPO_ROOT}/cmd/purge-node.sh" "${FILTERED_ARGS[@]}"
 fi
@@ -323,7 +323,7 @@ if [[ "${SUBCMD}" == "install" ]]; then
     INSTALLER_ARGS+=("--version" "${REF}")
   fi
   INSTALLER_ARGS+=("${SUBCMD_ARGS[@]}")
-  
+
   # Run cmd/install.sh from extracted repo
   exec bash "${REPO_ROOT}/cmd/install.sh" "${INSTALLER_ARGS[@]}"
 fi

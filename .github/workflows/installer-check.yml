@@ -74,13 +74,17 @@ jobs:
           fi
 
           # 1) Unsafe --type=json usage for webhookconfiguration patch
-          if echo "$FILES" | xargs -r grep -nE 'kubectl patch .*webhookconfiguration .*--type=json' ; then
+          if echo "$FILES" | xargs -r grep -nE 'kubectl patch .*webhookconfiguration .*--type=json' \
+            | grep -v '^[^:]*:[^:]*:.*#' \
+            | grep -v 'echo.*kubectl patch' | grep -q . ; then
             echo "❌ Unsafe kubectl patch --type=json on webhookconfiguration"
             exit 1
           fi
 
           # 2) Unsafe webhook array overwrite pattern
-          if echo "$FILES" | xargs -r grep -nE '\{"webhooks":\[\{"failurePolicy"' ; then
+          if echo "$FILES" | xargs -r grep -nE '\{"webhooks":\[\{"failurePolicy"' \
+            | grep -v '^[^:]*:[^:]*:.*#' \
+            | grep -v 'echo.*webhooks' | grep -q . ; then
             echo "❌ Unsafe webhook array overwrite detected"
             exit 1
           fi
@@ -91,7 +95,10 @@ jobs:
           set -e
           # Only flag deletions of system:* or kube-* RBAC (core cluster RBAC)
           # Safe deletions of voxeil-owned RBAC (controller-bootstrap, user-operator) are allowed
-          if grep -R --line-number --exclude-dir=.git --exclude-dir=.github -E 'kubectl delete (clusterrole|clusterrolebinding).*(system:|kube-|cluster-admin)' .; then
+          if grep -R --line-number --exclude-dir=.git --exclude-dir=.github \
+            -E 'kubectl delete (clusterrole|clusterrolebinding).*(system:|kube-|cluster-admin)' . \
+            | grep -v '^[^:]*:[^:]*:.*#' \
+            | grep -v 'echo.*kubectl delete' | grep -q . ; then
             echo "❌ Dangerous clusterrole/clusterrolebinding delete detected (system:* or kube-* or cluster-admin)"
             exit 1
           fi

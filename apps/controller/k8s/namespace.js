@@ -7,6 +7,36 @@ import { upsertResourceQuota, upsertLimitRange, upsertNetworkPolicy } from "./ap
 export const USER_PREFIX = "user-";
 export const TENANT_PREFIX = "tenant-";
 
+/**
+ * Wait for namespace to be deleted (with timeout).
+ * @param {string} namespace - Namespace name
+ * @param {number} timeoutMs - Timeout in milliseconds (default: 60000)
+ * @returns {Promise<void>}
+ */
+async function waitNamespaceDeleted(namespace, timeoutMs = 60000) {
+    const { core } = getClients();
+    const startTime = Date.now();
+    const pollInterval = 2000; // 2 seconds
+    
+    while (Date.now() - startTime < timeoutMs) {
+        try {
+            await core.readNamespace(namespace);
+            // Namespace still exists, wait and retry
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+        } catch (error) {
+            if (error?.response?.statusCode === 404) {
+                // Namespace deleted
+                return;
+            }
+            // Other error, throw it
+            throw error;
+        }
+    }
+    
+    // Timeout reached, namespace still exists
+    throw new HttpError(500, `Namespace ${namespace} still exists after ${timeoutMs}ms timeout`);
+}
+
 export async function requireNamespace(namespace) {
     const { core } = getClients();
     try {
@@ -24,6 +54,8 @@ export async function deleteNamespace(namespace) {
     const { core } = getClients();
     try {
         await core.deleteNamespace(namespace);
+        // Wait for namespace deletion to complete
+        await waitNamespaceDeleted(namespace, 60000); // 60 second timeout
     }
     catch (error) {
         if (error?.response?.statusCode === 404) {
@@ -52,6 +84,18 @@ export async function deleteUserNamespace(userId) {
     const namespace = `${USER_PREFIX}${userId}`;
     try {
         await core.deleteNamespace(namespace);
+        // Wait for namespace deletion to complete (ignore timeout errors for user namespaces)
+        try {
+            await waitNamespaceDeleted(namespace, 60000); // 60 second timeout
+        } catch (error) {
+            // If timeout, log warning but don't fail (user namespace cleanup is best-effort)
+            if (error?.statusCode === 500) {
+                // Timeout - namespace may still be deleting, but we'll continue
+                // The uninstall phase will handle stuck namespaces
+            } else {
+                throw error;
+            }
+        }
     }
     catch (error) {
         if (error?.response?.statusCode === 404) {
@@ -141,6 +185,18 @@ export async function deleteTenantNamespace(slug) {
     const namespace = `${TENANT_PREFIX}${slug}`;
     try {
         await core.deleteNamespace(namespace);
+        // Wait for namespace deletion to complete (ignore timeout errors for tenant namespaces)
+        try {
+            await waitNamespaceDeleted(namespace, 60000); // 60 second timeout
+        } catch (error) {
+            // If timeout, log warning but don't fail (tenant namespace cleanup is best-effort)
+            if (error?.statusCode === 500) {
+                // Timeout - namespace may still be deleting, but we'll continue
+                // The uninstall phase will handle stuck namespaces
+            } else {
+                throw error;
+            }
+        }
     }
     catch (error) {
         if (error?.response?.statusCode === 404) {

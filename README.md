@@ -82,7 +82,7 @@ bash /tmp/voxeil.sh doctor
 - `1`: FAIL - Kritik sorun var
 - `2`: UNABLE_TO_CHECK - kubectl/cluster erişilemiyor
 
-**Prod gate:** Production’a çıkmadan önce `doctor` komutunun `exit code 0` döndürmesi gerekir.
+**Prod gate:** Production'a çıkmadan önce `doctor` komutunun `exit code 0` döndürmesi gerekir.
 
 ## Ephemeral Yapı
 
@@ -138,7 +138,7 @@ cmd/install.sh → phases/install/00-preflight.sh → 10-k3s.sh → 20-core.sh �
 
 ## Doctor = Prod Gate
 
-`doctor` komutu Production’a çıkmadan önce sistem durumunu kontrol eder:
+`doctor` komutu Production'a çıkmadan önce sistem durumunu kontrol eder:
 
 - **Read-only:** Hiçbir değişiklik yapmaz, yalnızca kontrol eder
 - **Exit code'lar:**
@@ -211,7 +211,7 @@ rm -f /var/lib/voxeil/state.env
 
 Aşağıdaki klasörler ve script'ler artık yok:
 - `installer/` klasörü
-- `uninstaller/` klasörü  
+- `uninstaller/` klasörü
 - `nuke/` klasörü
 - `scripts/` klasörü (taşındı)
 

@@ -19,4 +19,18 @@ if ! run_kubectl apply -k "${SCRIPT_DIR}/../../apps/deploy/clusters/prod"; then
   exit 1
 fi
 
+# Wait for application deployments to be ready
+log_info "Waiting for application deployments to be ready..."
+TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"
+
+# Wait for controller (critical)
+if run_kubectl get deployment controller -n platform >/dev/null 2>&1; then
+  wait_rollout_status "platform" "deployment" "controller" "${TIMEOUT}" || die 1 "controller deployment not ready"
+fi
+
+# Wait for panel (critical)
+if run_kubectl get deployment panel -n platform >/dev/null 2>&1; then
+  wait_rollout_status "platform" "deployment" "panel" "${TIMEOUT}" || die 1 "panel deployment not ready"
+fi
+
 log_ok "Applications phase complete"

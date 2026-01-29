@@ -92,7 +92,7 @@ retry() {
     fi
     attempt=$((attempt + 1))
   done
-  
+
   log_error "Command failed after ${max_attempts} attempts: ${cmd}"
   return 1
 }
@@ -123,7 +123,7 @@ ensure_state_dir() {
 init_state_registry() {
   ensure_state_dir
   touch "${STATE_FILE}"
-  chmod 644 "${STATE_FILE}"
+  chmod 600 "${STATE_FILE}"
 }
 
 state_set() {
