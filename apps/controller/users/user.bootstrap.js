@@ -1,4 +1,5 @@
 import { deleteUserNamespace } from "../k8s/namespace.js";
+import { logger } from "../config/logger.js";
 import { loadUserTemplates } from "../templates/load.js";
 import {
     renderUserNamespace,
@@ -194,7 +195,7 @@ export async function bootstrapUserNamespace(userId) {
             try {
                 await deleteUserNamespace(userId);
             } catch (cleanupError) {
-                console.error("Failed to cleanup namespace after bootstrap error:", cleanupError);
+                logger.error({ err: cleanupError }, "Failed to cleanup namespace after bootstrap error");
             }
         }
         throw new HttpError(500, `Failed to bootstrap user namespace: ${error?.message ?? String(error)}`);

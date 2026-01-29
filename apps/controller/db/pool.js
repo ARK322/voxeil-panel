@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { HttpError } from "../http/errors.js";
+import { logger } from "../config/logger.js";
 
 // Shared database pool for all services
 // Production-ready: connection pooling prevents connection exhaustion
@@ -37,13 +38,13 @@ function getPool() {
         
         // Handle pool errors (don't crash on idle client errors)
         pool.on("error", (err) => {
-            console.error("Unexpected database pool error:", err);
+            logger.error({ err, component: "db-pool" }, "Unexpected database pool error");
         });
         
         // Handle client errors
         pool.on("connect", (client) => {
             client.on("error", (err) => {
-                console.error("Database client error:", err);
+                logger.error({ err, component: "db-client" }, "Database client error");
             });
         });
     }
@@ -122,7 +123,7 @@ function getAdminPool() {
     if (!adminPool) {
         adminPool = new Pool(adminDbConfig());
         adminPool.on("error", (err) => {
-            console.error("Unexpected admin database pool error:", err);
+            logger.error({ err, component: "db-admin-pool" }, "Unexpected admin database pool error");
         });
     }
     return adminPool;

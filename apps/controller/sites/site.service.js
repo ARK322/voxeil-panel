@@ -1,5 +1,6 @@
 import path from "node:path";
 import { HttpError } from "../http/errors.js";
+import { logger } from "../config/logger.js";
 import { upsertDeployment, upsertIngress, upsertService, upsertConfigMap } from "../k8s/apply.js";
 import { patchNamespaceAnnotations, requireNamespace, resolveUserNamespaceForSite, readUserNamespaceSite, extractUserIdFromNamespace, readSiteMetadata } from "../k8s/namespace.js";
 import { patchIngress, resolveIngressIssuer } from "../k8s/ingress.js";
@@ -671,7 +672,7 @@ export async function enableSiteDb(slug, input) {
         }
         catch (rollbackError) {
             // Log rollback error but don't throw (original error is more important)
-            console.error("Failed to rollback DB resources after secret creation failure:", rollbackError);
+            logger.error({ err: rollbackError }, "Failed to rollback DB resources after secret creation failure");
         }
         throw new HttpError(500, "Failed to create DB secret in tenant namespace.");
     }
@@ -687,7 +688,7 @@ export async function enableSiteDb(slug, input) {
             await deleteSecret(namespace, SITE_DB_SECRET_NAME);
         }
         catch (rollbackError) {
-            console.error("Failed to rollback DB resources after secret content mismatch:", rollbackError);
+            logger.error({ err: rollbackError }, "Failed to rollback DB resources after secret content mismatch");
         }
         throw new HttpError(500, "DB secret content mismatch. Expected dbName/user do not match secret values.");
     }

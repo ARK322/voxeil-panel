@@ -4,7 +4,7 @@ import ipaddr from "ipaddr.js";
 import { HttpError } from "../http/errors.js";
 const DEFAULT_PATH = "/etc/voxeil/allowlist.txt";
 const ENTRY_PATTERN = /^[0-9A-Fa-f:./]+$/;
-const CACHE_TTL_MS = Number(process.env.ALLOWLIST_CACHE_TTL_MS ?? "5000");
+const CACHE_TTL_MS = Number(process.env.ALLOWLIST_CACHE_TTL_MS ?? "60000"); // 1 minute default
 let cachedAllowlist = null;
 function resolvePath() {
     return process.env.ALLOWLIST_PATH?.trim() || DEFAULT_PATH;

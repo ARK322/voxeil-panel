@@ -156,3 +156,36 @@ export function getRateLimitStats() {
         maxSize: MAX_ENTRIES
     };
 }
+
+// Auto-cleanup mechanism
+let cleanupInterval = null;
+
+/**
+ * Start automatic rate limit store cleanup
+ */
+export function startAutoCleanup() {
+    if (cleanupInterval) {
+        return; // Already started
+    }
+    
+    const intervalMs = Number(process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS ?? "300000"); // 5 min
+    
+    cleanupInterval = setInterval(() => {
+        pruneRateLimitStore().catch((err) => {
+            console.error("Failed to prune rate limit store:", err);
+        });
+    }, intervalMs);
+    
+    console.info("Rate limit auto-cleanup started (interval: %dms)", intervalMs);
+}
+
+/**
+ * Stop automatic cleanup
+ */
+export function stopAutoCleanup() {
+    if (cleanupInterval) {
+        clearInterval(cleanupInterval);
+        cleanupInterval = null;
+        console.info("Rate limit auto-cleanup stopped");
+    }
+}

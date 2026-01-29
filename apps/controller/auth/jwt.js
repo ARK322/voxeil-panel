@@ -4,8 +4,24 @@ import { HttpError } from "../http/errors.js";
 import { isTokenRevoked } from "./token-revocation.service.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
+
+// Validate JWT secret exists and meets security requirements
 if (!JWT_SECRET) {
-    throw new Error("JWT_SECRET env var is required (provided via Secret).");
+    throw new Error("JWT_SECRET environment variable is required.");
+}
+
+if (JWT_SECRET.length < 32) {
+    throw new Error("JWT_SECRET must be at least 32 characters long for security.");
+}
+
+// Warn if secret looks weak (optional but recommended)
+const hasUpperCase = /[A-Z]/.test(JWT_SECRET);
+const hasLowerCase = /[a-z]/.test(JWT_SECRET);
+const hasNumber = /[0-9]/.test(JWT_SECRET);
+const hasSpecial = /[^A-Za-z0-9]/.test(JWT_SECRET);
+
+if (!(hasUpperCase && hasLowerCase && hasNumber && hasSpecial)) {
+    console.warn("⚠️  WARNING: JWT_SECRET should contain uppercase, lowercase, numbers, and special characters for maximum security.");
 }
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "12h";

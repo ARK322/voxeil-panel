@@ -1,21 +1,21 @@
 {
   "env": {
     "node": true,
-    "es2022": true
+    "es2021": true
   },
-  "extends": ["eslint:recommended"],
+  "extends": "eslint:recommended",
   "parserOptions": {
-    "ecmaVersion": 2022,
+    "ecmaVersion": "latest",
     "sourceType": "module"
   },
   "rules": {
-    "no-unused-vars": ["warn", { "argsIgnorePattern": "^_" }],
-    "no-console": "off",
-    "no-undef": "error",
-    "no-redeclare": "error",
-    "no-unreachable": "error",
-    "no-duplicate-imports": "error",
-    "prefer-const": "warn",
-    "no-var": "error"
+    "no-console": ["error", { "allow": ["warn", "info"] }],
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_" }],
+    "no-var": "error",
+    "prefer-const": "error",
+    "eqeqeq": ["error", "always"],
+    "curly": ["error", "all"],
+    "no-throw-literal": "error",
+    "prefer-promise-reject-errors": "error"
   }
 }

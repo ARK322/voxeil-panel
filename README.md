@@ -218,3 +218,34 @@ Aşağıdaki klasörler ve script'ler artık yok:
 **Doğru kullanım:**
 - `voxeil.sh` (ana entrypoint, önerilen kullanım)
 - `cmd/*.sh` genellikle `voxeil.sh` tarafından çağrılır; doğrudan çalıştırmak gerekiyorsa repo checkout/extract kök dizininden çalıştırın
+
+## Environment Variables
+
+### Required
+- `JWT_SECRET` - JWT signing secret (min 32 characters, must contain uppercase, lowercase, numbers, special chars)
+- `POSTGRES_HOST` - PostgreSQL host
+- `POSTGRES_PORT` - PostgreSQL port (default: 5432)
+- `POSTGRES_ADMIN_USER` - PostgreSQL admin user
+- `POSTGRES_ADMIN_PASSWORD` - PostgreSQL admin password
+- `POSTGRES_DB` - PostgreSQL database name
+
+### Optional
+- `PORT` - Server port (default: 8080, min: 1, max: 65535)
+- `NODE_ENV` - Environment (production/development)
+- `LOG_LEVEL` - Log level (debug/info/warn/error, default: info in prod, debug in dev)
+- `TRUST_PROXY` - Trust X-Forwarded-For header (true/false, default: false)
+- `REQUEST_BODY_LIMIT_BYTES` - Max request body size (default: 1048576, min: 1024, max: 104857600)
+- `REQUEST_TIMEOUT_MS` - Request timeout (default: 30000, min: 1000, max: 300000)
+- `HEALTH_CHECK_TIMEOUT_MS` - Health check timeout (default: 5000, min: 1000, max: 30000)
+- `ALLOWED_ORIGINS` - CORS allowed origins (comma-separated, e.g., `https://app.com,https://admin.com`)
+- `ALLOWLIST_CACHE_TTL_MS` - IP allowlist cache TTL (default: 60000)
+- `RATE_LIMIT_CLEANUP_INTERVAL_MS` - Rate limit cleanup interval (default: 300000)
+- `LOGIN_RATE_LIMIT` - Max login attempts (default: 10)
+- `LOGIN_RATE_WINDOW_SECONDS` - Login rate limit window (default: 300)
+
+### Database Pool
+- `DB_POOL_MAX` - Max pool size (default: 20)
+- `DB_POOL_MIN` - Min pool size (default: 2)
+- `DB_POOL_IDLE_TIMEOUT` - Idle timeout (default: 30000)
+- `DB_POOL_CONNECTION_TIMEOUT` - Connection timeout (default: 10000)
+- `DB_STATEMENT_TIMEOUT` - Statement timeout (default: 30000)

@@ -1,14 +1,17 @@
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import { PassThrough } from "node:stream";
 import crypto from "node:crypto";
 import { z } from "zod";
 import { registerRoutes } from "./http/routes.js";
-import { HttpError } from "./http/errors.js";
+import { HttpError, sanitizeErrorMessage } from "./http/errors.js";
 import { isIpAllowed, readAllowlist } from "./security/allowlist.js";
 import { ensureAdminUserFromEnv } from "./users/user.service.js";
 import { verifyToken, extractTokenFromHeader } from "./auth/jwt.js";
 import { checkPoolHealth, closePool } from "./db/pool.js";
-const TRUST_PROXY = process.env.TRUST_PROXY === "true";
+import { parseEnvNumber, parseEnvBoolean, parseEnvArray } from "./config/env.js";
+import { startAutoCleanup as startRateLimitCleanup } from "./security/rate-limit.js";
+const TRUST_PROXY = parseEnvBoolean("TRUST_PROXY", false);
 const isProduction = process.env.NODE_ENV === "production";
 
 // Production-ready: structured JSON logging + security config
@@ -37,8 +40,40 @@ const app = Fastify({
     requestIdHeader: "x-request-id",
     disableRequestLogging: false,
     // Production-ready: request size limits (prevent DoS)
-    bodyLimit: Number(process.env.REQUEST_BODY_LIMIT_BYTES ?? "1048576") // 1MB default
+    bodyLimit: parseEnvNumber("REQUEST_BODY_LIMIT_BYTES", 1048576, { min: 1024, max: 104857600 })
 });
+// Configure CORS
+const allowedOrigins = parseEnvArray('ALLOWED_ORIGINS', []);
+const corsEnabled = allowedOrigins.length > 0;
+
+if (corsEnabled) {
+    await app.register(cors, {
+        origin: (origin, callback) => {
+            // Allow requests with no origin (mobile apps, curl, etc.)
+            if (!origin) {
+                callback(null, true);
+                return;
+            }
+            
+            // Check if origin is allowed
+            if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+                callback(null, true);
+            } else {
+                callback(new Error('Not allowed by CORS'), false);
+            }
+        },
+        credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
+        exposedHeaders: ['X-Request-ID'],
+        maxAge: 86400 // 24 hours
+    });
+    
+    app.log.info({ allowedOrigins }, 'CORS enabled');
+} else {
+    app.log.warn('CORS not configured - set ALLOWED_ORIGINS env var to enable');
+}
+
 const metrics = {
     requests: 0,
     errors: 0
@@ -67,12 +102,23 @@ app.addHook("onRequest", async (req, reply) => {
     }
     
     // Request timeout (production-ready: prevents hanging requests)
-    const requestTimeout = Number(process.env.REQUEST_TIMEOUT_MS ?? "30000"); // 30s default
-    req.requestTimeout = setTimeout(() => {
+    const requestTimeout = parseEnvNumber("REQUEST_TIMEOUT_MS", 30000, { min: 1000, max: 300000 });
+    const timeoutId = setTimeout(() => {
         if (!reply.sent) {
+            app.log.warn({ 
+                url: req.url, 
+                method: req.method,
+                ip: req.ip 
+            }, "Request timeout");
             reply.code(408).send({ error: "request_timeout" });
         }
     }, requestTimeout);
+
+    req.requestTimeout = timeoutId;
+
+    // Automatically clear timeout on any error or completion
+    reply.addHook('onError', () => clearTimeout(timeoutId));
+    reply.addHook('onSend', () => clearTimeout(timeoutId));
     
     const allowlist = await readAllowlist();
     if (allowlist.length > 0) {
@@ -109,9 +155,12 @@ app.addHook("onRequest", async (req, reply) => {
 
 // Clear timeout on response (production-ready)
 app.addHook("onResponse", async (req, reply) => {
+    // Defensive cleanup (should already be cleared by onSend)
     if (req.requestTimeout) {
         clearTimeout(req.requestTimeout);
+        req.requestTimeout = null;
     }
+    
     metrics.requests += 1;
     if (reply.statusCode >= 400) {
         metrics.errors += 1;
@@ -135,7 +184,7 @@ app.setErrorHandler((error, req, reply) => {
     const errorId = crypto.randomUUID();
     const isProduction = process.env.NODE_ENV === "production";
     
-    // Structured error logging (production-ready)
+    // Structured error logging - always log full details internally
     app.log.error({
         err: error,
         errorId,
@@ -143,33 +192,33 @@ app.setErrorHandler((error, req, reply) => {
         method: req.method,
         ip: req.ip,
         userId: req.user?.sub,
-        stack: isProduction ? undefined : error.stack
+        stack: error.stack
     }, "Request error");
     
     if (error instanceof HttpError) {
         return reply.code(error.statusCode).send({
-            error: error.message,
-            ...(isProduction ? { errorId } : { errorId, details: error.stack })
+            ...error.toResponse(isProduction),
+            errorId
         });
     }
     
     if (error instanceof z.ZodError) {
         return reply.code(400).send({
-            error: "invalid_request",
-            details: error.flatten(),
-            ...(isProduction ? { errorId } : { errorId })
+            error: "Validation failed",
+            details: isProduction ? undefined : error.flatten(),
+            errorId
         });
     }
     
-    // Generic error: never expose stack trace in production
+    // Generic error - use sanitized message
     return reply.code(500).send({
-        error: "internal_error",
-        ...(isProduction ? { errorId } : { errorId, message: error.message })
+        error: sanitizeErrorMessage(error, isProduction),
+        errorId
     });
 });
 // Production-ready health check: uses connection pool, includes timeout
 app.get("/health", async (req, reply) => {
-    const timeout = Number(process.env.HEALTH_CHECK_TIMEOUT_MS ?? "5000");
+    const timeout = parseEnvNumber("HEALTH_CHECK_TIMEOUT_MS", 5000, { min: 1000, max: 30000 });
     const startTime = Date.now();
     
     const checks = {
@@ -272,13 +321,19 @@ app.get("/metrics", async (_req, reply) => {
     return metricsLines.join("\n");
 });
 registerRoutes(app);
+startRateLimitCleanup();
 await ensureAdminUserFromEnv();
-const port = Number(process.env.PORT ?? 8080);
+const port = parseEnvNumber("PORT", 8080, { min: 1, max: 65535 });
 
 // Production-ready: graceful shutdown closes HTTP server + DB pools cleanly.
 async function shutdown(signal) {
     try {
         app.log.info({ signal }, "Shutting down");
+        
+        // Stop rate limit cleanup
+        const { stopAutoCleanup } = await import("./security/rate-limit.js");
+        stopAutoCleanup();
+        
         await app.close();
     } catch (err) {
         app.log.error({ err, signal }, "Shutdown error");
@@ -291,7 +346,18 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("unhandledRejection", (err) => {
-    app.log.error({ err }, "Unhandled promise rejection");
+    app.log.fatal({ err }, "Unhandled promise rejection - shutting down");
+    // Unhandled rejections are serious bugs that should crash the app
+    void shutdown("unhandledRejection");
+});
+
+// Add warning handler for potential issues
+process.on("warning", (warning) => {
+    app.log.warn({ 
+        name: warning.name,
+        message: warning.message,
+        stack: warning.stack
+    }, "Process warning");
 });
 process.on("uncaughtException", (err) => {
     app.log.fatal({ err }, "Uncaught exception");

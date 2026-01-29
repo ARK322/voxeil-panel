@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HttpError } from "./errors.js";
+import { logger } from "../config/logger.js";
 import { readAllowlist, writeAllowlist } from "../security/allowlist.js";
 import { checkRateLimit, pruneRateLimitStore } from "../security/rate-limit.js";
 import { logAudit } from "../audit/audit.service.js";
@@ -259,7 +260,7 @@ export function registerRoutes(app) {
                 await dropRole(dbUser);
             } catch (dbError) {
                 // Log but don't fail user deletion if DB cleanup fails
-                console.error("Failed to cleanup DB for user:", id, dbError);
+                logger.error({ err: dbError, userId: id }, "Failed to cleanup DB for user");
             }
             
             // Cleanup namespace (this will also delete secrets)
@@ -267,11 +268,11 @@ export function registerRoutes(app) {
                 await deleteUserNamespace(id);
             } catch (nsError) {
                 // Log but don't fail user deletion if namespace cleanup fails
-                console.error("Failed to cleanup namespace for user:", id, nsError);
+                logger.error({ err: nsError, userId: id }, "Failed to cleanup namespace for user");
             }
         } catch (cleanupError) {
             // Log but don't fail user deletion if cleanup fails
-            console.error("Failed to cleanup resources for user:", id, cleanupError);
+            logger.error({ err: cleanupError, userId: id }, "Failed to cleanup resources for user");
         }
         
         await deleteUser(id);
