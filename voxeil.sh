@@ -339,6 +339,15 @@ if [[ "${SUBCMD}" == "install" ]]; then
   if [[ ! -f "${REPO_ROOT}/cmd/install.sh" ]]; then
     log_error "Install script not found: ${REPO_ROOT}/cmd/install.sh"
     log_error "This may indicate the repository archive is incomplete or the file is not tracked in git."
+    if [[ -d "${REPO_ROOT}/cmd" ]]; then
+      log_error "Files found in cmd directory:"
+      ls -la "${REPO_ROOT}/cmd/" 2>/dev/null | while read -r line; do
+        log_error "  $line"
+      done || true
+    else
+      log_error "cmd directory does not exist at: ${REPO_ROOT}/cmd"
+    fi
+    log_error "Repository root: ${REPO_ROOT}"
     exit 1
   fi
 
