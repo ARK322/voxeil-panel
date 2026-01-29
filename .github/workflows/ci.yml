@@ -123,6 +123,11 @@ jobs:
               echo "Skipping vendor YAML: $file"
               continue
             fi
+            # Skip kustomization.yaml files - these are kustomize-specific, not Kubernetes resources
+            if echo "$file" | grep -qE 'kustomization\.ya?ml$'; then
+              echo "Skipping kustomization file: $file"
+              continue
+            fi
             echo "Validating schema: $file"
             kubeconform -strict -summary "$file" || exit 1
           done
@@ -140,7 +145,9 @@ jobs:
         run: |
           find . -name "*.sh" -type f | while read file; do
             echo "Validating $file"
-            shellcheck "$file" || exit 1
+            # Exclude SC1091 (not following sourced files) - these are info-level warnings
+            # for files that exist at runtime but may not be available during static analysis
+            shellcheck -e SC1091 "$file" || exit 1
           done
 
   docker-build:

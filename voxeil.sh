@@ -144,8 +144,11 @@ setup_repo() {
   temp_dir="$(mktemp -d)"
 
   # Cleanup trap (unless VOXEIL_KEEP_TMP is set)
+  # Capture temp_dir value at trap definition time to avoid SC2064
+  # Use a global variable for the trap to access
   if [[ "${VOXEIL_KEEP_TMP:-0}" != "1" ]]; then
-    trap 'rm -rf "$temp_dir"' EXIT
+    _voxeil_temp_dir="${temp_dir}"
+    trap 'rm -rf "${_voxeil_temp_dir}"' EXIT
   else
     log_warn "VOXEIL_KEEP_TMP=1: keeping temp directory: ${temp_dir}"
   fi
