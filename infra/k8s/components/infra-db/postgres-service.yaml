@@ -3,6 +3,10 @@ kind: Service
 metadata:
   name: postgres
   namespace: infra-db
+  labels:
+    app: postgres
+    app.kubernetes.io/part-of: voxeil
+    app.kubernetes.io/component: database
 spec:
   type: ClusterIP
   selector:
