@@ -164,6 +164,14 @@ setup_repo() {
   # Make scripts executable
   make_scripts_executable "${extracted_root}"
 
+  # Debug: Verify critical files exist
+  if [[ ! -f "${extracted_root}/cmd/install.sh" ]]; then
+    log_warn "cmd/install.sh not found in extracted archive"
+    log_warn "Extracted root: ${extracted_root}"
+    log_warn "Contents of cmd directory:"
+    ls -la "${extracted_root}/cmd/" 2>/dev/null || log_warn "cmd directory does not exist"
+  fi
+
   echo "${extracted_root}"
 }
 
@@ -326,6 +334,13 @@ if [[ "${SUBCMD}" == "install" ]]; then
     INSTALLER_ARGS+=("--version" "${REF}")
   fi
   INSTALLER_ARGS+=("${SUBCMD_ARGS[@]}")
+
+  # Verify cmd/install.sh exists before executing
+  if [[ ! -f "${REPO_ROOT}/cmd/install.sh" ]]; then
+    log_error "Install script not found: ${REPO_ROOT}/cmd/install.sh"
+    log_error "This may indicate the repository archive is incomplete or the file is not tracked in git."
+    exit 1
+  fi
 
   # Run cmd/install.sh from extracted repo
   exec bash "${REPO_ROOT}/cmd/install.sh" "${INSTALLER_ARGS[@]}"
