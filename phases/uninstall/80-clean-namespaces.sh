@@ -74,7 +74,7 @@ if [ ${#STUCK_NAMESPACES[@]} -gt 0 ]; then
         
         # Try to delete them
         log_info "Deleting remaining ${resource_type} resources in ${ns}..."
-        run_kubectl delete "${resource_type}" --all -n "${ns}" --timeout=30s --ignore-not-found >/dev/null 2>&1 || true
+        run_kubectl delete "${resource_type}" --all -n "${ns}" --timeout=30s --request-timeout=30s --ignore-not-found >/dev/null 2>&1 || true
       fi
     done
     

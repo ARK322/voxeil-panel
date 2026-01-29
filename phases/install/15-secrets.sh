@@ -111,7 +111,7 @@ run_kubectl create secret generic platform-secrets \
   --dry-run=client -o yaml 2>/dev/null | run_kubectl apply -f - >/dev/null 2>&1 || {
   # If create fails, try to delete and recreate
   log_info "Secret may already exist, updating..."
-  run_kubectl delete secret platform-secrets --namespace=platform --ignore-not-found >/dev/null 2>&1
+  run_kubectl delete secret platform-secrets --namespace=platform --request-timeout=30s --ignore-not-found >/dev/null 2>&1
   run_kubectl create secret generic platform-secrets \
     --namespace=platform \
     --from-literal=ADMIN_API_KEY="${ADMIN_API_KEY}" \
