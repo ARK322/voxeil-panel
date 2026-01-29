@@ -12,16 +12,6 @@ log_phase "purge-node/30-runtime-clean"
 log_info "Removing /var/lib/voxeil..."
 safe_rm "/var/lib/voxeil"
 
-# Clean up Docker images if Docker is available
-if command_exists docker && docker info >/dev/null 2>&1; then
-  log_info "Cleaning up Voxeil Docker images..."
-  docker images --format "{{.Repository}}:{{.Tag}}" | grep -E "(voxeil|ghcr.io/.*/voxeil)" | while read -r image; do
-    log_info "Removing Docker image: ${image}"
-    docker rmi "${image}" 2>/dev/null || true
-  done
-  docker image prune -f 2>/dev/null || true
-fi
-
 # Clean up containerd images
 if command_exists ctr; then
   log_info "Cleaning up Voxeil containerd images..."
