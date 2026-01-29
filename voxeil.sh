@@ -145,7 +145,7 @@ setup_repo() {
 
   # Cleanup trap (unless VOXEIL_KEEP_TMP is set)
   if [[ "${VOXEIL_KEEP_TMP:-0}" != "1" ]]; then
-    trap "rm -rf '${temp_dir}'" EXIT
+    trap 'rm -rf "$temp_dir"' EXIT
   else
     log_warn "VOXEIL_KEEP_TMP=1: keeping temp directory: ${temp_dir}"
   fi

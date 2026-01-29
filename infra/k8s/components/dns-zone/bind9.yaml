@@ -112,7 +112,7 @@ spec:
             exec:
               command:
                 - /usr/bin/dig
-                - @127.0.0.1
+                - "@127.0.0.1"
                 - -p
                 - "53"
                 - localhost
@@ -124,7 +124,7 @@ spec:
             exec:
               command:
                 - /usr/bin/dig
-                - @127.0.0.1
+                - "@127.0.0.1"
                 - -p
                 - "53"
                 - localhost

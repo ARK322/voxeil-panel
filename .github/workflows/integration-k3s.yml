@@ -61,6 +61,13 @@ jobs:
           # For now, assuming images are public or will be pulled from a public registry.
           echo "Skipping GHCR secret setup (assuming public images or local build)"
 
+      - name: Make scripts executable (safe)
+        run: |
+          # Make voxeil.sh executable (main entrypoint)
+          chmod +x voxeil.sh || true
+          # Make any existing scripts executable (safe - won't fail if directories don't exist)
+          find cmd phases lib tools -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
+
       - name: First install
         run: |
           export KUBECONFIG=~/.kube/config
