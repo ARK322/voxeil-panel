@@ -1,10 +1,12 @@
 import { describe, it, expect } from '@jest/globals';
-import { signToken, verifyToken } from '../auth/jwt.js';
 import crypto from 'node:crypto';
 
-// Mock JWT_SECRET for tests
+// Mock JWT_SECRET for tests - MUST be set before importing jwt.js
 process.env.JWT_SECRET = crypto.randomBytes(32).toString('hex');
 process.env.JWT_EXPIRES_IN = '1h';
+
+// Import after setting environment variables
+import { signToken, verifyToken } from '../auth/jwt.js';
 
 describe('JWT Authentication', () => {
     describe('signToken', () => {
