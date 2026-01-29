@@ -27,8 +27,9 @@ async function hasTlsSecret(namespace, slug) {
         return true;
     }
     catch (error) {
-        if (error?.response?.statusCode === 404)
+        if (error?.response?.statusCode === 404) {
             return false;
+        }
         throw error;
     }
 }

@@ -36,8 +36,9 @@ async function hashPassword(password) {
 }
 async function verifyPassword(password, stored) {
     const [salt, hashHex] = stored.split(":");
-    if (!salt || !hashHex)
+    if (!salt || !hashHex) {
         return false;
+    }
     const hash = (await scryptAsync(password, salt, 64));
     return crypto.timingSafeEqual(Buffer.from(hashHex, "hex"), hash);
 }
@@ -56,8 +57,9 @@ export async function ensureAdminUserFromEnv() {
     const username = process.env.PANEL_ADMIN_USERNAME?.trim();
     const password = process.env.PANEL_ADMIN_PASSWORD?.trim();
     const email = process.env.PANEL_ADMIN_EMAIL?.trim();
-    if (!username || !password || !email)
+    if (!username || !password || !email) {
         return;
+    }
     await withClient(async (client) => {
         const existing = await client.query("SELECT id, password_hash FROM panel_users WHERE username = $1", [username]);
         if (existing.rowCount === 0) {

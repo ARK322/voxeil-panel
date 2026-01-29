@@ -45,8 +45,9 @@ export async function ensureGhcrPullSecret(namespace) {
         await core.createNamespacedSecret(namespace, secret);
     }
     catch (error) {
-        if (error?.response?.statusCode !== 409)
+        if (error?.response?.statusCode !== 409) {
             throw error;
+        }
     }
 }
 export async function readSecret(namespace, name) {
@@ -56,8 +57,9 @@ export async function readSecret(namespace, name) {
         return result.body;
     }
     catch (error) {
-        if (error?.response?.statusCode === 404)
+        if (error?.response?.statusCode === 404) {
             return null;
+        }
         throw error;
     }
 }
@@ -72,8 +74,9 @@ export async function upsertSecret(secret) {
         await core.createNamespacedSecret(namespace, secret);
     }
     catch (error) {
-        if (error?.response?.statusCode !== 409)
+        if (error?.response?.statusCode !== 409) {
             throw error;
+        }
         const patch = core.patchNamespacedSecret;
         await patch(name, namespace, secret, undefined, undefined, undefined, undefined, { headers: { "Content-Type": "application/merge-patch+json" } });
     }
@@ -84,8 +87,9 @@ export async function deleteSecret(namespace, name) {
         await core.deleteNamespacedSecret(name, namespace);
     }
     catch (error) {
-        if (error?.response?.statusCode === 404)
+        if (error?.response?.statusCode === 404) {
             return;
+        }
         throw error;
     }
 }

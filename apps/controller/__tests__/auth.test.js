@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll } from '@jest/globals';
+import { describe, it, expect } from '@jest/globals';
 import { signToken, verifyToken } from '../auth/jwt.js';
 import crypto from 'node:crypto';
 

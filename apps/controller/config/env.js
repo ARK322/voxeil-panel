@@ -3,7 +3,9 @@
  */
 export function parseEnvNumber(key, defaultValue, options = {}) {
     const value = process.env[key];
-    if (!value) return defaultValue;
+    if (!value) {
+        return defaultValue;
+    }
     
     const parsed = parseInt(value, 10);
     if (isNaN(parsed)) {
@@ -26,11 +28,17 @@ export function parseEnvNumber(key, defaultValue, options = {}) {
  */
 export function parseEnvBoolean(key, defaultValue) {
     const value = process.env[key];
-    if (!value) return defaultValue;
+    if (!value) {
+        return defaultValue;
+    }
     
     const normalized = value.toLowerCase().trim();
-    if (["true", "1", "yes"].includes(normalized)) return true;
-    if (["false", "0", "no"].includes(normalized)) return false;
+    if (["true", "1", "yes"].includes(normalized)) {
+        return true;
+    }
+    if (["false", "0", "no"].includes(normalized)) {
+        return false;
+    }
     
     throw new Error(`Environment variable ${key} must be a boolean, got: ${value}`);
 }
@@ -51,7 +59,9 @@ export function requireEnv(key) {
  */
 export function parseEnvArray(key, defaultValue = []) {
     const value = process.env[key];
-    if (!value) return defaultValue;
+    if (!value) {
+        return defaultValue;
+    }
     
     return value.split(',').map(item => item.trim()).filter(Boolean);
 }

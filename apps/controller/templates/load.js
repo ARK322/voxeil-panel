@@ -44,8 +44,9 @@ async function readYaml(filePath) {
     return k8s.loadYaml(raw);
 }
 export async function loadUserTemplates() {
-    if (userTemplatesCached)
+    if (userTemplatesCached) {
         return userTemplatesCached;
+    }
     const dir = resolveUserTemplatesDir();
     const namespace = await readYaml(path.join(dir, "namespace.yaml"));
     const resourceQuota = await readYaml(path.join(dir, "resourcequota.yaml"));
@@ -67,8 +68,9 @@ export async function loadUserTemplates() {
 }
 
 export async function loadTenantTemplates() {
-    if (tenantTemplatesCached)
+    if (tenantTemplatesCached) {
         return tenantTemplatesCached;
+    }
     const dir = resolveTenantTemplatesDir();
     const resourceQuota = await readYaml(path.join(dir, "resourcequota.yaml"));
     const limitRange = await readYaml(path.join(dir, "limitrange.yaml"));

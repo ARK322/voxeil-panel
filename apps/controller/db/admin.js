@@ -74,8 +74,9 @@ export async function ensureDatabaseAndRole(options) {
         await client.query(`GRANT ALL PRIVILEGES ON DATABASE ${quoteIdent(options.dbName)} TO ${quoteIdent(options.dbUser)}`);
         const dbList = await client.query("SELECT datname FROM pg_database WHERE datallowconn = true");
         for (const row of dbList.rows) {
-            if (row.datname === options.dbName)
+            if (row.datname === options.dbName) {
                 continue;
+            }
             await client.query(`REVOKE CONNECT ON DATABASE ${quoteIdent(row.datname)} FROM ${quoteIdent(options.dbUser)}`);
         }
         return { userCreated, dbCreated };

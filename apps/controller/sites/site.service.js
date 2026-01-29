@@ -1,7 +1,6 @@
-import path from "node:path";
 import { HttpError } from "../http/errors.js";
 import { logger } from "../config/logger.js";
-import { upsertDeployment, upsertIngress, upsertService, upsertConfigMap } from "../k8s/apply.js";
+import { upsertDeployment, upsertIngress, upsertService } from "../k8s/apply.js";
 import { patchNamespaceAnnotations, requireNamespace, resolveUserNamespaceForSite, readUserNamespaceSite, extractUserIdFromNamespace, readSiteMetadata } from "../k8s/namespace.js";
 import { patchIngress, resolveIngressIssuer } from "../k8s/ingress.js";
 import { buildDeployment, buildIngress, buildService, getDeploymentName, getServiceName, getIngressName } from "../k8s/publish.js";
@@ -11,40 +10,6 @@ import { SITE_ANNOTATIONS } from "../k8s/annotations.js";
 import { ensureDatabase, ensureRole, revokeAndTerminate, dropDatabase, dropRole, generateDbPassword, normalizeDbName, normalizeDbUser, resolveDbName, resolveDbUser } from "../postgres/admin.js";
 import { slugFromDomain, validateSlug } from "./site.slug.js";
 
-// Helper functions for pod operations
-const POD_WAIT_TIMEOUT_MS = 30 * 60 * 1000;
-const POD_POLL_INTERVAL_MS = 2000;
-
-async function waitForPodCompletion(namespace, name) {
-    const { core } = getClients();
-    const started = Date.now();
-    // eslint-disable-next-line no-constant-condition
-    while (true) {
-        const result = await core.readNamespacedPod(name, namespace);
-        const phase = result.body.status?.phase;
-        if (phase === "Succeeded")
-            return;
-        if (phase === "Failed") {
-            throw new HttpError(500, "Pod failed.");
-        }
-        if (Date.now() - started > POD_WAIT_TIMEOUT_MS) {
-            throw new HttpError(504, "Pod timed out.");
-        }
-        await new Promise((resolve) => setTimeout(resolve, POD_POLL_INTERVAL_MS));
-    }
-}
-
-async function deletePodSafely(namespace, name) {
-    const { core } = getClients();
-    try {
-        await core.deleteNamespacedPod(name, namespace);
-    }
-    catch (error) {
-        if (error?.response?.statusCode === 404)
-            return;
-        throw error;
-    }
-}
 import { ensureDnsZone, removeDnsZone } from "../dns/bind9.js";
 import { dispatchWorkflow, parseRepo, resolveWorkflow } from "../github/client.js";
 import { createMailcowMailbox, createMailcowAlias, deleteMailcowMailbox, deleteMailcowAlias, ensureMailcowDomain, getMailcowDomainActive, listMailcowAliases, listMailcowMailboxes, purgeMailcowDomain, setMailcowDomainActive } from "../mailcow/client.js";
@@ -111,26 +76,24 @@ async function upsertRegistryPullSecret(options) {
     });
 }
 function parseBooleanAnnotation(value) {
-    if (!value)
+    if (!value) {
         return undefined;
+    }
     const normalized = value.toLowerCase();
-    if (normalized === "true")
+    if (normalized === "true") {
         return true;
-    if (normalized === "false")
+    }
+    if (normalized === "false") {
         return false;
+    }
     return undefined;
 }
 function parseNumberAnnotation(value) {
-    if (!value)
+    if (!value) {
         return undefined;
+    }
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : undefined;
-}
-function normalizeRetentionDays(value) {
-    if (!Number.isInteger(value) || value <= 0) {
-        throw new HttpError(400, "retentionDays must be a positive integer.");
-    }
-    return value;
 }
 function normalizeMailDomain(value) {
     const normalized = value.trim().toLowerCase().replace(/\.$/, "");
@@ -148,8 +111,9 @@ function requireDbHostConfig() {
     return { host, port };
 }
 function decodeSecretValue(value) {
-    if (!value)
+    if (!value) {
         return undefined;
+    }
     return Buffer.from(value, "base64").toString("utf8");
 }
 export async function createSite(userId, input) {
@@ -446,7 +410,9 @@ export async function deleteSite(slug) {
     try {
         await apps.deleteNamespacedDeployment(deploymentName, namespace);
     } catch (error) {
-        if (error?.response?.statusCode !== 404) throw error;
+        if (error?.response?.statusCode !== 404) {
+            throw error;
+        }
     }
     
     // Delete service
@@ -454,7 +420,9 @@ export async function deleteSite(slug) {
     try {
         await core.deleteNamespacedService(serviceName, namespace);
     } catch (error) {
-        if (error?.response?.statusCode !== 404) throw error;
+        if (error?.response?.statusCode !== 404) {
+            throw error;
+        }
     }
     
     // Delete ingress
@@ -462,7 +430,9 @@ export async function deleteSite(slug) {
     try {
         await net.deleteNamespacedIngress(ingressName, namespace);
     } catch (error) {
-        if (error?.response?.statusCode !== 404) throw error;
+        if (error?.response?.statusCode !== 404) {
+            throw error;
+        }
     }
     
     // Delete secrets with site label
@@ -472,7 +442,9 @@ export async function deleteSite(slug) {
             try {
                 await core.deleteNamespacedSecret(secret.metadata.name, namespace);
             } catch (error) {
-                if (error?.response?.statusCode !== 404) throw error;
+                if (error?.response?.statusCode !== 404) {
+                    throw error;
+                }
             }
         }
     } catch (error) {
@@ -486,7 +458,9 @@ export async function deleteSite(slug) {
             try {
                 await core.deleteNamespacedConfigMap(cm.metadata.name, namespace);
             } catch (error) {
-                if (error?.response?.statusCode !== 404) throw error;
+                if (error?.response?.statusCode !== 404) {
+                    throw error;
+                }
             }
         }
     } catch (error) {

@@ -6,17 +6,18 @@ export async function readQuotaStatus(namespace, quotaName) {
     try {
         const result = await core.readNamespacedResourceQuota(quotaName, namespace);
         const hard = result.body.spec?.hard ?? {};
-        const cpu = parseCpuToNumber(hard["requests.cpu"]);
-        const ramGi = parseGiToNumber(hard["requests.memory"]);
-        const diskGi = parseGiToNumber(hard["requests.storage"]);
-        if (cpu == null || ramGi == null || diskGi == null) {
+    const cpu = parseCpuToNumber(hard["requests.cpu"]);
+    const ramGi = parseGiToNumber(hard["requests.memory"]);
+    const diskGi = parseGiToNumber(hard["requests.storage"]);
+    if (cpu === null || ramGi === null || diskGi === null) {
             return { exists: true };
         }
         return { exists: true, limits: { cpu, ramGi, diskGi } };
     }
     catch (error) {
-        if (error?.response?.statusCode === 404)
+        if (error?.response?.statusCode === 404) {
             return { exists: false };
+        }
         throw error;
     }
 }

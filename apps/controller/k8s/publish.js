@@ -21,8 +21,9 @@ function resolveUploadDirs(uploadDirs) {
     const unique = new Set();
     for (const entry of values) {
         const trimmed = entry.trim();
-        if (trimmed)
+        if (trimmed) {
             unique.add(trimmed);
+        }
     }
     return unique.size > 0 ? Array.from(unique) : DEFAULT_UPLOAD_DIRS;
 }

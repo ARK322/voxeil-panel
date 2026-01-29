@@ -13,8 +13,9 @@ export function parseRepo(value) {
             const url = new URL(trimmed);
             const normalized = normalizeRepoPath(url.pathname);
             const [owner, repo] = normalized.split("/");
-            if (!owner || !repo)
+            if (!owner || !repo) {
                 throw new Error("invalid");
+            }
             return { owner, repo };
         }
         catch {

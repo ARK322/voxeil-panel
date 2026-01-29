@@ -167,8 +167,9 @@ app.addHook("onResponse", async (req, reply) => {
     }
 });
 app.addHook("preParsing", async (req, _reply, payload) => {
-    if (!req.url.startsWith("/github/webhook"))
+    if (!req.url.startsWith("/github/webhook")) {
         return payload;
+    }
     const chunks = [];
     for await (const chunk of payload) {
         chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));

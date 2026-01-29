@@ -21,15 +21,18 @@ function normalizeEntry(value) {
 }
 function sanitizeEntry(value) {
     const trimmed = value.trim();
-    if (!trimmed || trimmed.startsWith("#"))
+    if (!trimmed || trimmed.startsWith("#")) {
         return null;
-    if (!ENTRY_PATTERN.test(trimmed))
+    }
+    if (!ENTRY_PATTERN.test(trimmed)) {
         return null;
+    }
     return trimmed;
 }
 function parseAddress(value) {
-    if (!ipaddr.isValid(value))
+    if (!ipaddr.isValid(value)) {
         return null;
+    }
     const parsed = ipaddr.parse(value);
     if (parsed.kind() === "ipv6") {
         const ipv6 = parsed;
@@ -40,11 +43,13 @@ function parseAddress(value) {
     return parsed;
 }
 export function isIpAllowed(ip, allowlist) {
-    if (allowlist.length === 0)
+    if (allowlist.length === 0) {
         return true;
+    }
     const address = parseAddress(ip);
-    if (!address)
+    if (!address) {
         return false;
+    }
     for (const entry of allowlist) {
         try {
             if (entry.includes("/")) {
@@ -56,19 +61,24 @@ export function isIpAllowed(ip, allowlist) {
                         normalizedRange = ipv6.toIPv4Address();
                     }
                 }
-                if (normalizedRange.kind() !== address.kind())
+                if (normalizedRange.kind() !== address.kind()) {
                     continue;
-                if (address.match([normalizedRange, prefix]))
+                }
+                if (address.match([normalizedRange, prefix])) {
                     return true;
+                }
             }
             else {
                 const entryAddr = parseAddress(entry);
-                if (!entryAddr)
+                if (!entryAddr) {
                     continue;
-                if (entryAddr.kind() !== address.kind())
+                }
+                if (entryAddr.kind() !== address.kind()) {
                     continue;
-                if (entryAddr.toString() === address.toString())
+                }
+                if (entryAddr.toString() === address.toString()) {
                     return true;
+                }
             }
         }
         catch {
@@ -92,8 +102,9 @@ export async function readAllowlist() {
         return items;
     }
     catch (error) {
-        if (error?.code === "ENOENT")
+        if (error?.code === "ENOENT") {
             return [];
+        }
         throw new HttpError(500, "Failed to read allowlist.");
     }
 }

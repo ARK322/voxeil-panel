@@ -12,7 +12,9 @@ async function hashPassword(password) {
 
 async function verifyPassword(password, stored) {
     const [salt, hashHex] = stored.split(":");
-    if (!salt || !hashHex) return false;
+    if (!salt || !hashHex) {
+        return false;
+    }
     const hash = await scryptAsync(password, salt, 64);
     return crypto.timingSafeEqual(Buffer.from(hashHex, "hex"), hash);
 }

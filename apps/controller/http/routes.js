@@ -225,8 +225,9 @@ export function registerRoutes(app) {
     app.patch("/admin/users/:id", async (req, reply) => {
         const actor = requireAdmin(req);
         const id = String(req.params.id ?? "");
-        if (!id)
+        if (!id) {
             throw new HttpError(400, "User id is required.");
+        }
         const body = ToggleUserSchema.parse(req.body ?? {});
         const user = await setUserActive(id, body.active);
         safeAudit({
@@ -242,8 +243,9 @@ export function registerRoutes(app) {
     app.delete("/admin/users/:id", async (req, reply) => {
         const actor = requireAdmin(req);
         const id = String(req.params.id ?? "");
-        if (!id)
+        if (!id) {
             throw new HttpError(400, "User id is required.");
+        }
         
         // Cleanup DB and namespace before deleting user record
         try {

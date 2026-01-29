@@ -5,8 +5,9 @@ export const LABELS = {
 };
 let cached = null;
 export function getClients() {
-    if (cached)
+    if (cached) {
         return cached;
+    }
     const kc = new k8s.KubeConfig();
     try {
         kc.loadFromCluster();

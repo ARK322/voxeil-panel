@@ -6,10 +6,7 @@ import {
     renderUserResourceQuota,
     renderUserLimitRange,
     renderUserNetworkPolicy,
-    renderUserControllerRoleBinding,
-    renderUserServiceAccount,
-    renderUserRole,
-    renderUserRoleBinding
+    renderUserControllerRoleBinding
 } from "../templates/render.js";
 import { getClients, LABELS } from "../k8s/client.js";
 import { HttpError } from "../http/errors.js";

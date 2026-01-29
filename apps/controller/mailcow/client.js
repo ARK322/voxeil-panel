@@ -18,13 +18,15 @@ function resolveMailcowConfig() {
     };
 }
 function toErrorMessage(result) {
-    if (!result)
+    if (!result) {
         return undefined;
+    }
     const entries = Array.isArray(result) ? result : [result];
     const messages = entries
         .map((entry) => {
-        if (!entry || typeof entry !== "object")
+        if (!entry || typeof entry !== "object") {
             return undefined;
+        }
         const candidate = entry;
         const resultType = String(candidate.type ?? "").trim().toLowerCase();
         if (resultType && resultType !== "error" && resultType !== "danger" && resultType !== "warning") {
@@ -33,32 +35,38 @@ function toErrorMessage(result) {
         return String(candidate.msg ?? candidate.message ?? "").trim();
     })
         .filter((value) => Boolean(value));
-    if (messages.length === 0)
+    if (messages.length === 0) {
         return undefined;
+    }
     return messages.join("; ");
 }
 function isExistsMessage(message) {
-    if (!message)
+    if (!message) {
         return false;
+    }
     return message.toLowerCase().includes("exist");
 }
 function isMissingMessage(message) {
-    if (!message)
+    if (!message) {
         return false;
+    }
     const normalized = message.toLowerCase();
     return (normalized.includes("not exist") ||
         normalized.includes("does not exist") ||
         normalized.includes("not found"));
 }
 function toHttpErrorMessage(error, fallback) {
-    if (!error)
+    if (!error) {
         return fallback;
-    if (typeof error === "string")
+    }
+    if (typeof error === "string") {
         return error;
+    }
     if (typeof error === "object" && "message" in error) {
         const message = String(error.message ?? "").trim();
-        if (message)
+        if (message) {
             return message;
+        }
     }
     return fallback;
 }
@@ -116,8 +124,9 @@ async function listMailcowDomains() {
     }
     return result
         .map((entry) => {
-        if (typeof entry === "string")
+        if (typeof entry === "string") {
             return entry.trim().toLowerCase();
+        }
         if (entry && typeof entry === "object" && "domain" in entry) {
             const domain = entry.domain;
             return (domain ?? "").trim().toLowerCase();
@@ -147,21 +156,26 @@ function normalizeDomain(domain) {
     return domain.trim().toLowerCase().replace(/\.$/, "");
 }
 function extractMailboxAddress(entry) {
-    if (entry.username)
+    if (entry.username) {
         return String(entry.username).trim().toLowerCase();
-    if (entry.address)
+    }
+    if (entry.address) {
         return String(entry.address).trim().toLowerCase();
+    }
     const local = entry.local_part ? String(entry.local_part).trim() : "";
     const domain = entry.domain ? String(entry.domain).trim() : "";
-    if (local && domain)
+    if (local && domain) {
         return `${local}@${domain}`.toLowerCase();
+    }
     return "";
 }
 function extractAliasAddress(entry) {
-    if (entry.address)
+    if (entry.address) {
         return String(entry.address).trim().toLowerCase();
-    if (entry.alias)
+    }
+    if (entry.alias) {
         return String(entry.alias).trim().toLowerCase();
+    }
     return "";
 }
 export async function ensureMailcowDomain(domain) {
@@ -210,8 +224,9 @@ export async function listMailcowMailboxes(domain) {
     }
     return result
         .map((entry) => {
-        if (!entry || typeof entry !== "object")
+        if (!entry || typeof entry !== "object") {
             return "";
+        }
         return extractMailboxAddress(entry);
     })
         .filter((address) => address.endsWith(`@${normalized}`));
@@ -227,8 +242,9 @@ export async function listMailcowAliases(domain) {
     }
     return result
         .map((entry) => {
-        if (!entry || typeof entry !== "object")
+        if (!entry || typeof entry !== "object") {
             return "";
+        }
         return extractAliasAddress(entry);
     })
         .filter((address) => address.endsWith(`@${normalized}`));
@@ -265,12 +281,15 @@ export async function deleteMailcowAlias(address) {
 export async function createMailcowMailbox(options) {
     const domain = normalizeDomain(options.domain);
     const localPart = options.localPart.trim();
-    if (!domain)
+    if (!domain) {
         throw new HttpError(400, "Domain is required.");
-    if (!localPart)
+    }
+    if (!localPart) {
         throw new HttpError(400, "localPart is required.");
-    if (!options.password)
+    }
+    if (!options.password) {
         throw new HttpError(400, "password is required.");
+    }
     const address = `${localPart}@${domain}`.toLowerCase();
     const result = await mailcowRequest("/api/v1/add/mailbox", {
         method: "POST",
@@ -292,8 +311,9 @@ export async function createMailcowMailbox(options) {
 }
 export async function deleteMailcowMailbox(address) {
     const normalized = address.trim().toLowerCase();
-    if (!normalized)
+    if (!normalized) {
         return;
+    }
     try {
         const result = await mailcowRequest("/api/v1/delete/mailbox", {
             method: "POST",
@@ -306,8 +326,9 @@ export async function deleteMailcowMailbox(address) {
     }
     catch (error) {
         const message = String(error?.message ?? "");
-        if (isMissingMessage(message))
+        if (isMissingMessage(message)) {
             return;
+        }
         if (error instanceof HttpError) {
             throw error;
         }
@@ -316,8 +337,9 @@ export async function deleteMailcowMailbox(address) {
 }
 export async function deleteMailcowAliases(addresses) {
     const items = addresses.map((address) => address.trim().toLowerCase()).filter(Boolean);
-    if (items.length === 0)
+    if (items.length === 0) {
         return;
+    }
     try {
         const result = await mailcowRequest("/api/v1/delete/alias", {
             method: "POST",
@@ -330,8 +352,9 @@ export async function deleteMailcowAliases(addresses) {
     }
     catch (error) {
         const message = String(error?.message ?? "");
-        if (isMissingMessage(message))
+        if (isMissingMessage(message)) {
             return;
+        }
         if (error instanceof HttpError) {
             throw error;
         }
@@ -340,8 +363,9 @@ export async function deleteMailcowAliases(addresses) {
 }
 export async function deleteMailcowDomain(domain) {
     const normalized = normalizeDomain(domain);
-    if (!normalized)
+    if (!normalized) {
         return;
+    }
     try {
         const result = await mailcowRequest("/api/v1/delete/domain", {
             method: "POST",
@@ -354,8 +378,9 @@ export async function deleteMailcowDomain(domain) {
     }
     catch (error) {
         const message = String(error?.message ?? "");
-        if (isMissingMessage(message))
+        if (isMissingMessage(message)) {
             return;
+        }
         if (error instanceof HttpError) {
             throw error;
         }
@@ -378,8 +403,9 @@ export async function getMailcowDomainActive(domain) {
     if (activeValue === undefined || activeValue === null) {
         throw new HttpError(502, "Mailcow domain status is unavailable.");
     }
-    if (typeof activeValue === "number")
+    if (typeof activeValue === "number") {
         return activeValue === 1;
+    }
     return String(activeValue).trim() === "1";
 }
 export async function purgeMailcowDomain(domain) {

@@ -84,8 +84,9 @@ export async function ensureDatabase(dbName, ownerUser) {
         await client.query(`GRANT ALL PRIVILEGES ON DATABASE ${quoteIdent(safeDb)} TO ${quoteIdent(safeOwner)}`);
         const dbList = await client.query("SELECT datname FROM pg_database WHERE datallowconn = true");
         for (const row of dbList.rows) {
-            if (row.datname === safeDb)
+            if (row.datname === safeDb) {
                 continue;
+            }
             await client.query(`REVOKE CONNECT ON DATABASE ${quoteIdent(row.datname)} FROM ${quoteIdent(safeOwner)}`);
         }
         return { created: !dbExists };
@@ -95,8 +96,9 @@ export async function revokeAndTerminate(dbName) {
     const safeDb = normalizeDbName(dbName);
     await withAdminClient(async (client) => {
         const dbResult = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [safeDb]);
-        if ((dbResult.rowCount ?? 0) === 0)
+        if ((dbResult.rowCount ?? 0) === 0) {
             return;
+        }
         await client.query(`REVOKE CONNECT ON DATABASE ${quoteIdent(safeDb)} FROM PUBLIC`);
         await client.query("SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1", [
             safeDb

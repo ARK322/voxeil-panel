@@ -22,8 +22,9 @@ export async function ensurePvc(namespace, sizeGi) {
         });
     }
     catch (error) {
-        if (error?.response?.statusCode !== 409)
+        if (error?.response?.statusCode !== 409) {
             throw error;
+        }
     }
 }
 export async function getPvcSizeGi(namespace) {
@@ -34,8 +35,9 @@ export async function getPvcSizeGi(namespace) {
         return parseGiToNumber(value);
     }
     catch (error) {
-        if (error?.response?.statusCode === 404)
+        if (error?.response?.statusCode === 404) {
             return null;
+        }
         throw error;
     }
 }
@@ -52,7 +54,7 @@ export async function expandPvcIfNeeded(namespace, nextSizeGi) {
         throw error;
     }
     const currentGi = parseGiToNumber(pvc.body.spec?.resources?.requests?.storage);
-    if (currentGi != null && nextSizeGi <= currentGi) {
+    if (currentGi !== null && nextSizeGi <= currentGi) {
         throw new HttpError(400, "diskGi must be greater than current size.");
     }
     const resourceVersion = pvc.body.metadata?.resourceVersion;
@@ -101,8 +103,9 @@ export async function ensureUserHomePvc(namespace, sizeGi = DEFAULT_USER_HOME_SI
         });
     }
     catch (error) {
-        if (error?.response?.statusCode !== 409)
+        if (error?.response?.statusCode !== 409) {
             throw error;
+        }
     }
 }
 
@@ -114,8 +117,9 @@ export async function getUserHomePvcSizeGi(namespace) {
         return parseGiToNumber(value);
     }
     catch (error) {
-        if (error?.response?.statusCode === 404)
+        if (error?.response?.statusCode === 404) {
             return null;
+        }
         throw error;
     }
 }

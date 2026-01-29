@@ -15,8 +15,9 @@ let pruneInterval = null;
 let signalsRegistered = false;
 
 function registerSignalCleanupOnce() {
-    if (signalsRegistered)
+    if (signalsRegistered) {
         return;
+    }
     signalsRegistered = true;
     const cleanup = () => {
         if (pruneInterval) {
@@ -29,8 +30,9 @@ function registerSignalCleanupOnce() {
 }
 
 function startPruneInterval() {
-    if (pruneInterval)
+    if (pruneInterval) {
         return;
+    }
     registerSignalCleanupOnce();
     pruneInterval = setInterval(() => {
         void pruneRateLimitStore().catch(() => undefined);
@@ -38,16 +40,18 @@ function startPruneInterval() {
 }
 
 function enforceMaxEntries(now) {
-    if (store.size <= MAX_ENTRIES)
+    if (store.size <= MAX_ENTRIES) {
         return;
+    }
     // Production-ready: prune first, then evict oldest to cap memory usage deterministically.
     for (const [k, v] of store.entries()) {
         if (now >= v.resetAt) {
             store.delete(k);
         }
     }
-    if (store.size <= MAX_ENTRIES)
+    if (store.size <= MAX_ENTRIES) {
         return;
+    }
     // Evict oldest by lastSeen.
     const entries = Array.from(store.entries()).sort((a, b) => (a[1].lastSeen ?? 0) - (b[1].lastSeen ?? 0));
     const toRemove = Math.max(0, store.size - MAX_ENTRIES);
