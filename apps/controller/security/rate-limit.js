@@ -1,4 +1,6 @@
 import { withClient as poolWithClient } from "../db/pool.js";
+import { logger } from "../config/logger.js";
+import { parseEnvNumber } from "../config/env.js";
 
 // Production-ready rate limiting:
 // - default: in-memory (single instance)
@@ -7,8 +9,8 @@ const STORE_MODE = (process.env.RATE_LIMIT_STORE ?? "memory").toLowerCase();
 
 // ---- Memory store (fallback) ----
 const store = new Map(); // key -> { count, resetAt, lastSeen }
-const PRUNE_INTERVAL_MS = Number(process.env.RATE_LIMIT_PRUNE_INTERVAL_MS ?? "60000"); // 1 minute
-const MAX_ENTRIES = Number(process.env.RATE_LIMIT_MAX_ENTRIES ?? "10000");
+const PRUNE_INTERVAL_MS = parseEnvNumber("RATE_LIMIT_PRUNE_INTERVAL_MS", 60000, { min: 1000 });
+const MAX_ENTRIES = parseEnvNumber("RATE_LIMIT_MAX_ENTRIES", 10000, { min: 100, max: 1000000 });
 let pruneInterval = null;
 let signalsRegistered = false;
 
@@ -168,15 +170,15 @@ export function startAutoCleanup() {
         return; // Already started
     }
     
-    const intervalMs = Number(process.env.RATE_LIMIT_CLEANUP_INTERVAL_MS ?? "300000"); // 5 min
+    const intervalMs = parseEnvNumber("RATE_LIMIT_CLEANUP_INTERVAL_MS", 300000, { min: 1000 });
     
     cleanupInterval = setInterval(() => {
         pruneRateLimitStore().catch((err) => {
-            console.error("Failed to prune rate limit store:", err);
+            logger.error({ err }, "Failed to prune rate limit store");
         });
     }, intervalMs);
     
-    console.info("Rate limit auto-cleanup started (interval: %dms)", intervalMs);
+    logger.info({ intervalMs }, "Rate limit auto-cleanup started");
 }
 
 /**
@@ -186,6 +188,6 @@ export function stopAutoCleanup() {
     if (cleanupInterval) {
         clearInterval(cleanupInterval);
         cleanupInterval = null;
-        console.info("Rate limit auto-cleanup stopped");
+        logger.info("Rate limit auto-cleanup stopped");
     }
 }

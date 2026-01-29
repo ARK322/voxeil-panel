@@ -2,6 +2,7 @@ import jwt from "jsonwebtoken";
 import crypto from "node:crypto";
 import { HttpError } from "../http/errors.js";
 import { isTokenRevoked } from "./token-revocation.service.js";
+import { logger } from "../config/logger.js";
 
 const JWT_SECRET = process.env.JWT_SECRET;
 
@@ -21,7 +22,7 @@ const hasNumber = /[0-9]/.test(JWT_SECRET);
 const hasSpecial = /[^A-Za-z0-9]/.test(JWT_SECRET);
 
 if (!(hasUpperCase && hasLowerCase && hasNumber && hasSpecial)) {
-    console.warn("⚠️  WARNING: JWT_SECRET should contain uppercase, lowercase, numbers, and special characters for maximum security.");
+    logger.warn("JWT_SECRET should contain uppercase, lowercase, numbers, and special characters for maximum security");
 }
 
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN ?? "12h";

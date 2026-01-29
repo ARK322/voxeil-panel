@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { HttpError } from "./errors.js";
 import { logger } from "../config/logger.js";
+import { parseEnvNumber } from "../config/env.js";
 import { readAllowlist, writeAllowlist } from "../security/allowlist.js";
 import { checkRateLimit, pruneRateLimitStore } from "../security/rate-limit.js";
 import { logAudit } from "../audit/audit.service.js";
@@ -57,8 +58,8 @@ import {
 const AllowlistSchema = z.object({
     items: z.array(z.string().min(1)).default([])
 });
-const LOGIN_RATE_LIMIT = Number(process.env.LOGIN_RATE_LIMIT ?? "10");
-const LOGIN_RATE_WINDOW_SECONDS = Number(process.env.LOGIN_RATE_WINDOW_SECONDS ?? "300");
+const LOGIN_RATE_LIMIT = parseEnvNumber("LOGIN_RATE_LIMIT", 10, { min: 1, max: 1000 });
+const LOGIN_RATE_WINDOW_SECONDS = parseEnvNumber("LOGIN_RATE_WINDOW_SECONDS", 300, { min: 1, max: 86400 });
 
 function requireAdmin(req) {
     if (!req.user) {

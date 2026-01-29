@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { HttpError } from "../http/errors.js";
 import { logger } from "../config/logger.js";
+import { parseEnvNumber } from "../config/env.js";
 
 // Shared database pool for all services
 // Production-ready: connection pooling prevents connection exhaustion
@@ -18,16 +19,15 @@ function requireEnv(name) {
 function dbConfig() {
     return {
         host: requireEnv("POSTGRES_HOST"),
-        port: Number(process.env.POSTGRES_PORT ?? "5432"),
+        port: parseEnvNumber("POSTGRES_PORT", 5432, { min: 1, max: 65535 }),
         user: requireEnv("POSTGRES_ADMIN_USER"),
         password: requireEnv("POSTGRES_ADMIN_PASSWORD"),
         database: requireEnv("POSTGRES_DB"),
-        // Production-ready pool configuration
-        max: Number(process.env.DB_POOL_MAX ?? "20"), // Maximum pool size
-        min: Number(process.env.DB_POOL_MIN ?? "2"), // Minimum pool size
-        idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_TIMEOUT ?? "30000"), // 30s
-        connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECTION_TIMEOUT ?? "10000"), // 10s
-        statement_timeout: Number(process.env.DB_STATEMENT_TIMEOUT ?? "30000"), // 30s query timeout
+        max: parseEnvNumber("DB_POOL_MAX", 20, { min: 1, max: 100 }),
+        min: parseEnvNumber("DB_POOL_MIN", 2, { min: 0, max: 50 }),
+        idleTimeoutMillis: parseEnvNumber("DB_POOL_IDLE_TIMEOUT", 30000, { min: 1000 }),
+        connectionTimeoutMillis: parseEnvNumber("DB_POOL_CONNECTION_TIMEOUT", 10000, { min: 1000 }),
+        statement_timeout: parseEnvNumber("DB_STATEMENT_TIMEOUT", 30000, { min: 1000 }),
     };
 }
 
@@ -96,26 +96,26 @@ let adminPool = null;
 
 function adminDbConfig() {
     const host = process.env.POSTGRES_HOST?.trim() ?? process.env.DB_HOST?.trim();
-    const port = Number(process.env.POSTGRES_PORT ?? process.env.DB_PORT ?? "5432");
+    const port = parseEnvNumber("POSTGRES_PORT", 5432, { min: 1, max: 65535 });
     const user = process.env.POSTGRES_ADMIN_USER?.trim() ?? process.env.DB_ADMIN_USER?.trim();
     const password = process.env.POSTGRES_ADMIN_PASSWORD?.trim() ?? process.env.DB_ADMIN_PASSWORD?.trim();
     const database = process.env.POSTGRES_DB?.trim() || "postgres";
-    
+
     if (!host || !user || !password) {
         throw new HttpError(500, "Postgres admin configuration missing.");
     }
-    
+
     return {
         host,
         port,
         user,
         password,
         database,
-        max: Number(process.env.DB_ADMIN_POOL_MAX ?? "10"),
-        min: Number(process.env.DB_ADMIN_POOL_MIN ?? "1"),
-        idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_TIMEOUT ?? "30000"),
-        connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECTION_TIMEOUT ?? "10000"),
-        statement_timeout: Number(process.env.DB_STATEMENT_TIMEOUT ?? "30000"),
+        max: parseEnvNumber("DB_ADMIN_POOL_MAX", 10, { min: 1, max: 100 }),
+        min: parseEnvNumber("DB_ADMIN_POOL_MIN", 1, { min: 0, max: 50 }),
+        idleTimeoutMillis: parseEnvNumber("DB_POOL_IDLE_TIMEOUT", 30000, { min: 1000 }),
+        connectionTimeoutMillis: parseEnvNumber("DB_POOL_CONNECTION_TIMEOUT", 10000, { min: 1000 }),
+        statement_timeout: parseEnvNumber("DB_STATEMENT_TIMEOUT", 30000, { min: 1000 }),
     };
 }
 
