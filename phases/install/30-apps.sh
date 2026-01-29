@@ -14,7 +14,7 @@ check_kubectl_context || exit 1
 
 # Apply applications
 log_info "Applying application manifests..."
-if ! kubectl apply -k "${SCRIPT_DIR}/../../apps/deploy/clusters/prod"; then
+if ! run_kubectl apply -k "${SCRIPT_DIR}/../../apps/deploy/clusters/prod"; then
   log_error "Failed to apply applications"
   exit 1
 fi

@@ -231,8 +231,10 @@ wait_ns_ready() {
 wait_deploy_ready() {
   local namespace="$1"
   local deployment="$2"
-  local timeout="${3:-300}"
+  local timeout="${3:-${VOXEIL_WAIT_TIMEOUT}}"
   local waited=0
+  
+  log_info "Waiting for deployment ${deployment} in namespace ${namespace} (timeout: ${timeout}s)..."
   
   while [ ${waited} -lt ${timeout} ]; do
     if run_kubectl get deployment "${deployment}" -n "${namespace}" >/dev/null 2>&1; then
@@ -244,7 +246,7 @@ wait_deploy_ready() {
       fi
     fi
     if [ $((waited % 10)) -eq 0 ] && [ ${waited} -gt 0 ]; then
-      log_info "Waiting for deployment ${deployment}... (${waited}/${timeout}s)"
+      log_info "Still waiting for deployment ${deployment}... (${waited}/${timeout}s)"
     fi
     sleep 2
     waited=$((waited + 2))
@@ -254,16 +256,65 @@ wait_deploy_ready() {
   return 1
 }
 
+# Wait for statefulset to be ready
+wait_sts_ready() {
+  local namespace="$1"
+  local statefulset="$2"
+  local timeout="${3:-${VOXEIL_WAIT_TIMEOUT}}"
+  local waited=0
+  
+  log_info "Waiting for statefulset ${statefulset} in namespace ${namespace} (timeout: ${timeout}s)..."
+  
+  while [ ${waited} -lt ${timeout} ]; do
+    if run_kubectl get statefulset "${statefulset}" -n "${namespace}" >/dev/null 2>&1; then
+      local ready=$(run_kubectl get statefulset "${statefulset}" -n "${namespace}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+      local desired=$(run_kubectl get statefulset "${statefulset}" -n "${namespace}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+      if [ "${ready}" = "${desired}" ] && [ "${desired}" -gt 0 ]; then
+        log_ok "Statefulset ${statefulset} ready (${ready}/${desired})"
+        return 0
+      fi
+    fi
+    if [ $((waited % 10)) -eq 0 ] && [ ${waited} -gt 0 ]; then
+      log_info "Still waiting for statefulset ${statefulset}... (${waited}/${timeout}s)"
+    fi
+    sleep 2
+    waited=$((waited + 2))
+  done
+  
+  log_error "Statefulset ${statefulset} not ready after ${timeout}s"
+  return 1
+}
+
+# Wait for rollout status (deployment or statefulset)
+wait_rollout_status() {
+  local namespace="$1"
+  local resource_type="$2"  # deployment or statefulset
+  local resource_name="$3"
+  local timeout="${4:-${VOXEIL_WAIT_TIMEOUT}}"
+  
+  log_info "Waiting for ${resource_type} ${resource_name} rollout in namespace ${namespace} (timeout: ${timeout}s)..."
+  
+  if run_kubectl rollout status "${resource_type}/${resource_name}" -n "${namespace}" --timeout="${timeout}s" >/dev/null 2>&1; then
+    log_ok "${resource_type} ${resource_name} rollout complete"
+    return 0
+  else
+    log_error "${resource_type} ${resource_name} rollout failed or timed out after ${timeout}s"
+    return 1
+  fi
+}
+
 # Wait for namespace deletion
 wait_ns_deleted() {
   local namespace="$1"
-  local timeout="${2:-90}"
+  local timeout="${2:-${VOXEIL_WAIT_TIMEOUT}}"
   local waited=0
   local dry_run="${DRY_RUN:-false}"
   
   if [ "${dry_run}" = "true" ]; then
     return 0
   fi
+  
+  log_info "Waiting for namespace ${namespace} to be deleted (timeout: ${timeout}s)..."
   
   while [ ${waited} -lt ${timeout} ]; do
     if ! run_kubectl get namespace "${namespace}" >/dev/null 2>&1; then
@@ -273,7 +324,7 @@ wait_ns_deleted() {
     sleep 1
     waited=$((waited + 1))
     if [ $((waited % 10)) -eq 0 ]; then
-      log_info "Waiting for namespace ${namespace} to be deleted... (${waited}/${timeout}s)"
+      log_info "Still waiting for namespace ${namespace} to be deleted... (${waited}/${timeout}s)"
     fi
   done
   

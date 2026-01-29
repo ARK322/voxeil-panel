@@ -14,7 +14,7 @@ check_kubectl_context || exit 1
 
 # Apply core infrastructure
 log_info "Applying core infrastructure manifests..."
-if ! kubectl apply -k "${SCRIPT_DIR}/../../infra/k8s/clusters/prod"; then
+if ! run_kubectl apply -k "${SCRIPT_DIR}/../../infra/k8s/clusters/prod"; then
   log_error "Failed to apply core infrastructure"
   exit 1
 fi

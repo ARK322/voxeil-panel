@@ -10,14 +10,22 @@ log_phase "doctor/90-summary"
 EXIT_CODE="${EXIT_CODE:-0}"
 
 echo ""
-echo "=== Summary ==="
+echo "=== Doctor Check Summary ==="
 if [ ${EXIT_CODE} -eq 0 ]; then
-  echo "[OK] System is clean - no Voxeil resources found"
+  log_ok "System is healthy - all checks passed"
+  echo ""
+  echo "Cluster is ready for production use."
+elif [ ${EXIT_CODE} -eq 2 ]; then
+  log_error "Unable to check system (kubectl/cluster not accessible)"
+  echo ""
+  echo "Please ensure k3s is installed and kubectl can access the cluster."
 else
-  echo "[WARN] System has leftover Voxeil resources"
+  log_error "System has issues - some checks failed"
   echo ""
   echo "Recommended next steps:"
-  echo "  bash /tmp/voxeil.sh uninstall --force"
+  echo "  - Review error messages above"
+  echo "  - For stuck namespaces: bash voxeil.sh uninstall --force"
+  echo "  - For deployment issues: Check pod logs and events"
 fi
 
 exit ${EXIT_CODE}

@@ -109,8 +109,12 @@ safe_source() {
   fi
 }
 
+# Wait timeout (configurable, default 600s)
+VOXEIL_WAIT_TIMEOUT="${VOXEIL_WAIT_TIMEOUT:-600}"
+
 # State registry helpers
 STATE_FILE="/var/lib/voxeil/install.state"
+STATE_ENV_FILE="/var/lib/voxeil/state.env"
 
 ensure_state_dir() {
   mkdir -p "$(dirname "${STATE_FILE}")"

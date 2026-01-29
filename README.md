@@ -158,6 +158,28 @@ else
 fi
 ```
 
+## State Management
+
+Voxeil Panel uses a state file (`/var/lib/voxeil/state.env`) to store generated secrets and configuration values between install runs. This ensures:
+
+- **Idempotency**: Re-running `install` reuses existing secrets instead of generating new ones
+- **Consistency**: Same secrets are used across install/uninstall cycles
+- **Security**: Secret values are stored with restricted permissions (600)
+
+**What is stored:**
+- Generated API keys and JWT secrets
+- Database passwords and connection strings
+- Admin credentials (username, password, email)
+- Service configuration values (ports, URLs, etc.)
+
+**Resetting state:**
+To force regeneration of all secrets, delete the state file:
+```bash
+rm -f /var/lib/voxeil/state.env
+```
+
+**Note:** Deleting the state file will cause new secrets to be generated on the next install, which may break existing deployments if they depend on the old secrets.
+
 ## Güvenlik / Dikkat
 
 ### Kritik Komutlar

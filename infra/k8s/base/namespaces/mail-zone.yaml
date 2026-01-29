@@ -4,4 +4,6 @@ metadata:
   name: mail-zone
   labels:
     app.kubernetes.io/part-of: voxeil
+    app.kubernetes.io/managed-by: voxeil
+    voxeil.io/owned: "true"
     voxeil.zone: mailcow

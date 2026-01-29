@@ -13,7 +13,7 @@ ensure_kubectl || exit 1
 
 # Remove applications first (before infrastructure)
 log_info "Removing applications..."
-if ! kubectl delete -k "${SCRIPT_DIR}/../../apps/deploy/clusters/prod" --ignore-not-found --request-timeout=120s; then
+if ! run_kubectl delete -k "${SCRIPT_DIR}/../../apps/deploy/clusters/prod" --ignore-not-found --request-timeout=120s; then
   log_warn "Some resources may not have been found (this is expected during uninstall)"
 fi
 
