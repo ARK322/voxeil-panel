@@ -34,7 +34,7 @@ jobs:
       - name: Build and push voxeil-controller
         uses: docker/build-push-action@v5
         with:
-          context: apps/controller
+          context: .
           file: apps/controller/Dockerfile
           push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
           tags: |
@@ -46,7 +46,7 @@ jobs:
       - name: Build and push voxeil-panel
         uses: docker/build-push-action@v5
         with:
-          context: apps/panel
+          context: .
           file: apps/panel/Dockerfile
           push: ${{ github.ref == 'refs/heads/main' && github.event_name == 'push' }}
           tags: |
