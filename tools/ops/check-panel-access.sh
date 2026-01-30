@@ -288,6 +288,7 @@ if command -v curl >/dev/null 2>&1; then
   fi
   
   echo "Testing HTTPS (port 443):"
+  HTTPS_CODE=""
   HTTPS_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 -k "https://${PANEL_DOMAIN}" 2>/dev/null || echo "000")
   if [ "${HTTPS_CODE}" = "000" ]; then
     echo "  ❌ Cannot connect (timeout, DNS, or certificate issue)"
