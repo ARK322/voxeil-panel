@@ -15,7 +15,9 @@ echo ""
 echo "Panel pod details:"
 pods_output=$(kubectl get pods -n platform -l app=panel -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
 if [ -n "${pods_output}" ]; then
-  echo "${pods_output}" | tr ' ' '\n' | while IFS= read -r pod; do
+  # shellcheck disable=SC2206
+  pods=(${pods_output})
+  for pod in "${pods[@]}"; do
     [ -z "${pod}" ] && continue
     echo "--- Pod: ${pod} ---"
     kubectl get pod "${pod}" -n platform -o jsonpath='{.status.containerStatuses[0]}' | python3 -m json.tool 2>/dev/null || kubectl describe pod "${pod}" -n platform | grep -A 10 "State:" || true
@@ -31,7 +33,9 @@ echo ""
 echo "Controller pod details:"
 pods_output=$(kubectl get pods -n platform -l app=controller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
 if [ -n "${pods_output}" ]; then
-  echo "${pods_output}" | tr ' ' '\n' | while IFS= read -r pod; do
+  # shellcheck disable=SC2206
+  pods=(${pods_output})
+  for pod in "${pods[@]}"; do
     [ -z "${pod}" ] && continue
     echo "--- Pod: ${pod} ---"
     kubectl get pod "${pod}" -n platform -o jsonpath='{.status.containerStatuses[0]}' | python3 -m json.tool 2>/dev/null || kubectl describe pod "${pod}" -n platform | grep -A 10 "State:" || true
