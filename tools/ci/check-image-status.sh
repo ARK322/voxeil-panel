@@ -13,7 +13,9 @@ kubectl get pods -n platform -l app=panel -o custom-columns=NAME:.metadata.name,
 
 echo ""
 echo "Panel pod details:"
-for pod in $(kubectl get pods -n platform -l app=panel -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+mapfile -t pods < <(kubectl get pods -n platform -l app=panel -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+for pod in "${pods[@]}"; do
+  [ -z "${pod}" ] && continue
   echo "--- Pod: ${pod} ---"
   kubectl get pod "${pod}" -n platform -o jsonpath='{.status.containerStatuses[0]}' | python3 -m json.tool 2>/dev/null || kubectl describe pod "${pod}" -n platform | grep -A 10 "State:" || true
   echo ""
@@ -25,7 +27,9 @@ kubectl get pods -n platform -l app=controller -o custom-columns=NAME:.metadata.
 
 echo ""
 echo "Controller pod details:"
-for pod in $(kubectl get pods -n platform -l app=controller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null); do
+mapfile -t pods < <(kubectl get pods -n platform -l app=controller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+for pod in "${pods[@]}"; do
+  [ -z "${pod}" ] && continue
   echo "--- Pod: ${pod} ---"
   kubectl get pod "${pod}" -n platform -o jsonpath='{.status.containerStatuses[0]}' | python3 -m json.tool 2>/dev/null || kubectl describe pod "${pod}" -n platform | grep -A 10 "State:" || true
   echo ""
