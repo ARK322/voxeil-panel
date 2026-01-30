@@ -18,10 +18,11 @@ log_info "Applying Kyverno CRDs directly (bypassing kustomize to avoid annotatio
 KYVERNO_CRDS="${REPO_ROOT}/infra/k8s/components/kyverno/install.yaml"
 if [ -f "${KYVERNO_CRDS}" ]; then
   # Apply CRDs directly without kustomize to avoid annotation size issues
-  run_kubectl apply -f "${KYVERNO_CRDS}" --server-side --force-conflicts --field-manager=kubectl-client-side-apply 2>&1 || {
-    # Fallback to regular apply if server-side fails
-    run_kubectl apply -f "${KYVERNO_CRDS}" --validate=false 2>&1 || true
-  }
+  # Use server-side apply for deterministic behavior with large CRDs
+  if ! run_kubectl apply --server-side --force-conflicts --field-manager=voxeil -f "${KYVERNO_CRDS}"; then
+    log_error "Failed to apply Kyverno install.yaml"
+    exit 1
+  fi
 fi
 
 # Apply core infrastructure
