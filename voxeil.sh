@@ -348,6 +348,7 @@ if [[ "${SUBCMD}" == "nuke" ]]; then
 fi
 
 # Setup repo (download and extract)
+REPO_ROOT=""
 REPO_ROOT=$(setup_repo)
 
 # Handle purge-node (security guard)
