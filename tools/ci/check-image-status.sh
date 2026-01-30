@@ -15,8 +15,10 @@ echo ""
 echo "Panel pod details:"
 pods_output=$(kubectl get pods -n platform -l app=panel -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
 if [ -n "${pods_output}" ]; then
+  old_IFS="${IFS}"
   IFS=' '
   read -r -a pods <<< "${pods_output}"
+  IFS="${old_IFS}"
   for pod in "${pods[@]}"; do
     [ -z "${pod}" ] && continue
     echo "--- Pod: ${pod} ---"
@@ -33,8 +35,10 @@ echo ""
 echo "Controller pod details:"
 pods_output=$(kubectl get pods -n platform -l app=controller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
 if [ -n "${pods_output}" ]; then
+  old_IFS="${IFS}"
   IFS=' '
   read -r -a pods <<< "${pods_output}"
+  IFS="${old_IFS}"
   for pod in "${pods[@]}"; do
     [ -z "${pod}" ] && continue
     echo "--- Pod: ${pod} ---"
