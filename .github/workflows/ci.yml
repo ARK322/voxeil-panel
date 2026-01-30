@@ -158,7 +158,10 @@ jobs:
             # Only fail on errors, not warnings (-S error)
             # -x: follow sourced files
             # -e SC1091: exclude "not following sourced files" warnings
-            shellcheck -S error -x -e SC1091 "$file" || exit 1
+            if ! shellcheck -S error -x -e SC1091 "$file"; then
+              echo "Error: shellcheck failed for $file"
+              exit 1
+            fi
           done
 
   docker-build:
