@@ -30,10 +30,9 @@ for ns in "${VOXEIL_NAMESPACES[@]}"; do
   fi
   
   # Wait for deployments/statefulsets to be deleted
-  local waited=0
-  local has_resources=true
+  waited=0
+  has_resources=true
   while [ ${waited} -lt 60 ] && [ "${has_resources}" = "true" ]; do
-    local deploy_count
     deploy_count=$(run_kubectl get deployments,statefulsets -n "${ns}" --no-headers 2>/dev/null | wc -l || echo "0")
     if [ "${deploy_count}" -eq "0" ]; then
       has_resources=false
