@@ -33,6 +33,7 @@ done
 
 echo ""
 echo "=== Image Pull Errors Summary ==="
+IMAGE_ERRORS=""
 IMAGE_ERRORS=$(kubectl get pods -n platform -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].state.waiting.reason}{"\t"}{.status.containerStatuses[0].state.waiting.message}{"\n"}{end}' 2>/dev/null | grep -E "(ImagePullBackOff|ErrImagePull|ImagePullError)" || echo "")
 
 if [ -z "${IMAGE_ERRORS}" ]; then
@@ -49,7 +50,9 @@ fi
 
 echo ""
 echo "=== Expected Images ==="
+PANEL_IMAGE=""
 PANEL_IMAGE=$(kubectl get deployment panel -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "NOT FOUND")
+CONTROLLER_IMAGE=""
 CONTROLLER_IMAGE=$(kubectl get deployment controller -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "NOT FOUND")
 
 echo "Panel image: ${PANEL_IMAGE}"
