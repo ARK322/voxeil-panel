@@ -30,9 +30,7 @@ log_ok "k3s API is reachable"
 # Check nodes
 log_info "Checking cluster nodes..."
 if run_kubectl get nodes >/dev/null 2>&1; then
-  local node_count
   node_count=$(run_kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
-  local ready_count
   ready_count=$(run_kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo "0")
   
   if [ "${node_count}" -gt 0 ] && [ "${ready_count}" -eq "${node_count}" ]; then
