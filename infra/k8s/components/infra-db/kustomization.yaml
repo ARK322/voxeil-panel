@@ -5,7 +5,7 @@ resources:
   - networkpolicy.yaml
   - pgadmin-auth.yaml
   - pgadmin-deploy.yaml
-  - pgadmin-ingress.yaml
+  # pgadmin-ingress.yaml excluded - contains REPLACE_PGADMIN_DOMAIN placeholder
   - pgadmin-secret.yaml
   - pgadmin-svc.yaml
   - postgres-secret.yaml
