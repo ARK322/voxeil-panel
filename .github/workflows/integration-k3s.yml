@@ -28,10 +28,23 @@ jobs:
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml || true
           export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
           echo "KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >> $GITHUB_ENV
-          # Wait for k3s to be ready
+          # Wait for k3s API to be ready
           timeout 120 bash -c 'until kubectl cluster-info &>/dev/null; do sleep 2; done'
           kubectl cluster-info
-          kubectl get nodes
+          # Wait for node to be registered (k3s needs time to register the node)
+          echo "Waiting for node to be registered..."
+          for i in {1..60}; do
+            if kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
+              echo "Node registered!"
+              kubectl get nodes
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "WARNING: Node not registered after 120 seconds, continuing anyway"
+              kubectl get nodes || true
+            fi
+            sleep 2
+          done
 
       - name: Configure kubectl access
         run: |
