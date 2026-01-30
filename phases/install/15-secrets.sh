@@ -66,19 +66,33 @@ get_or_generate_secret() {
 # Generate all required secrets
 log_info "Generating platform secrets..."
 
+ADMIN_API_KEY=""
 ADMIN_API_KEY=$(get_or_generate_secret "ADMIN_API_KEY" "VOXEIL_ADMIN_API_KEY")
+JWT_SECRET=""
 JWT_SECRET=$(get_or_generate_secret "JWT_SECRET" "VOXEIL_JWT_SECRET")
+PANEL_ADMIN_USERNAME=""
 PANEL_ADMIN_USERNAME=$(get_or_generate_secret "PANEL_ADMIN_USERNAME" "VOXEIL_PANEL_ADMIN_USERNAME" 'echo "admin"')
+PANEL_ADMIN_PASSWORD=""
 PANEL_ADMIN_PASSWORD=$(get_or_generate_secret "PANEL_ADMIN_PASSWORD" "VOXEIL_PANEL_ADMIN_PASSWORD")
+PANEL_ADMIN_EMAIL=""
 PANEL_ADMIN_EMAIL=$(get_or_generate_secret "PANEL_ADMIN_EMAIL" "VOXEIL_PANEL_ADMIN_EMAIL" 'echo "admin@voxeil.local"')
+SITE_NODEPORT_START=""
 SITE_NODEPORT_START=$(get_or_generate_secret "SITE_NODEPORT_START" "VOXEIL_SITE_NODEPORT_START" 'echo "30000"')
+SITE_NODEPORT_END=""
 SITE_NODEPORT_END=$(get_or_generate_secret "SITE_NODEPORT_END" "VOXEIL_SITE_NODEPORT_END" 'echo "32767"')
+MAILCOW_API_URL=""
 MAILCOW_API_URL=$(get_or_generate_secret "MAILCOW_API_URL" "VOXEIL_MAILCOW_API_URL" 'echo "http://mailcow.mail-zone.svc.cluster.local"')
+MAILCOW_API_KEY=""
 MAILCOW_API_KEY=$(get_or_generate_secret "MAILCOW_API_KEY" "VOXEIL_MAILCOW_API_KEY" 'echo ""')
+POSTGRES_HOST=""
 POSTGRES_HOST=$(get_or_generate_secret "POSTGRES_HOST" "VOXEIL_POSTGRES_HOST" 'echo "postgres.infra-db.svc.cluster.local"')
+POSTGRES_PORT=""
 POSTGRES_PORT=$(get_or_generate_secret "POSTGRES_PORT" "VOXEIL_POSTGRES_PORT" 'echo "5432"')
+POSTGRES_ADMIN_USER=""
 POSTGRES_ADMIN_USER=$(get_or_generate_secret "POSTGRES_ADMIN_USER" "VOXEIL_POSTGRES_ADMIN_USER" 'echo "postgres"')
+POSTGRES_ADMIN_PASSWORD=""
 POSTGRES_ADMIN_PASSWORD=$(get_or_generate_secret "POSTGRES_ADMIN_PASSWORD" "VOXEIL_POSTGRES_ADMIN_PASSWORD")
+POSTGRES_DB=""
 POSTGRES_DB=$(get_or_generate_secret "POSTGRES_DB" "VOXEIL_POSTGRES_DB" 'echo "voxeil"')
 
 # Ensure platform namespace exists
