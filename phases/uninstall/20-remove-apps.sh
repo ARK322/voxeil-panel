@@ -24,9 +24,8 @@ TIMEOUT="${VOXEIL_WAIT_TIMEOUT:-600}"
 # Wait for platform namespace resources to be cleaned up
 if run_kubectl get namespace platform >/dev/null 2>&1; then
   # Wait for deployments to be deleted
-  local waited=0
+  waited=0
   while [ ${waited} -lt ${TIMEOUT} ]; do
-    local deploy_count
     deploy_count=$(run_kubectl get deployments -n platform --no-headers 2>/dev/null | wc -l || echo "0")
     if [ "${deploy_count}" -eq "0" ]; then
       log_ok "All application deployments deleted"
