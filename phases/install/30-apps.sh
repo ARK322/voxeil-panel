@@ -20,18 +20,22 @@ if ! run_kubectl apply -k "${REPO_ROOT}/apps/deploy/clusters/prod"; then
   exit 1
 fi
 
-# Wait for application deployments to be ready
+# Wait for application deployments to be ready (if they exist)
 log_info "Waiting for application deployments to be ready..."
 TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"
 
-# Wait for controller (critical)
+# Wait for controller (if deployment exists)
 if run_kubectl get deployment controller -n platform >/dev/null 2>&1; then
   wait_rollout_status "platform" "deployment" "controller" "${TIMEOUT}" || die 1 "controller deployment not ready"
+else
+  log_info "Controller deployment not found (may be excluded in kustomization)"
 fi
 
-# Wait for panel (critical)
+# Wait for panel (if deployment exists)
 if run_kubectl get deployment panel -n platform >/dev/null 2>&1; then
   wait_rollout_status "platform" "deployment" "panel" "${TIMEOUT}" || die 1 "panel deployment not ready"
+else
+  log_info "Panel deployment not found (may be excluded in kustomization)"
 fi
 
 log_ok "Applications phase complete"
