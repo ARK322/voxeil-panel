@@ -2,7 +2,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - mailcow-auth.yaml
+  # mailcow-auth.yaml excluded - requires Traefik Middleware CRDs
   - mailcow-core.yaml
   # mailcow-ingress.yaml excluded - contains REPLACE_MAILCOW_DOMAIN placeholder
   - networkpolicy.yaml

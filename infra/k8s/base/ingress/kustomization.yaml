@@ -3,4 +3,4 @@ kind: Kustomization
 
 resources:
   - helmchartconfig-traefik.yaml
-  - security-middlewares.yaml
+  # security-middlewares.yaml excluded - requires Traefik Middleware CRDs
