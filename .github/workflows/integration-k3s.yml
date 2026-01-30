@@ -75,8 +75,16 @@ jobs:
           GHCR_OWNER="${OWNER_LC}" ./tools/ci/build-images.sh --tag local
           docker save "ghcr.io/${OWNER_LC}/voxeil-controller:local" -o /tmp/voxeil-controller.tar
           docker save "ghcr.io/${OWNER_LC}/voxeil-panel:local" -o /tmp/voxeil-panel.tar
-          sudo k3s ctr images import /tmp/voxeil-controller.tar
-          sudo k3s ctr images import /tmp/voxeil-panel.tar
+          if [ -S /run/k3s/containerd/containerd.sock ]; then
+            sudo k3s ctr images import /tmp/voxeil-controller.tar
+            sudo k3s ctr images import /tmp/voxeil-panel.tar
+          elif [ -S /run/containerd/containerd.sock ]; then
+            sudo ctr --address /run/containerd/containerd.sock -n k8s.io images import /tmp/voxeil-controller.tar
+            sudo ctr --address /run/containerd/containerd.sock -n k8s.io images import /tmp/voxeil-panel.tar
+          else
+            echo "No containerd socket found for image import"
+            exit 1
+          fi
 
       - name: First install
         run: |
