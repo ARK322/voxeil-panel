@@ -113,11 +113,25 @@ safe_source() {
 VOXEIL_WAIT_TIMEOUT="${VOXEIL_WAIT_TIMEOUT:-600}"
 
 # State registry helpers
-STATE_FILE="/var/lib/voxeil/install.state"
-STATE_ENV_FILE="/var/lib/voxeil/state.env"
+# Use user-writable directory if /var/lib/voxeil is not accessible
+if [ -w "/var/lib" ] 2>/dev/null; then
+  STATE_FILE="/var/lib/voxeil/install.state"
+  STATE_ENV_FILE="/var/lib/voxeil/state.env"
+else
+  # Fallback to user's home directory or current directory
+  STATE_DIR="${HOME:-.}/.voxeil"
+  STATE_FILE="${STATE_DIR}/install.state"
+  STATE_ENV_FILE="${STATE_DIR}/state.env"
+fi
 
 ensure_state_dir() {
-  mkdir -p "$(dirname "${STATE_FILE}")"
+  mkdir -p "$(dirname "${STATE_FILE}")" || {
+    # If that fails, try using current directory
+    STATE_DIR="${PWD}/.voxeil"
+    STATE_FILE="${STATE_DIR}/install.state"
+    STATE_ENV_FILE="${STATE_DIR}/state.env"
+    mkdir -p "${STATE_DIR}"
+  }
 }
 
 init_state_registry() {
