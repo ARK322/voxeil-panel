@@ -166,6 +166,7 @@ else
     done
     
     # Get image name from deployment
+    PANEL_IMAGE=""
     PANEL_IMAGE=$(kubectl get deployment panel -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "")
     if [ -n "${PANEL_IMAGE}" ]; then
       echo "  Expected image: ${PANEL_IMAGE}"
@@ -212,6 +213,7 @@ else
   echo ""
   
   # Check for image pull errors in controller
+  CONTROLLER_IMAGE_ERRORS=""
   CONTROLLER_IMAGE_ERRORS=$(kubectl get pods -n platform -l app=controller \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].state.waiting.reason}{"\t"}{.status.containerStatuses[0].state.waiting.message}{"\n"}{end}' 2>/dev/null | \
     grep -E "(ImagePullBackOff|ErrImagePull|ImagePullError)" || true)
