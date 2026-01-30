@@ -128,6 +128,11 @@ jobs:
               echo "Skipping Traefik CRD: $file"
               continue
             fi
+            # Skip Traefik CRDs (HelmChartConfig, Middleware, IngressRouteTCP, IngressRouteUDP)
+            if grep -qE '^kind:\s*(HelmChartConfig|Middleware|IngressRouteTCP|IngressRouteUDP)' "$file" 2>/dev/null; then
+              echo "Skipping Traefik CRD: $file"
+              continue
+            fi
             # Skip kustomization.yaml files - these are kustomize-specific, not Kubernetes resources
             if echo "$file" | grep -qE 'kustomization\.ya?ml$'; then
               echo "Skipping kustomization file: $file"
