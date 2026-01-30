@@ -8,5 +8,5 @@ resources:
 
 images:
   - name: REPLACE_CONTROLLER_IMAGE
-    newName: REPLACE_CONTROLLER_IMAGE
-    newTag: REPLACE_CONTROLLER_TAG
+    newName: ghcr.io/ark322/voxeil-controller
+    newTag: latest

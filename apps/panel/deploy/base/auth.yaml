@@ -4,8 +4,8 @@ metadata:
   name: panel-basicauth
   namespace: platform
 type: Opaque
-data:
-  users: REPLACE_PANEL_BASICAUTH
+stringData:
+  users: "REPLACE_PANEL_BASICAUTH"
 ---
 apiVersion: traefik.io/v1alpha1
 kind: Middleware
