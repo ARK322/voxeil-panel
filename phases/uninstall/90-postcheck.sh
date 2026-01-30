@@ -43,6 +43,7 @@ done
 
 # Check for any other namespaces with voxeil.io/owned=true label
 log_info "Scanning for any other namespaces with voxeil.io/owned=true label..."
+ALL_VOXEIL_NS=""
 ALL_VOXEIL_NS=$(run_kubectl get namespaces -l voxeil.io/owned=true --no-headers -o custom-columns=:metadata.name 2>/dev/null || echo "")
 
 if [ -n "${ALL_VOXEIL_NS}" ]; then
