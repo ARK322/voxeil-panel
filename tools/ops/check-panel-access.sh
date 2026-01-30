@@ -14,6 +14,7 @@ if ! command -v kubectl >/dev/null 2>&1; then
 fi
 
 # Get panel domain from ingress
+PANEL_DOMAIN=""
 PANEL_DOMAIN=$(kubectl get ingress panel -n platform -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || echo "")
 if [ -z "${PANEL_DOMAIN}" ]; then
   echo "❌ Panel ingress not found. Installation may have failed."
@@ -59,6 +60,7 @@ echo ""
 
 # 2. Check ingress status
 echo "=== 2. Ingress Status ==="
+INGRESS_STATUS=""
 INGRESS_STATUS=$(kubectl get ingress panel -n platform -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || echo "")
 if [ -n "${INGRESS_STATUS}" ]; then
   echo "✓ Ingress has load balancer: ${INGRESS_STATUS}"
@@ -70,6 +72,7 @@ echo ""
 
 # 3. Check certificate status
 echo "=== 3. Certificate Status ==="
+CERT_NAME=""
 CERT_NAME=$(kubectl get ingress panel -n platform -o jsonpath='{.spec.tls[0].secretName}' 2>/dev/null || echo "")
 if [ -n "${CERT_NAME}" ]; then
   echo "Certificate secret: ${CERT_NAME}"
@@ -115,6 +118,7 @@ echo ""
 
 # 4. Check Traefik service
 echo "=== 4. Traefik Service Status ==="
+TRAEFIK_SVC=""
 TRAEFIK_SVC=$(kubectl get svc -n kube-system -l app.kubernetes.io/name=traefik -o name 2>/dev/null | head -n1 || echo "")
 if [ -z "${TRAEFIK_SVC}" ]; then
   echo "❌ Traefik service not found"
@@ -131,6 +135,7 @@ echo ""
 
 # 5. Check panel pods and image status
 echo "=== 5. Panel Pods & Image Status ==="
+PANEL_PODS=""
 PANEL_PODS=$(kubectl get pods -n platform -l app=panel --no-headers 2>/dev/null | wc -l || echo "0")
 if [ "${PANEL_PODS}" -eq "0" ]; then
   echo "❌ No panel pods found"
@@ -194,6 +199,7 @@ echo ""
 
 # 6. Check controller pods and images (panel depends on controller)
 echo "=== 6. Controller Pods & Image Status ==="
+CONTROLLER_PODS=""
 CONTROLLER_PODS=$(kubectl get pods -n platform -l app=controller --no-headers 2>/dev/null | wc -l || echo "0")
 if [ "${CONTROLLER_PODS}" -eq "0" ]; then
   echo "⚠️  No controller pods found (panel depends on controller)"
