@@ -31,7 +31,6 @@ log_info "Checking for remaining voxeil-owned namespaces..."
 for ns in "${VOXEIL_NAMESPACES[@]}"; do
   if run_kubectl get namespace "${ns}" >/dev/null 2>&1; then
     # Verify it's actually owned by voxeil
-    local owned
     owned=$(run_kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.voxeil\.io/owned}' 2>/dev/null || echo "")
     if [ "${owned}" = "true" ]; then
       REMAINING_NAMESPACES+=("${ns}")
@@ -50,7 +49,7 @@ if [ -n "${ALL_VOXEIL_NS}" ]; then
   while IFS= read -r ns; do
     if [ -n "${ns}" ]; then
       # Check if already in our list
-      local found=false
+      found=false
       for existing_ns in "${REMAINING_NAMESPACES[@]}"; do
         if [ "${existing_ns}" = "${ns}" ]; then
           found=true
@@ -92,7 +91,6 @@ REMAINING_CRDS=()
 for crd in "${VOXEIL_CRDS[@]}"; do
   if run_kubectl get crd "${crd}" >/dev/null 2>&1; then
     # Check if it's actually from our installation (has voxeil label or part-of label)
-    local labels
     labels=$(run_kubectl get crd "${crd}" -o jsonpath='{.metadata.labels}' 2>/dev/null || echo "")
     if echo "${labels}" | grep -q "voxeil\|part-of.*voxeil" || [ -z "${labels}" ]; then
       # For CRDs, we're more lenient - they might be from other sources
