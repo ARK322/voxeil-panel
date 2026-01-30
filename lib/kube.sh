@@ -56,7 +56,9 @@ run_kubectl() {
   
   # If KUBECTL_BIN contains space (e.g., "k3s kubectl"), split it
   if [[ "${KUBECTL_BIN}" == *" "* ]]; then
-    set -- ${KUBECTL_BIN} "$@"
+    # Split KUBECTL_BIN into array to handle spaces properly
+    read -ra KUBECTL_ARRAY <<< "${KUBECTL_BIN}"
+    set -- "${KUBECTL_ARRAY[@]}" "$@"
     "$@"
   else
     "${KUBECTL_BIN}" "$@"
@@ -105,7 +107,13 @@ kubectl_safe() {
     return 1
   fi
   # Build command string for timeout wrapper
-  local cmd="${KUBECTL_BIN} $*"
+  # Use printf %q to properly quote each argument for bash -c
+  local cmd="${KUBECTL_BIN}"
+  if [ $# -gt 0 ]; then
+    for arg in "$@"; do
+      cmd="${cmd} $(printf '%q' "$arg")"
+    done
+  fi
   run_with_timeout "${timeout_s}" "${cmd}"
 }
 
