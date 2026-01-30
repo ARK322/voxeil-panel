@@ -13,13 +13,16 @@ kubectl get pods -n platform -l app=panel -o custom-columns=NAME:.metadata.name,
 
 echo ""
 echo "Panel pod details:"
-mapfile -t pods < <(kubectl get pods -n platform -l app=panel -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
-for pod in "${pods[@]}"; do
-  [ -z "${pod}" ] && continue
-  echo "--- Pod: ${pod} ---"
-  kubectl get pod "${pod}" -n platform -o jsonpath='{.status.containerStatuses[0]}' | python3 -m json.tool 2>/dev/null || kubectl describe pod "${pod}" -n platform | grep -A 10 "State:" || true
-  echo ""
-done
+pods_output=$(kubectl get pods -n platform -l app=panel -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+if [ -n "${pods_output}" ]; then
+  IFS=' ' read -ra pods <<< "${pods_output}"
+  for pod in "${pods[@]}"; do
+    [ -z "${pod}" ] && continue
+    echo "--- Pod: ${pod} ---"
+    kubectl get pod "${pod}" -n platform -o jsonpath='{.status.containerStatuses[0]}' | python3 -m json.tool 2>/dev/null || kubectl describe pod "${pod}" -n platform | grep -A 10 "State:" || true
+    echo ""
+  done
+fi
 
 echo ""
 echo "=== Controller Pods ==="
@@ -27,13 +30,16 @@ kubectl get pods -n platform -l app=controller -o custom-columns=NAME:.metadata.
 
 echo ""
 echo "Controller pod details:"
-mapfile -t pods < <(kubectl get pods -n platform -l app=controller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
-for pod in "${pods[@]}"; do
-  [ -z "${pod}" ] && continue
-  echo "--- Pod: ${pod} ---"
-  kubectl get pod "${pod}" -n platform -o jsonpath='{.status.containerStatuses[0]}' | python3 -m json.tool 2>/dev/null || kubectl describe pod "${pod}" -n platform | grep -A 10 "State:" || true
-  echo ""
-done
+pods_output=$(kubectl get pods -n platform -l app=controller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || true)
+if [ -n "${pods_output}" ]; then
+  IFS=' ' read -ra pods <<< "${pods_output}"
+  for pod in "${pods[@]}"; do
+    [ -z "${pod}" ] && continue
+    echo "--- Pod: ${pod} ---"
+    kubectl get pod "${pod}" -n platform -o jsonpath='{.status.containerStatuses[0]}' | python3 -m json.tool 2>/dev/null || kubectl describe pod "${pod}" -n platform | grep -A 10 "State:" || true
+    echo ""
+  done
+fi
 
 echo ""
 echo "=== Image Pull Errors Summary ==="
