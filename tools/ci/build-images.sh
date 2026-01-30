@@ -91,13 +91,13 @@ echo ""
 
 # Build controller image
 echo "Building controller image..."
-cd "${REPO_ROOT}/apps/controller"
+cd "${REPO_ROOT}/apps/controller" || { echo "Error: failed to cd to ${REPO_ROOT}/apps/controller"; exit 1; }
 docker build -t "${CONTROLLER_IMAGE}" .
 echo "✓ Controller image built: ${CONTROLLER_IMAGE}"
 
 # Build panel image
 echo "Building panel image..."
-cd "${REPO_ROOT}/apps/panel"
+cd "${REPO_ROOT}/apps/panel" || { echo "Error: failed to cd to ${REPO_ROOT}/apps/panel"; exit 1; }
 docker build -t "${PANEL_IMAGE}" .
 echo "✓ Panel image built: ${PANEL_IMAGE}"
 
