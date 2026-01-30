@@ -13,6 +13,17 @@ log_phase "install/20-core"
 ensure_kubectl || exit 1
 check_kubectl_context || exit 1
 
+# Apply Kyverno CRDs directly first (to avoid annotation size limit issues with kustomize)
+log_info "Applying Kyverno CRDs directly (bypassing kustomize to avoid annotation size limits)..."
+KYVERNO_CRDS="${REPO_ROOT}/infra/k8s/components/kyverno/install.yaml"
+if [ -f "${KYVERNO_CRDS}" ]; then
+  # Apply CRDs directly without kustomize to avoid annotation size issues
+  run_kubectl apply -f "${KYVERNO_CRDS}" --server-side --force-conflicts --field-manager=kubectl-client-side-apply 2>&1 || {
+    # Fallback to regular apply if server-side fails
+    run_kubectl apply -f "${KYVERNO_CRDS}" --validate=false 2>&1 || true
+  }
+fi
+
 # Apply core infrastructure
 log_info "Applying core infrastructure manifests..."
 if ! run_kubectl apply -k "${REPO_ROOT}/infra/k8s/clusters/prod"; then

@@ -2,5 +2,6 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
-  - install.yaml
+  # install.yaml is applied directly in phases/install/20-core.sh to avoid CRD annotation size limits
+  # - install.yaml
   - policies.yaml
