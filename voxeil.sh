@@ -157,8 +157,41 @@ make_scripts_executable() {
   fi
 }
 
+# Check if we're in a local git repository with cmd/ directory
+is_local_repo() {
+  local script_dir
+  script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  
+  # Check if we're in a git repo and cmd/ exists
+  if [[ -d "${script_dir}/.git" ]] && [[ -d "${script_dir}/cmd" ]] && [[ -f "${script_dir}/cmd/install.sh" ]]; then
+    echo "${script_dir}"
+    return 0
+  fi
+  
+  # Also check parent directory (in case voxeil.sh is in repo root)
+  local parent_dir
+  parent_dir="$(dirname "${script_dir}")"
+  if [[ -d "${parent_dir}/.git" ]] && [[ -d "${parent_dir}/cmd" ]] && [[ -f "${parent_dir}/cmd/install.sh" ]]; then
+    echo "${parent_dir}"
+    return 0
+  fi
+  
+  return 1
+}
+
 # Download and extract repo, return extracted root
 setup_repo() {
+  # Check if we're in a local git repository - use it if available
+  local local_repo
+  if local_repo=$(is_local_repo); then
+    log_info "Using local repository: ${local_repo}"
+    # Make scripts executable
+    make_scripts_executable "${local_repo}"
+    echo "${local_repo}"
+    return 0
+  fi
+
+  # Otherwise, download from GitHub
   local temp_dir
   temp_dir="$(mktemp -d)"
 
