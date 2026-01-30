@@ -27,6 +27,7 @@ echo ""
 # 1. Check DNS resolution
 echo "=== 1. DNS Resolution Check ==="
 if command -v dig >/dev/null 2>&1; then
+  DNS_IP=""
   DNS_IP=$(dig +short "${PANEL_DOMAIN}" | head -n1)
   if [ -z "${DNS_IP}" ]; then
     echo "❌ DNS not resolving: ${PANEL_DOMAIN}"
@@ -79,6 +80,7 @@ if [ -n "${CERT_NAME}" ]; then
   
   # Check if certificate secret exists
   if kubectl get secret "${CERT_NAME}" -n platform >/dev/null 2>&1; then
+    CERT_READY=""
     CERT_READY=$(kubectl get secret "${CERT_NAME}" -n platform -o jsonpath='{.data.tls\.crt}' 2>/dev/null | base64 -d 2>/dev/null | openssl x509 -noout -subject 2>/dev/null || echo "")
     if [ -n "${CERT_READY}" ]; then
       echo "✓ Certificate secret exists"
@@ -149,6 +151,7 @@ else
   
   # Check for image pull errors
   echo "Checking for image pull errors..."
+  IMAGE_PULL_ERRORS=""
   IMAGE_PULL_ERRORS=$(kubectl get pods -n platform -l app=panel \
     -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.containerStatuses[0].state.waiting.reason}{"\t"}{.status.containerStatuses[0].state.waiting.message}{"\n"}{end}' 2>/dev/null | \
     grep -E "(ImagePullBackOff|ErrImagePull|ImagePullError)" || true)
@@ -221,6 +224,7 @@ else
       echo "  Message: ${error_message}"
     done
     
+    CONTROLLER_IMAGE=""
     CONTROLLER_IMAGE=$(kubectl get deployment controller -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || echo "")
     if [ -n "${CONTROLLER_IMAGE}" ]; then
       echo "  Expected image: ${CONTROLLER_IMAGE}"
@@ -238,6 +242,7 @@ if kubectl get svc panel -n platform >/dev/null 2>&1; then
   kubectl get svc panel -n platform
   echo ""
   # Check endpoints
+  ENDPOINTS=""
   ENDPOINTS=$(kubectl get endpoints panel -n platform -o jsonpath='{.subsets[0].addresses[*].ip}' 2>/dev/null || echo "")
   if [ -n "${ENDPOINTS}" ]; then
     echo "✓ Service has endpoints: ${ENDPOINTS}"
@@ -252,6 +257,7 @@ echo ""
 # 8. Check firewall (UFW)
 echo "=== 8. Firewall Status ==="
 if command -v ufw >/dev/null 2>&1; then
+  UFW_STATUS=""
   UFW_STATUS=$(ufw status | head -n1 || echo "")
   echo "${UFW_STATUS}"
   if echo "${UFW_STATUS}" | grep -q "active"; then
@@ -269,6 +275,7 @@ echo ""
 echo "=== 9. Connectivity Test ==="
 if command -v curl >/dev/null 2>&1; then
   echo "Testing HTTP (port 80):"
+  HTTP_CODE=""
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "http://${PANEL_DOMAIN}" 2>/dev/null || echo "000")
   if [ "${HTTP_CODE}" = "000" ]; then
     echo "  ❌ Cannot connect (timeout or DNS issue)"
