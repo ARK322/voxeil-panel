@@ -3,4 +3,4 @@ kind: Kustomization
 
 resources:
   - bind9.yaml
-  - traefik-tcp/dns-routes.yaml
+  # traefik-tcp/dns-routes.yaml excluded - requires Traefik IngressRouteTCP/UDP CRDs

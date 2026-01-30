@@ -6,4 +6,4 @@ resources:
   - mailcow-core.yaml
   # mailcow-ingress.yaml excluded - contains REPLACE_MAILCOW_DOMAIN placeholder
   - networkpolicy.yaml
-  - traefik-tcp/ingressroutetcp.yaml
+  # traefik-tcp/ingressroutetcp.yaml excluded - requires Traefik IngressRouteTCP CRDs

@@ -3,4 +3,4 @@ kind: Kustomization
 
 resources:
   - cert-manager.yaml
-  - cluster-issuers.yaml
+  # cluster-issuers.yaml excluded - contains REPLACE_LETSENCRYPT_EMAIL placeholder
