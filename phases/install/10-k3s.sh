@@ -55,8 +55,8 @@ wait_for_k3s_api || die 1 "k3s API not ready"
 
 # Wait for nodes to exist and be Ready
 log_info "Waiting for nodes to exist..."
-local node_wait_attempts=0
-local node_wait_max=90
+node_wait_attempts=0
+node_wait_max=90
 while [ ${node_wait_attempts} -lt ${node_wait_max} ]; do
   if run_kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
     log_ok "Nodes exist"
