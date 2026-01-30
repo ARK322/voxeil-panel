@@ -26,9 +26,7 @@ log_info "Checking for stuck namespaces..."
 STUCK_NAMESPACES=()
 for ns in "${VOXEIL_NAMESPACES[@]}"; do
   if run_kubectl get namespace "${ns}" >/dev/null 2>&1; then
-    local phase
     phase=$(run_kubectl get namespace "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-    local owned
     owned=$(run_kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.voxeil\.io/owned}' 2>/dev/null || echo "")
     
     if [ "${phase}" = "Terminating" ]; then
@@ -52,12 +50,11 @@ ALL_VOXEIL_NS=$(run_kubectl get namespaces -l voxeil.io/owned=true --no-headers 
 if [ -n "${ALL_VOXEIL_NS}" ]; then
   while IFS= read -r ns; do
     if [ -n "${ns}" ]; then
-      local phase
       phase=$(run_kubectl get namespace "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
       
       if [ "${phase}" = "Terminating" ]; then
         # Check if already in our list
-        local found=false
+        found=false
         for existing_ns in "${STUCK_NAMESPACES[@]}"; do
           if [ "${existing_ns}" = "${ns}" ]; then
             found=true
