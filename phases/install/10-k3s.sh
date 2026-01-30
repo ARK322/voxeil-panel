@@ -53,6 +53,32 @@ fi
 # Wait for k3s API
 wait_for_k3s_api || die 1 "k3s API not ready"
 
+# Wait for nodes to exist and be Ready
+log_info "Waiting for nodes to exist..."
+local node_wait_attempts=0
+local node_wait_max=90
+while [ ${node_wait_attempts} -lt ${node_wait_max} ]; do
+  if run_kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
+    log_ok "Nodes exist"
+    break
+  fi
+  node_wait_attempts=$((node_wait_attempts + 1))
+  if [ $((node_wait_attempts % 10)) -eq 0 ]; then
+    log_info "Still waiting for nodes to exist... (${node_wait_attempts}/${node_wait_max})"
+  fi
+  sleep 2
+done
+if [ ${node_wait_attempts} -ge ${node_wait_max} ]; then
+  die 1 "Nodes did not appear after $((node_wait_max * 2)) seconds"
+fi
+
+# Wait for all nodes to be Ready
+log_info "Waiting for all nodes to be Ready..."
+if ! run_kubectl wait node --all --for=condition=Ready --timeout=180s >/dev/null 2>&1; then
+  die 1 "Nodes did not become Ready within 180s"
+fi
+log_ok "All nodes are Ready"
+
 # Check kubectl context
 check_kubectl_context || die 1 "kubectl context check failed"
 

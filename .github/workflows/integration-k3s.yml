@@ -1,4 +1,4 @@
-name: Integration Test (k3s)
+﻿name: Integration Test (k3s)
 
 on:
   push:
@@ -41,6 +41,8 @@ jobs:
           export KUBECONFIG=~/.kube/config
           echo "KUBECONFIG=~/.kube/config" >> $GITHUB_ENV
           kubectl cluster-info
+          kubectl wait node --all --for=condition=Ready --timeout=180s
+          kubectl get nodes -o wide
 
       - name: Setup GHCR image pull secret (if private images)
         if: github.event_name != 'pull_request'
@@ -141,3 +143,4 @@ jobs:
           echo ""
           echo "=== Final Namespaces ==="
           kubectl get namespaces || true
+
