@@ -13,6 +13,13 @@ log_phase "install/20-core"
 ensure_kubectl || exit 1
 check_kubectl_context || exit 1
 
+# Ensure kyverno namespace exists before applying install.yaml
+log_info "Ensuring kyverno namespace exists..."
+KYVERNO_NS="${REPO_ROOT}/infra/k8s/base/namespaces/kyverno.yaml"
+if [ -f "${KYVERNO_NS}" ]; then
+  run_kubectl apply -f "${KYVERNO_NS}"
+fi
+
 # Apply Kyverno CRDs directly first (to avoid annotation size limit issues with kustomize)
 log_info "Applying Kyverno CRDs directly (bypassing kustomize to avoid annotation size limits)..."
 KYVERNO_CRDS="${REPO_ROOT}/infra/k8s/components/kyverno/install.yaml"
