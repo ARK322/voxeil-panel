@@ -50,7 +50,6 @@ if [ ${#STUCK_NAMESPACES[@]} -gt 0 ]; then
     log_info "Investigating stuck namespace: ${ns}"
     
     # Verify ownership label
-    local owned
     owned=$(run_kubectl get namespace "${ns}" -o jsonpath='{.metadata.labels.voxeil\.io/owned}' 2>/dev/null || echo "")
     if [ "${owned}" != "true" ]; then
       log_warn "Namespace ${ns} does not have voxeil.io/owned=true label, skipping force cleanup"
@@ -61,12 +60,10 @@ if [ ${#STUCK_NAMESPACES[@]} -gt 0 ]; then
     log_info "Checking remaining resources in namespace ${ns}..."
     
     # Get all resource types
-    local resource_types
     resource_types=$(run_kubectl api-resources --verbs=list --namespaced -o name 2>/dev/null | grep -v "events" || echo "")
     
-    local has_resources=false
+    has_resources=false
     for resource_type in ${resource_types}; do
-      local count
       count=$(run_kubectl get "${resource_type}" -n "${ns}" --no-headers 2>/dev/null | wc -l || echo "0")
       if [ "${count}" -gt 0 ]; then
         has_resources=true
@@ -89,7 +86,6 @@ if [ ${#STUCK_NAMESPACES[@]} -gt 0 ]; then
     
     # Check for finalizers
     log_info "Checking finalizers on namespace ${ns}..."
-    local finalizers
     finalizers=$(run_kubectl get namespace "${ns}" -o jsonpath='{.metadata.finalizers[*]}' 2>/dev/null || echo "")
     
     if [ -n "${finalizers}" ]; then
