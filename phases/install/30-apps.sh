@@ -13,11 +13,19 @@ log_phase "install/30-apps"
 ensure_kubectl || exit 1
 check_kubectl_context || exit 1
 
-# Apply applications
+# Apply applications (if kustomization has resources)
 log_info "Applying application manifests..."
-if ! run_kubectl apply -k "${REPO_ROOT}/apps/deploy/clusters/prod"; then
-  log_error "Failed to apply applications"
-  exit 1
+APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
+if [ -f "${APPS_DIR}/kustomization.yaml" ]; then
+  # Check if kustomization has any uncommented resources
+  if grep -qE '^\s+-|^resources:' "${APPS_DIR}/kustomization.yaml" 2>/dev/null | grep -v '^[[:space:]]*#' | grep -q .; then
+    if ! run_kubectl apply -k "${APPS_DIR}"; then
+      log_error "Failed to apply applications"
+      exit 1
+    fi
+  else
+    log_info "No application resources to apply (all excluded in kustomization)"
+  fi
 fi
 
 # Wait for application deployments to be ready (if they exist)
