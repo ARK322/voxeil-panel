@@ -53,16 +53,23 @@ check_component() {
 # Check nodes
 log_info "Checking cluster nodes..."
 if run_kubectl get nodes >/dev/null 2>&1; then
-  node_count=$(run_kubectl get nodes --no-headers 2>/dev/null | wc -l || echo "0")
-  ready_count=$(run_kubectl get nodes --no-headers 2>/dev/null | grep -c " Ready " || echo "0")
-  
-  if [ "${node_count}" -gt 0 ] && [ "${ready_count}" -eq "${node_count}" ]; then
-    log_ok "All ${node_count} node(s) are Ready"
-    RESULTS+=("Nodes|OK|${ready_count}/${node_count} Ready")
-  else
-    log_error "Nodes not ready: ${ready_count}/${node_count}"
+  node_output=$(run_kubectl get nodes --no-headers 2>/dev/null || echo "")
+  if [ -z "${node_output}" ]; then
+    log_error "Cannot get nodes (empty output)"
     FAILED=$((FAILED + 1))
-    RESULTS+=("Nodes|FAIL|${ready_count}/${node_count} Ready")
+    RESULTS+=("Nodes|FAIL|Cannot access cluster")
+  else
+    node_count=$(echo "${node_output}" | grep -v '^[[:space:]]*$' | wc -l || echo "0")
+    ready_count=$(echo "${node_output}" | grep -c " Ready " || echo "0")
+    
+    if [ "${node_count}" -gt 0 ] && [ "${ready_count}" -eq "${node_count}" ]; then
+      log_ok "All ${node_count} node(s) are Ready"
+      RESULTS+=("Nodes|OK|${ready_count}/${node_count} Ready")
+    else
+      log_error "Nodes not ready: ${ready_count}/${node_count}"
+      FAILED=$((FAILED + 1))
+      RESULTS+=("Nodes|FAIL|${ready_count}/${node_count} Ready")
+    fi
   fi
 else
   log_error "Cannot get nodes"
