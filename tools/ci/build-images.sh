@@ -91,14 +91,14 @@ echo ""
 
 # Build controller image
 echo "Building controller image..."
-cd "${REPO_ROOT}/apps/controller"
-docker build -t "${CONTROLLER_IMAGE}" .
+cd "${REPO_ROOT}"
+docker build -t "${CONTROLLER_IMAGE}" -f apps/controller/Dockerfile .
 echo "✓ Controller image built: ${CONTROLLER_IMAGE}"
 
 # Build panel image
 echo "Building panel image..."
-cd "${REPO_ROOT}/apps/panel"
-docker build -t "${PANEL_IMAGE}" .
+cd "${REPO_ROOT}"
+docker build -t "${PANEL_IMAGE}" -f apps/panel/Dockerfile .
 echo "✓ Panel image built: ${PANEL_IMAGE}"
 
 # Optionally create local tags for testing

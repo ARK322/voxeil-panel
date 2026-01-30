@@ -188,7 +188,7 @@ setup_repo() {
     log_warn "cmd/install.sh not found in extracted archive"
     log_warn "Extracted root: ${extracted_root}"
     log_warn "Top-level contents of extracted archive:"
-    ls -la "${extracted_root}/" 2>/dev/null | head -20 || log_warn "Cannot list extracted root"
+    find "${extracted_root}/" -maxdepth 1 -printf '%M %u %g %s %TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null | head -20 || log_warn "Cannot list extracted root"
     if [[ -d "${extracted_root}/cmd" ]]; then
       log_warn "Contents of cmd directory:"
       ls -la "${extracted_root}/cmd/" 2>/dev/null || true
@@ -368,7 +368,7 @@ if [[ "${SUBCMD}" == "install" ]]; then
     log_error "This may indicate the repository archive is incomplete or the file is not tracked in git."
     if [[ -d "${REPO_ROOT}/cmd" ]]; then
       log_error "Files found in cmd directory:"
-      ls -la "${REPO_ROOT}/cmd/" 2>/dev/null | while read -r line; do
+      find "${REPO_ROOT}/cmd/" -maxdepth 1 -printf '%M %u %g %s %TY-%Tm-%Td %TH:%TM %p\n' 2>/dev/null | while read -r line; do
         log_error "  $line"
       done || true
     else

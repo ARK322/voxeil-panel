@@ -123,6 +123,11 @@ jobs:
               echo "Skipping vendor YAML: $file"
               continue
             fi
+            # Skip Traefik CRD objects (IngressRouteTCP) not covered by kubeconform defaults
+            if echo "$file" | grep -qE 'infra/k8s/components/mail-zone/traefik-tcp/ingressroutetcp\.ya?ml$'; then
+              echo "Skipping Traefik CRD file: $file"
+              continue
+            fi
             # Skip kustomization.yaml files - these are kustomize-specific, not Kubernetes resources
             if echo "$file" | grep -qE 'kustomization\.ya?ml$'; then
               echo "Skipping kustomization file: $file"
