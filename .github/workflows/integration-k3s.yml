@@ -41,6 +41,10 @@ jobs:
           export KUBECONFIG=~/.kube/config
           echo "KUBECONFIG=~/.kube/config" >> $GITHUB_ENV
           kubectl cluster-info
+          # Wait for nodes to exist
+          echo "Waiting for nodes to appear..."
+          timeout 180 bash -c 'until kubectl get nodes --no-headers 2>/dev/null | grep -q .; do sleep 2; done' || exit 1
+          # Wait for all nodes to be Ready
           kubectl wait node --all --for=condition=Ready --timeout=180s
           kubectl get nodes -o wide
 
