@@ -30,7 +30,9 @@ run_step() {
     local exit_code=0
     
     # Run command and capture output
-    eval "$command" > "$output_file" 2>&1 || exit_code=$?
+    # Note: We use eval in a subshell to allow complex commands and capture exit codes
+    # The subshell prevents 'exit 1' inside the command from exiting the main script
+    (eval "$command") > "$output_file" 2>&1 || exit_code=$?
     
     # Show first 200 lines of output
     echo "--- Output (first 200 lines) ---"
@@ -67,22 +69,22 @@ command -v kubeconform >/dev/null 2>&1 || { echo "Warning: kubeconform not found
 # FROM ci.yml - lint job
 # ==========================================
 run_step "Install dependencies (npm ci --workspaces)" \
-    "npm ci --workspaces" || true
+    "npm ci --workspaces"
 
 run_step "Run ESLint (apps/controller)" \
-    "npm run lint --workspace=apps/controller" || true
+    "npm run lint --workspace=apps/controller"
 
 # ==========================================
 # FROM ci.yml - test job
 # ==========================================
 run_step "Run tests (apps/controller)" \
-    "npm test --workspace=apps/controller" || true
+    "npm test --workspace=apps/controller"
 
 # ==========================================
 # FROM ci.yml - syntax-check job
 # ==========================================
 run_step "JavaScript syntax check" \
-    "find apps/controller -name '*.js' -type f | while read file; do echo \"Checking \$file\"; node --check \"\$file\" || exit 1; done" || true
+    "find apps/controller -name '*.js' -type f | while read -r file; do echo \"Checking \$file\"; node --check \"\$file\" || exit 1; done"
 
 # ==========================================
 # FROM ci.yml - yaml-validation job
@@ -125,20 +127,44 @@ PYEOF
 python3 -c "import yaml" 2>/dev/null || {
     echo "Installing PyYAML..."
     pip3 install PyYAML --quiet || {
-        echo "Warning: Failed to install PyYAML, skipping YAML validation"
+        echo "Error: Failed to install PyYAML, cannot continue YAML validation"
+        exit 1
     }
 }
 
 run_step "Validate Kubernetes YAML syntax" \
-    "find infra/k8s -name '*.yaml' -o -name '*.yml' | while read file; do echo \"Validating \$file\"; python3 /tmp/validate_yaml.py \"\$file\" || exit 1; done" || true
+    "find infra/k8s -name '*.yaml' -o -name '*.yml' | while read -r file; do echo \"Validating \$file\"; python3 /tmp/validate_yaml.py \"\$file\" || exit 1; done"
 
 run_step "Validate GitHub Actions workflows YAML" \
-    "find .github/workflows -name '*.yaml' -o -name '*.yml' | while read file; do echo \"Validating \$file\"; python3 /tmp/validate_yaml_single.py \"\$file\" || exit 1; done" || true
+    "find .github/workflows -name '*.yaml' -o -name '*.yml' | while read -r file; do echo \"Validating \$file\"; python3 /tmp/validate_yaml_single.py \"\$file\" || exit 1; done"
 
 # kubeconform check
 if command -v kubeconform >/dev/null 2>&1; then
     run_step "Validate Kubernetes schemas (kubeconform)" \
-        "find infra/k8s -name '*.yaml' -o -name '*.yml' | while read file; do if grep -q 'PLACEHOLDER\\|REPLACE_' \"\$file\" 2>/dev/null; then echo \"Skipping template file: \$file\"; continue; fi; if echo \"\$file\" | grep -qE 'infra/k8s/components/(cert-manager|kyverno)'; then echo \"Skipping vendor YAML: \$file\"; continue; fi; if echo \"\$file\" | grep -qE 'kustomization\\.ya?ml\$'; then echo \"Skipping kustomization file: \$file\"; continue; fi; echo \"Validating schema: \$file\"; kubeconform -strict -summary \"\$file\" || exit 1; done" || true
+        "find infra/k8s -name '*.yaml' -o -name '*.yml' | while read -r file; do \
+            # Skip template files with placeholders or variable substitution
+            if grep -q 'PLACEHOLDER\\|REPLACE_' \"\$file\" 2>/dev/null || grep -q '\${' \"\$file\" 2>/dev/null; then \
+                echo \"Skipping template file: \$file\"; \
+                continue; \
+            fi; \
+            # Skip vendor YAML files (cert-manager, kyverno) - these are third-party manifests
+            if echo \"\$file\" | grep -qE 'infra/k8s/components/(cert-manager|kyverno)'; then \
+                echo \"Skipping vendor YAML: \$file\"; \
+                continue; \
+            fi; \
+            # Skip ALL Traefik CRDs (any path containing /traefik-tcp/)
+            if echo \"\$file\" | grep -qE '/traefik-tcp/'; then \
+                echo \"Skipping Traefik CRD: \$file\"; \
+                continue; \
+            fi; \
+            # Skip kustomization.yaml files - these are kustomize-specific, not Kubernetes resources
+            if echo \"\$file\" | grep -qE 'kustomization\\.ya?ml\$'; then \
+                echo \"Skipping kustomization file: \$file\"; \
+                continue; \
+            fi; \
+            echo \"Validating schema: \$file\"; \
+            kubeconform -strict -summary \"\$file\" || exit 1; \
+        done"
 else
     echo -e "${YELLOW}⚠ Skipping kubeconform (not installed)${NC}"
 fi
@@ -147,49 +173,85 @@ fi
 # FROM ci.yml - bash-validation job
 # ==========================================
 run_step "ShellCheck validation" \
-    "find . -name '*.sh' -type f | while read file; do echo \"Validating \$file\"; shellcheck -e SC1091 \"\$file\" || exit 1; done" || true
+    "find . -name '*.sh' -type f | while read -r file; do echo \"Validating \$file\"; shellcheck -S error -x -e SC1091 \"\$file\" || exit 1; done"
 
 # ==========================================
 # FROM installer-check.yml - bash syntax
 # ==========================================
 run_step "Bash syntax validation (voxeil.sh)" \
-    "bash -n voxeil.sh" || true
+    "bash -n voxeil.sh"
 
 run_step "Bash syntax validation (cmd/*.sh)" \
-    "find cmd -name '*.sh' -type f | while read -r f; do bash -n \"\$f\" || exit 1; done" || true
+    "find cmd -name '*.sh' -type f | while read -r f; do bash -n \"\$f\" || exit 1; done"
 
 run_step "Bash syntax validation (lib/*.sh)" \
-    "find lib -name '*.sh' -type f | while read -r f; do bash -n \"\$f\" || exit 1; done" || true
+    "find lib -name '*.sh' -type f | while read -r f; do bash -n \"\$f\" || exit 1; done"
 
 run_step "Bash syntax validation (phases/**/*.sh)" \
-    "find phases -name '*.sh' -type f | while read -r f; do bash -n \"\$f\" || exit 1; done" || true
+    "find phases -name '*.sh' -type f | while read -r f; do bash -n \"\$f\" || exit 1; done"
 
 run_step "Bash syntax validation (tools/**/*.sh)" \
-    "find tools -name '*.sh' -type f | while read -r f; do bash -n \"\$f\" || exit 1; done" || true
+    "find tools -name '*.sh' -type f | while read -r f; do bash -n \"\$f\" || exit 1; done"
 
 # ==========================================
 # FROM installer-check.yml - safety checks
 # ==========================================
 run_step "Detect unsafe webhook patching" \
-    "FILES=\"\$(git ls-files 'voxeil.sh' 'cmd/*.sh' 'lib/*.sh' 'phases/**/*.sh' 'tools/**/*.sh' || true)\"; if [ -z \"\$FILES\" ]; then echo '⚠️ No matching files found to scan'; exit 0; fi; if echo \"\$FILES\" | xargs -r grep -nE 'kubectl patch .*webhookconfiguration .*--type=json' | grep -v '^[^:]*:[^:]*:.*#' | grep -v 'echo.*kubectl patch' | grep -q . ; then echo '❌ Unsafe kubectl patch --type=json on webhookconfiguration'; exit 1; fi; if echo \"\$FILES\" | xargs -r grep -nE '\\{\"webhooks\":\\[\\{\"failurePolicy\"' | grep -v '^[^:]*:[^:]*:.*#' | grep -v 'echo.*webhooks' | grep -q . ; then echo '❌ Unsafe webhook array overwrite detected'; exit 1; fi" || true
+    "FILES=\"\$(git ls-files 'voxeil.sh' 'cmd/*.sh' 'lib/*.sh' 'phases/**/*.sh' 'tools/**/*.sh' || true)\"; \
+    if [ -z \"\$FILES\" ]; then \
+        echo '⚠️ No matching files found to scan'; \
+        exit 0; \
+    fi; \
+    if echo \"\$FILES\" | xargs -r grep -nE 'kubectl patch .*webhookconfiguration .*--type=json' | grep -v '^[^:]*:[^:]*:.*#' | grep -v 'echo.*kubectl patch' | grep -q . ; then \
+        echo '❌ Unsafe kubectl patch --type=json on webhookconfiguration'; \
+        exit 1; \
+    fi; \
+    if echo \"\$FILES\" | xargs -r grep -nE '\\{\"webhooks\":\\[\\{\"failurePolicy\"' | grep -v '^[^:]*:[^:]*:.*#' | grep -v 'echo.*webhooks' | grep -q . ; then \
+        echo '❌ Unsafe webhook array overwrite detected'; \
+        exit 1; \
+    fi"
 
 run_step "Detect dangerous RBAC deletes" \
-    "if grep -R --line-number --exclude-dir=.git --exclude-dir=.github -E 'kubectl delete (clusterrole|clusterrolebinding).*(system:|kube-|cluster-admin)' . | grep -v '^[^:]*:[^:]*:.*#' | grep -v 'echo.*kubectl delete' | grep -q . ; then echo '❌ Dangerous clusterrole/clusterrolebinding delete detected'; exit 1; fi" || true
+    "if grep -R --line-number --exclude-dir=.git --exclude-dir=.github -E 'kubectl delete (clusterrole|clusterrolebinding).*(system:|kube-|cluster-admin)' . | grep -v '^[^:]*:[^:]*:.*#' | grep -v 'echo.*kubectl delete' | grep -q . ; then \
+        echo '❌ Dangerous clusterrole/clusterrolebinding delete detected'; \
+        exit 1; \
+    fi"
 
 run_step "Check kubectl delete safety" \
-    "BAD=\$(grep -R --line-number 'kubectl delete' cmd phases lib | grep -v 'request-timeout' | grep -v '\\[DRY-RUN\\]' | grep -v '^[^:]*:[^:]*:.*#' | grep -v 'echo.*kubectl delete' || true); if [ -n \"\$BAD\" ]; then echo \"⚠️ kubectl delete without --request-timeout:\"; echo \"\$BAD\"; exit 1; fi" || true
+    "BAD=\$(grep -R --line-number 'kubectl delete' cmd phases lib | grep -v 'request-timeout' | grep -v '\\[DRY-RUN\\]' | grep -v '^[^:]*:[^:]*:.*#' | grep -v 'echo.*kubectl delete' || true); \
+    if [ -n \"\$BAD\" ]; then \
+        echo \"⚠️ kubectl delete without --request-timeout:\"; \
+        echo \"\$BAD\"; \
+        exit 1; \
+    fi"
 
 run_step "Detect infinite loops" \
-    "FILES=\"\$(git ls-files 'voxeil.sh' 'cmd/*.sh' 'lib/*.sh' 'phases/**/*.sh' 'tools/**/*.sh' || true)\"; if [ -z \"\$FILES\" ]; then exit 0; fi; if echo \"\$FILES\" | xargs -r grep -nE 'while true|while\\s+\\[\\s*1\\s*\\]' ; then echo '❌ Infinite loop detected'; exit 1; fi" || true
+    "FILES=\"\$(git ls-files 'voxeil.sh' 'cmd/*.sh' 'lib/*.sh' 'phases/**/*.sh' 'tools/**/*.sh' || true)\"; \
+    if [ -z \"\$FILES\" ]; then \
+        exit 0; \
+    fi; \
+    if echo \"\$FILES\" | xargs -r grep -nE 'while true|while\\s+\\[\\s*1\\s*\\]' ; then \
+        echo '❌ Infinite loop detected'; \
+        exit 1; \
+    fi"
 
 run_step "Check Kyverno webhook bootstrap logic" \
-    "if ! grep -R 'kyverno' infra/k8s phases 2>/dev/null | grep -v '^Binary' | head -1; then echo '❌ Kyverno configuration not found'; exit 1; fi" || true
+    "if ! grep -R 'kyverno' infra/k8s phases 2>/dev/null | grep -v '^Binary' | head -1; then \
+        echo '❌ Kyverno configuration not found'; \
+        exit 1; \
+    fi"
 
 run_step "Check Traefik readiness verification" \
-    "if ! grep -R 'traefik' infra/k8s/base/ingress tools/ops 2>/dev/null | grep -v '^Binary' | head -1; then echo '❌ Traefik configuration not found'; exit 1; fi" || true
+    "if ! grep -R 'traefik' infra/k8s/base/ingress tools/ops 2>/dev/null | grep -v '^Binary' | head -1; then \
+        echo '❌ Traefik configuration not found'; \
+        exit 1; \
+    fi"
 
 run_step "Check uninstaller preflight webhook neutralization" \
-    "if [ ! -f phases/uninstall/00-preflight.sh ]; then echo '❌ Uninstaller preflight script not found'; exit 1; fi" || true
+    "if [ ! -f phases/uninstall/00-preflight.sh ]; then \
+        echo '❌ Uninstaller preflight script not found'; \
+        exit 1; \
+    fi"
 
 # ==========================================
 # Summary
