@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Quick script to check image pull status
-# Usage: bash scripts/check-image-status.sh
+# Usage: bash tools/ci/check-image-status.sh
 
 echo "=== Image Pull Status Check ==="
 echo ""
@@ -59,8 +59,8 @@ echo ""
 echo "=== Quick Fix Commands ==="
 if [ -n "${IMAGE_ERRORS}" ]; then
   echo "If images don't exist, you need to:"
-  echo "1. Build images: ./scripts/build-images.sh --tag local"
-  echo "2. Or push to registry: ./scripts/build-images.sh --push --tag latest"
+  echo "1. Build images: ./tools/ci/build-images.sh --tag local"
+  echo "2. Or push to registry: ./tools/ci/build-images.sh --push --tag latest"
   echo ""
   echo "Then update deployments:"
   echo "  kubectl set image deployment/panel panel=ghcr.io/ark322/voxeil-panel:local -n platform"

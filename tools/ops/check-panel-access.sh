@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Diagnostic script to check why panel is not accessible
-# Usage: bash scripts/check-panel-access.sh
+# Usage: bash tools/ops/check-panel-access.sh
 
 echo "=== Voxeil Panel Access Diagnostic ==="
 echo ""
@@ -163,8 +163,8 @@ else
       echo "  Expected image: ${PANEL_IMAGE}"
       echo ""
       echo "  Possible solutions:"
-      echo "  1. Build image locally: ./scripts/build-images.sh --tag local"
-      echo "  2. Push image to registry: ./scripts/build-images.sh --push --tag latest"
+      echo "  1. Build image locally: ./tools/ci/build-images.sh --tag local"
+      echo "  2. Push image to registry: ./tools/ci/build-images.sh --push --tag latest"
       echo "  3. Check if image exists: crictl pull ${PANEL_IMAGE}  (or verify via kubectl get pods -n platform)"
       echo "  4. Use local image: kubectl set image deployment/panel panel=${PANEL_IMAGE/local} -n platform"
     fi

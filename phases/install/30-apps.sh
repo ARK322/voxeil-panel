@@ -19,6 +19,25 @@ if ! run_kubectl apply -k "${SCRIPT_DIR}/../../apps/deploy/clusters/prod"; then
   exit 1
 fi
 
+# Override images if explicitly provided (useful for CI/local builds)
+if [ -n "${CONTROLLER_IMAGE:-}" ]; then
+  if run_kubectl get deployment controller -n platform >/dev/null 2>&1; then
+    log_info "Setting controller image override to ${CONTROLLER_IMAGE}"
+    run_kubectl -n platform set image deployment/controller controller="${CONTROLLER_IMAGE}" >/dev/null
+  else
+    log_warn "Controller deployment not found; cannot set image override"
+  fi
+fi
+
+if [ -n "${PANEL_IMAGE:-}" ]; then
+  if run_kubectl get deployment panel -n platform >/dev/null 2>&1; then
+    log_info "Setting panel image override to ${PANEL_IMAGE}"
+    run_kubectl -n platform set image deployment/panel panel="${PANEL_IMAGE}" >/dev/null
+  else
+    log_warn "Panel deployment not found; cannot set image override"
+  fi
+fi
+
 # Wait for application deployments to be ready
 log_info "Waiting for application deployments to be ready..."
 TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"

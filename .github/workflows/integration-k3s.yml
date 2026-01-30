@@ -68,9 +68,21 @@ jobs:
           # Make any existing scripts executable (safe - won't fail if directories don't exist)
           find cmd phases lib tools -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
 
+      - name: Build and import images for k3s
+        run: |
+          OWNER_LC=$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')
+          echo "OWNER_LC=${OWNER_LC}" >> $GITHUB_ENV
+          GHCR_OWNER="${OWNER_LC}" ./tools/ci/build-images.sh --tag local
+          docker save "ghcr.io/${OWNER_LC}/voxeil-controller:local" -o /tmp/voxeil-controller.tar
+          docker save "ghcr.io/${OWNER_LC}/voxeil-panel:local" -o /tmp/voxeil-panel.tar
+          sudo k3s ctr images import /tmp/voxeil-controller.tar
+          sudo k3s ctr images import /tmp/voxeil-panel.tar
+
       - name: First install
         run: |
           export KUBECONFIG=~/.kube/config
+          export CONTROLLER_IMAGE="ghcr.io/${OWNER_LC}/voxeil-controller:local"
+          export PANEL_IMAGE="ghcr.io/${OWNER_LC}/voxeil-panel:local"
           bash voxeil.sh install --skip-k3s
 
       - name: Collect logs after first install
@@ -112,6 +124,8 @@ jobs:
       - name: Second install
         run: |
           export KUBECONFIG=~/.kube/config
+          export CONTROLLER_IMAGE="ghcr.io/${OWNER_LC}/voxeil-controller:local"
+          export PANEL_IMAGE="ghcr.io/${OWNER_LC}/voxeil-panel:local"
           bash voxeil.sh install --skip-k3s
 
       - name: Collect logs after second install

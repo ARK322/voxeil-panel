@@ -3,12 +3,12 @@ set -euo pipefail
 
 # Build script for Voxeil Panel images
 # Usage:
-#   ./scripts/build-images.sh [--push] [--tag TAG]
+#   ./tools/ci/build-images.sh [--push] [--tag TAG]
 #   --push: Push images to GHCR after building
 #   --tag TAG: Use custom tag (default: latest)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 # Default values
 PUSH=false
