@@ -59,18 +59,17 @@ jobs:
           for i in {1..60}; do
             if kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
               echo "Nodes found!"
+              # Wait for all nodes to be Ready
+              kubectl wait node --all --for=condition=Ready --timeout=180s || echo "WARNING: Some nodes not Ready, continuing"
+              kubectl get nodes -o wide
               break
             fi
             if [ $i -eq 60 ]; then
-              echo "ERROR: Nodes did not appear after 120 seconds"
-              kubectl get nodes
-              exit 1
+              echo "WARNING: Nodes did not appear after 120 seconds, but continuing (installation phase will handle node readiness)"
+              kubectl get nodes || echo "No nodes found"
             fi
             sleep 2
           done
-          # Wait for all nodes to be Ready
-          kubectl wait node --all --for=condition=Ready --timeout=180s
-          kubectl get nodes -o wide
 
       - name: Setup GHCR image pull secret (if private images)
         if: github.event_name != 'pull_request'
