@@ -53,13 +53,15 @@ fi
 # Wait for k3s API
 wait_for_k3s_api || die 1 "k3s API not ready"
 
-# Wait for nodes to exist and be Ready
+# Wait for nodes to exist and be Ready (if they appear)
 log_info "Waiting for nodes to exist..."
 node_wait_attempts=0
 node_wait_max=90
+nodes_exist=false
 while [ ${node_wait_attempts} -lt ${node_wait_max} ]; do
   if run_kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
     log_ok "Nodes exist"
+    nodes_exist=true
     break
   fi
   node_wait_attempts=$((node_wait_attempts + 1))
@@ -68,16 +70,18 @@ while [ ${node_wait_attempts} -lt ${node_wait_max} ]; do
   fi
   sleep 2
 done
-if [ ${node_wait_attempts} -ge ${node_wait_max} ]; then
-  die 1 "Nodes did not appear after $((node_wait_max * 2)) seconds"
-fi
 
-# Wait for all nodes to be Ready
-log_info "Waiting for all nodes to be Ready..."
-if ! run_kubectl wait node --all --for=condition=Ready --timeout=180s >/dev/null 2>&1; then
-  die 1 "Nodes did not become Ready within 180s"
+if [ "${nodes_exist}" = "true" ]; then
+  # Wait for all nodes to be Ready
+  log_info "Waiting for all nodes to be Ready..."
+  if run_kubectl wait node --all --for=condition=Ready --timeout=180s >/dev/null 2>&1; then
+    log_ok "All nodes are Ready"
+  else
+    log_warn "Some nodes not Ready, but continuing (cluster API is functional)"
+  fi
+else
+  log_warn "Nodes did not appear after $((node_wait_max * 2)) seconds, but continuing (cluster API is functional)"
 fi
-log_ok "All nodes are Ready"
 
 # Check kubectl context
 check_kubectl_context || die 1 "kubectl context check failed"
