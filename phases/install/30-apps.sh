@@ -501,6 +501,9 @@ done
 log_ok "All required secrets are present and non-placeholder"
 
 # Determine if ingress should be excluded (BEFORE Gate 10)
+# Set APPS_DIR first (required for Gate 10)
+APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
+
 # Load panel domain and TLS issuer from state.env (if available)
 PANEL_DOMAIN=""
 TLS_ISSUER=""
