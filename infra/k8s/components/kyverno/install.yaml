@@ -212,17 +212,17 @@ spec:
   group: kyverno.io
   names:
     categories:
-    - kyverno
+      - kyverno
     kind: AdmissionReport
     listKind: AdmissionReportList
     plural: admissionreports
     shortNames:
-    - admr
+      - admr
     singular: admissionreport
   scope: Namespaced
   versions:
-  - additionalPrinterColumns:
-    - jsonPath: .metadata.creationTimestamp
+    - additionalPrinterColumns:
+        - jsonPath: .metadata.creationTimestamp
       name: AGE
       type: date
     - jsonPath: .spec.summary.pass
