@@ -1,0 +1,183 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+    branches: ['**']
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make bash scripts executable
+        run: |
+          echo "::group::Making scripts executable"
+          chmod +x voxeil.sh
+          find cmd lib phases -name "*.sh" -type f -exec chmod +x {} \;
+          echo "::endgroup::"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          echo "::group::npm ci"
+          npm ci
+          echo "::endgroup::"
+
+      - name: Lint workspaces
+        run: |
+          echo "::group::Linting workspaces"
+          npm run lint --workspaces --if-present
+          echo "::endgroup::"
+
+      - name: Build workspaces
+        run: |
+          echo "::group::Building workspaces"
+          npm run build --workspaces --if-present
+          echo "::endgroup::"
+
+      - name: Typecheck workspaces
+        run: |
+          echo "::group::Typechecking workspaces"
+          npm run typecheck --workspaces --if-present
+          echo "::endgroup::"
+
+      - name: Bash syntax check
+        run: |
+          echo "::group::Bash syntax check"
+          set +e
+          ERROR=0
+          bash -n voxeil.sh || ERROR=1
+          for script in $(find cmd lib phases -name "*.sh" -type f); do
+            if ! bash -n "$script"; then
+              echo "Syntax error in: $script"
+              ERROR=1
+            fi
+          done
+          set -e
+          if [ $ERROR -eq 1 ]; then
+            exit 1
+          fi
+          echo "::endgroup::"
+
+      - name: Install shellcheck
+        run: |
+          echo "::group::Installing shellcheck"
+          sudo apt-get update -qq
+          sudo apt-get install -y shellcheck
+          shellcheck --version
+          echo "::endgroup::"
+
+      - name: Run shellcheck
+        run: |
+          echo "::group::Running shellcheck"
+          shellcheck voxeil.sh
+          find cmd lib phases -name "*.sh" -type f -print0 | xargs -0 -r shellcheck
+          echo "::endgroup::"
+
+      - name: Install yamllint
+        run: |
+          echo "::group::Installing yamllint"
+          sudo pip3 install yamllint
+          yamllint --version
+          echo "::endgroup::"
+
+      - name: Lint YAML files
+        run: |
+          echo "::group::Linting YAML files"
+          find infra/k8s .github -type f \( -name "*.yaml" -o -name "*.yml" \) -print0 | xargs -0 -r yamllint -c .yamllint
+          echo "::endgroup::"
+
+      - name: Install kustomize
+        run: |
+          echo "::group::Installing kustomize"
+          KUSTOMIZE_VERSION="v5.3.0"
+          curl -L "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz" | tar -xz
+          sudo mv kustomize /usr/local/bin/
+          kustomize version
+          echo "::endgroup::"
+
+      - name: Install kubeconform
+        run: |
+          echo "::group::Installing kubeconform"
+          KUBECONFORM_VERSION="v0.6.3"
+          curl -L "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" | tar -xz
+          sudo mv kubeconform /usr/local/bin/
+          kubeconform -version
+          echo "::endgroup::"
+
+      - name: Validate kustomize base
+        run: |
+          echo "::group::Validating kustomize base"
+          kustomize build infra/k8s/base > /tmp/base.yaml
+          kubeconform -strict -ignore-missing-schemas -summary /tmp/base.yaml
+          echo "::endgroup::"
+
+      - name: Validate kustomize prod cluster
+        run: |
+          echo "::group::Validating kustomize prod cluster"
+          kustomize build infra/k8s/clusters/prod > /tmp/prod.yaml
+          kubeconform -strict -ignore-missing-schemas -summary /tmp/prod.yaml
+          echo "::endgroup::"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build controller Docker image
+        run: |
+          echo "::group::Building controller Docker image"
+          docker build -f apps/controller/Dockerfile -t voxeil-controller:ci apps/controller
+          echo "::endgroup::"
+
+      - name: Build panel Docker image
+        run: |
+          echo "::group::Building panel Docker image"
+          docker build -f apps/panel/Dockerfile -t voxeil-panel:ci apps/panel
+          echo "::endgroup::"
+
+      - name: Install k3d
+        run: |
+          echo "::group::Installing k3d"
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+          k3d version
+          echo "::endgroup::"
+
+      - name: Install kubectl
+        run: |
+          echo "::group::Installing kubectl"
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
+          kubectl version --client
+          echo "::endgroup::"
+
+      - name: Create k3d cluster
+        run: |
+          echo "::group::Creating k3d cluster"
+          k3d cluster create voxeil-ci --wait
+          k3d kubeconfig write voxeil-ci > /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          kubectl cluster-info
+          echo "::endgroup::"
+
+      - name: Run doctor.sh smoke test
+        run: |
+          echo "::group::Running doctor.sh smoke test"
+          export KUBECONFIG=/tmp/kubeconfig
+          ./cmd/doctor.sh --kubeconfig /tmp/kubeconfig
+          echo "::endgroup::"
+
+      - name: Cleanup k3d cluster
+        if: always()
+        run: |
+          echo "::group::Cleaning up k3d cluster"
+          k3d cluster delete voxeil-ci || true
+          echo "::endgroup::"
