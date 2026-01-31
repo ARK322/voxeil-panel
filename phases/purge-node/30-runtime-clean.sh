@@ -3,10 +3,8 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck disable=SC1091
-source "${SCRIPT_DIR}/../../lib/common.sh"
-# shellcheck disable=SC1091
-source "${SCRIPT_DIR}/../../lib/fs.sh"
+source "${SCRIPT_DIR}/../../lib/common.sh" # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../../lib/fs.sh" # shellcheck disable=SC1091
 
 log_phase "purge-node/30-runtime-clean"
 
