@@ -239,6 +239,143 @@ else
   log_warn "Could not verify password sync (secrets not found)"
 fi
 
+# VALIDATION GATES: Must pass before applying controller/panel
+log_info "Running validation gates before applying applications..."
+
+# Gate 1: StorageClass local-path exists
+log_info "Gate 1/7: Checking StorageClass local-path..."
+if ! run_kubectl get storageclass local-path >/dev/null 2>&1; then
+  log_error "StorageClass 'local-path' not found"
+  die 1 "StorageClass 'local-path' must exist before applying applications"
+fi
+log_ok "StorageClass local-path exists"
+
+# Gate 2: Required namespaces exist
+log_info "Gate 2/7: Checking required namespaces..."
+REQUIRED_NAMESPACES=("platform" "infra-db" "cert-manager" "kyverno")
+for ns in "${REQUIRED_NAMESPACES[@]}"; do
+  if ! run_kubectl get namespace "${ns}" >/dev/null 2>&1; then
+    log_error "Required namespace '${ns}' not found"
+    die 1 "Namespace '${ns}' must exist before applying applications"
+  fi
+done
+log_ok "All required namespaces exist"
+
+# Gate 3: All core PVCs are Bound
+log_info "Gate 3/7: Checking core PVCs are Bound..."
+REQUIRED_PVCS=(
+  "infra-db/postgres-pvc"
+  "infra-db/pgadmin-pvc"
+  "dns-zone/dns-zones-pvc"
+  "platform/controller-config-pvc"
+)
+for pvc in "${REQUIRED_PVCS[@]}"; do
+  ns="${pvc%%/*}"
+  name="${pvc##*/}"
+  pvc_phase=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+  if [ "${pvc_phase}" != "Bound" ]; then
+    log_error "PVC '${pvc}' is not Bound (phase: ${pvc_phase})"
+    die 1 "PVC '${pvc}' must be Bound before applying applications"
+  fi
+done
+log_ok "All core PVCs are Bound"
+
+# Gate 4: cert-manager-webhook Ready
+log_info "Gate 4/7: Checking cert-manager-webhook is Ready..."
+if ! run_kubectl get deployment cert-manager-webhook -n cert-manager >/dev/null 2>&1; then
+  log_error "cert-manager-webhook deployment not found"
+  die 1 "cert-manager-webhook must exist and be Ready before applying applications"
+fi
+webhook_ready=$(run_kubectl get deployment cert-manager-webhook -n cert-manager -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+webhook_desired=$(run_kubectl get deployment cert-manager-webhook -n cert-manager -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+if [ "${webhook_ready}" != "${webhook_desired}" ] || [ "${webhook_ready}" = "0" ]; then
+  log_error "cert-manager-webhook is not Ready (ready: ${webhook_ready}, desired: ${webhook_desired})"
+  die 1 "cert-manager-webhook must be Ready before applying applications"
+fi
+log_ok "cert-manager-webhook is Ready"
+
+# Gate 5: kyverno-admission-controller Ready
+log_info "Gate 5/7: Checking kyverno-admission-controller is Ready..."
+if ! run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
+  log_error "kyverno-admission-controller deployment not found"
+  die 1 "kyverno-admission-controller must exist and be Ready before applying applications"
+fi
+kyverno_ready=$(run_kubectl get deployment kyverno-admission-controller -n kyverno -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+kyverno_desired=$(run_kubectl get deployment kyverno-admission-controller -n kyverno -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+if [ "${kyverno_ready}" != "${kyverno_desired}" ] || [ "${kyverno_ready}" = "0" ]; then
+  log_error "kyverno-admission-controller is not Ready (ready: ${kyverno_ready}, desired: ${kyverno_desired})"
+  die 1 "kyverno-admission-controller must be Ready before applying applications"
+fi
+log_ok "kyverno-admission-controller is Ready"
+
+# Gate 6: Postgres Ready AND accepts password auth (already verified above, but re-check)
+log_info "Gate 6/7: Verifying PostgreSQL is Ready and accepts connections..."
+if ! run_kubectl get statefulset postgres -n infra-db >/dev/null 2>&1; then
+  log_error "PostgreSQL StatefulSet not found"
+  die 1 "PostgreSQL must exist and be Ready before applying applications"
+fi
+postgres_ready=$(run_kubectl get statefulset postgres -n infra-db -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+postgres_desired=$(run_kubectl get statefulset postgres -n infra-db -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+if [ "${postgres_ready}" != "${postgres_desired}" ] || [ "${postgres_ready}" = "0" ]; then
+  log_error "PostgreSQL is not Ready (ready: ${postgres_ready}, desired: ${postgres_desired})"
+  die 1 "PostgreSQL must be Ready before applying applications"
+fi
+# Connection test was already done above, but verify it's still working
+POSTGRES_POD=$(run_kubectl get pods -n infra-db -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+if [ -z "${POSTGRES_POD}" ]; then
+  log_error "PostgreSQL pod not found"
+  die 1 "PostgreSQL pod must exist before applying applications"
+fi
+if ! run_kubectl exec "${POSTGRES_POD}" -n infra-db -- pg_isready -U postgres >/dev/null 2>&1; then
+  log_error "PostgreSQL is not accepting connections"
+  die 1 "PostgreSQL must accept connections before applying applications"
+fi
+log_ok "PostgreSQL is Ready and accepting connections"
+
+# Gate 7: Secrets are not placeholder/empty and are consistent
+log_info "Gate 7/7: Verifying secrets are not placeholder/empty and are consistent..."
+# Check postgres-secret
+if ! run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1; then
+  log_error "postgres-secret not found in infra-db namespace"
+  die 1 "postgres-secret must exist before applying applications"
+fi
+POSTGRES_SECRET_PWD=""
+if command_exists base64; then
+  POSTGRES_SECRET_PWD=$(run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.data.POSTGRES_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.stringData.POSTGRES_PASSWORD}' 2>/dev/null || echo "")
+else
+  POSTGRES_SECRET_PWD=$(run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.stringData.POSTGRES_PASSWORD}' 2>/dev/null || echo "")
+fi
+if [ -z "${POSTGRES_SECRET_PWD}" ] || [ "${POSTGRES_SECRET_PWD}" = "REPLACE_POSTGRES_PASSWORD" ]; then
+  log_error "postgres-secret has placeholder or empty password"
+  die 1 "postgres-secret must have a real password before applying applications"
+fi
+
+# Check platform-secrets
+if ! run_kubectl get secret platform-secrets -n platform >/dev/null 2>&1; then
+  log_error "platform-secrets not found in platform namespace"
+  die 1 "platform-secrets must exist before applying applications"
+fi
+PLATFORM_SECRET_PWD=""
+if command_exists base64; then
+  PLATFORM_SECRET_PWD=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.POSTGRES_ADMIN_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_ADMIN_PASSWORD}' 2>/dev/null || echo "")
+else
+  PLATFORM_SECRET_PWD=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_ADMIN_PASSWORD}' 2>/dev/null || echo "")
+fi
+if [ -z "${PLATFORM_SECRET_PWD}" ]; then
+  log_error "platform-secrets has empty POSTGRES_ADMIN_PASSWORD"
+  die 1 "platform-secrets must have POSTGRES_ADMIN_PASSWORD before applying applications"
+fi
+
+# Verify consistency
+if [ "${POSTGRES_SECRET_PWD}" != "${PLATFORM_SECRET_PWD}" ]; then
+  log_error "Password mismatch: postgres-secret and platform-secrets have different values"
+  log_error "This will cause controller authentication failures"
+  die 1 "Secrets must be consistent before applying applications"
+fi
+log_ok "Secrets are valid and consistent"
+
+log_ok "All validation gates passed (7/7)"
+
 # Apply applications (required)
 log_info "Applying application manifests..."
 APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
