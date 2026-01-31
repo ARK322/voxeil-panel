@@ -343,13 +343,43 @@ if [ "${VOXEIL_CI:-0}" = "1" ] && [ -n "${VOXEIL_CONTROLLER_IMAGE:-}" ] && [ -n 
     fi
   fi
 else
-
-  log_info "Applying kustomization (this may take a moment)..."
-  if ! run_kubectl apply -k "${APPS_DIR}"; then
-    log_error "Failed to apply applications"
-    log_info "Checking what was applied:"
-    run_kubectl get deployments -n platform 2>&1 || true
-    exit 1
+  # Non-CI mode: also replace domain/TLS issuer if provided
+  if [ -n "${PANEL_DOMAIN}" ] && [ "${PANEL_DOMAIN}" != "REPLACE_PANEL_DOMAIN" ]; then
+    log_info "Replacing panel domain and TLS issuer in manifests..."
+    TEMP_MANIFEST=$(mktemp) || TEMP_MANIFEST="/tmp/kustomize-$$.yaml"
+    if run_kubectl kustomize "${APPS_DIR}" > "${TEMP_MANIFEST}" 2>&1; then
+      if sed --version >/dev/null 2>&1; then
+        sed -i "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+        sed -i "s|REPLACE_PANEL_TLS_ISSUER|${TLS_ISSUER}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+      else
+        sed -i '' "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+        sed -i '' "s|REPLACE_PANEL_TLS_ISSUER|${TLS_ISSUER}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+      fi
+      log_info "Applying kustomization with domain/TLS replacements..."
+      if ! run_kubectl apply -f "${TEMP_MANIFEST}"; then
+        log_error "Failed to apply applications with domain/TLS replacements"
+        rm -f "${TEMP_MANIFEST}"
+        exit 1
+      fi
+      rm -f "${TEMP_MANIFEST}"
+      log_ok "Applications applied with domain/TLS replacements"
+    else
+      log_warn "Failed to build kustomization for domain replacement, falling back to standard apply"
+      if ! run_kubectl apply -k "${APPS_DIR}"; then
+        log_error "Failed to apply applications"
+        log_info "Checking what was applied:"
+        run_kubectl get deployments -n platform 2>&1 || true
+        exit 1
+      fi
+    fi
+  else
+    log_info "Applying kustomization (this may take a moment)..."
+    if ! run_kubectl apply -k "${APPS_DIR}"; then
+      log_error "Failed to apply applications"
+      log_info "Checking what was applied:"
+      run_kubectl get deployments -n platform 2>&1 || true
+      exit 1
+    fi
   fi
 fi
 
