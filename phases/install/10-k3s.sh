@@ -4,8 +4,11 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+# shellcheck source=../../lib/common.sh
 source "${REPO_ROOT}/lib/common.sh"
+# shellcheck source=../../lib/k3s.sh
 source "${REPO_ROOT}/lib/k3s.sh"
+# shellcheck source=../../lib/kube.sh
 source "${REPO_ROOT}/lib/kube.sh"
 
 log_phase "install/10-k3s"
