@@ -3,7 +3,7 @@
 # Source this file: source "$(dirname "$0")/../lib/validate.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=common.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/common.sh"
 
 # Check --force flag guard
@@ -62,7 +62,7 @@ preflight_checks() {
   
   # Check kubectl availability (if not installing k3s)
   if [ "${operation}" != "install" ] || [ "${SKIP_K3S:-false}" = "true" ]; then
-    # shellcheck source=kube.sh
+    # shellcheck disable=SC1091
     source "${SCRIPT_DIR}/kube.sh" 2>/dev/null || true
     if ! ensure_kubectl; then
       log_error "kubectl not found and k3s not available"

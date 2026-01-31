@@ -4,7 +4,7 @@
 
 # Source common first
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=common.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/common.sh"
 
 # Global kubectl binary path (empty until resolved)

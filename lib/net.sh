@@ -3,7 +3,7 @@
 # Source this file: source "$(dirname "$0")/../lib/net.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=common.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/common.sh"
 
 # Ensure curl is available
