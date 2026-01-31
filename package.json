@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "build:ci": "tsc --build && npm run build -w vhp-panel",
+    "build:ci": "npx tsc --build && npm run build -w vhp-panel",
     "lint": "npm run lint --workspaces --if-present"
   },
   "engines": {
