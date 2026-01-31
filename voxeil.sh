@@ -222,12 +222,12 @@ setup_repo() {
     log_warn "Extracted root: ${extracted_root}"
     log_warn "Top-level contents of extracted archive:"
     find "${extracted_root}/" -maxdepth 1 ! -path "${extracted_root}/" 2>/dev/null | head -20 | while IFS= read -r item; do
-      ls -ld "$item" 2>/dev/null || true
+      log_warn "  $(basename "$item")"
     done || log_warn "Cannot list extracted root"
     if [[ -d "${extracted_root}/cmd" ]]; then
       log_warn "Contents of cmd directory:"
       find "${extracted_root}/cmd/" -maxdepth 1 ! -path "${extracted_root}/cmd/" 2>/dev/null | while IFS= read -r item; do
-        ls -ld "$item" 2>/dev/null || true
+        log_warn "  $(basename "$item")"
       done || true
     else
       log_warn "cmd directory does not exist"
@@ -407,9 +407,9 @@ if [[ "${SUBCMD}" == "install" ]]; then
     if [[ -d "${REPO_ROOT}/cmd" ]]; then
       log_error "Files found in cmd directory:"
       find "${REPO_ROOT}/cmd/" -maxdepth 1 ! -path "${REPO_ROOT}/cmd/" 2>/dev/null | while IFS= read -r item; do
-        ls -ld "$item" 2>/dev/null | while IFS= read -r line; do
-          log_error "  $line"
-        done || true
+        if [[ -e "$item" ]]; then
+          log_error "  $(basename "$item")"
+        fi
       done || true
     else
       log_error "cmd directory does not exist at: ${REPO_ROOT}/cmd"
