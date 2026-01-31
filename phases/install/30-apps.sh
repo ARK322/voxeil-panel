@@ -175,13 +175,20 @@ if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1 && run_kub
       }
       log_ok "PostgreSQL password auto-synced (self-healing)"
       
-      # After syncing, restart controller pods to pick up new secret
-      log_info "Restarting controller pods to pick up synced password..."
+      # After syncing, delete controller pods to force recreation with new secret
+      log_info "Deleting controller pods to force recreation with synced password..."
       if run_kubectl get deployment controller -n platform >/dev/null 2>&1; then
-        run_kubectl rollout restart deployment controller -n platform >/dev/null 2>&1 || true
-        log_info "Controller deployment restarted (pods will be recreated with new secret)"
-        # Wait a moment for pods to start terminating
-        sleep 5
+        # Delete all controller pods to force recreation with new secret
+        run_kubectl delete pods -n platform -l app=controller --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
+        log_info "Controller pods deleted (will be recreated with new secret)"
+        # Wait for pods to be recreated
+        sleep 10
+        # Verify pods are being recreated
+        if run_kubectl get pods -n platform -l app=controller --no-headers 2>/dev/null | grep -q .; then
+          log_ok "Controller pods are being recreated"
+        else
+          log_warn "Controller pods not yet recreated (deployment will create them)"
+        fi
       fi
     else
       log_ok "PostgreSQL passwords match"
