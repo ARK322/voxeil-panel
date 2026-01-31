@@ -244,6 +244,22 @@ log_info "Applying application manifests..."
 APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
 log_info "Kustomization directory: ${APPS_DIR}"
 
+# Load panel domain and TLS issuer from state.env (if available)
+PANEL_DOMAIN=""
+TLS_ISSUER=""
+if [ -f "${STATE_ENV_FILE}" ]; then
+  PANEL_DOMAIN=$(grep "^PANEL_DOMAIN=" "${STATE_ENV_FILE}" 2>/dev/null | cut -d'=' -f2- || echo "")
+  TLS_ISSUER=$(grep "^TLS_ISSUER=" "${STATE_ENV_FILE}" 2>/dev/null | cut -d'=' -f2- || echo "")
+fi
+
+# Fallback to environment variables if not in state.env
+if [ -z "${PANEL_DOMAIN}" ]; then
+  PANEL_DOMAIN="${VOXEIL_PANEL_DOMAIN:-}"
+fi
+if [ -z "${TLS_ISSUER}" ]; then
+  TLS_ISSUER="${VOXEIL_TLS_ISSUER:-letsencrypt-prod}"
+fi
+
 if [ ! -f "${APPS_DIR}/kustomization.yaml" ]; then
   log_error "Application kustomization not found: ${APPS_DIR}/kustomization.yaml"
   exit 1

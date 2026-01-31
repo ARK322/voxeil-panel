@@ -6,6 +6,6 @@ namespace: platform
 resources:
   - deployment.yaml
   - service.yaml
-  # ingress.yaml excluded - contains REPLACE_PANEL_DOMAIN placeholder
+  - ingress.yaml
   # auth.yaml excluded - requires Traefik Middleware CRDs and contains placeholder Secret
   # redirect.yaml excluded - requires Traefik Middleware CRDs
