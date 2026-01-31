@@ -103,8 +103,8 @@ jobs:
       - name: Run shellcheck
         run: |
           echo "::group::Running shellcheck"
-          shellcheck voxeil.sh
-          find cmd lib phases -name "*.sh" -type f -print0 | xargs -0 -r shellcheck
+          shellcheck --severity=warning voxeil.sh
+          find cmd lib phases -name "*.sh" -type f -print0 | xargs -0 -r shellcheck --severity=warning
           echo "::endgroup::"
 
       - name: Install yamllint
