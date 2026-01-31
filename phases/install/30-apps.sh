@@ -174,11 +174,43 @@ if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1 && run_kub
         die 1 "PostgreSQL password sync failed - controller will not be able to connect"
       }
       log_ok "PostgreSQL password auto-synced (self-healing)"
+      
+      # After syncing, restart controller pods to pick up new secret
+      log_info "Restarting controller pods to pick up synced password..."
+      if run_kubectl get deployment controller -n platform >/dev/null 2>&1; then
+        run_kubectl rollout restart deployment controller -n platform >/dev/null 2>&1 || true
+        log_info "Controller deployment restarted (pods will be recreated with new secret)"
+        # Wait a moment for pods to start terminating
+        sleep 5
+      fi
     else
       log_ok "PostgreSQL passwords match"
     fi
   else
     log_warn "Could not verify password sync (secrets may use different formats)"
+  fi
+  
+  # Final verification: test connection with actual password from platform-secrets
+  log_info "Final verification: testing PostgreSQL connection with platform-secrets password..."
+  if run_kubectl get secret platform-secrets -n platform >/dev/null 2>&1; then
+    FINAL_POSTGRES_PWD=""
+    if command_exists base64; then
+      FINAL_POSTGRES_PWD=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.POSTGRES_ADMIN_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_ADMIN_PASSWORD}' 2>/dev/null || echo "")
+    else
+      FINAL_POSTGRES_PWD=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_ADMIN_PASSWORD}' 2>/dev/null || echo "")
+    fi
+    
+    if [ -n "${FINAL_POSTGRES_PWD}" ]; then
+      POSTGRES_POD=$(run_kubectl get pods -n infra-db -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+      if [ -n "${POSTGRES_POD}" ]; then
+        # Test connection using the actual password from platform-secrets
+        if run_kubectl exec "${POSTGRES_POD}" -n infra-db -- env PGPASSWORD="${FINAL_POSTGRES_PWD}" psql -U postgres -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+          log_ok "PostgreSQL connection verified with platform-secrets password"
+        else
+          log_warn "PostgreSQL connection test failed with platform-secrets password (controller may still fail)"
+        fi
+      fi
+    fi
   fi
 else
   log_warn "Could not verify password sync (secrets not found)"
