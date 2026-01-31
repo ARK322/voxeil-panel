@@ -3,9 +3,9 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../../lib/common.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../../lib/common.sh"
-# shellcheck source=../../lib/kube.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../../lib/kube.sh"
 
 log_phase "doctor/30-leftovers"

@@ -3,9 +3,9 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=../../lib/common.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../../lib/common.sh"
-# shellcheck source=../../lib/k3s.sh
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../../lib/k3s.sh"
 
 log_phase "purge-node/20-k3s-uninstall"
