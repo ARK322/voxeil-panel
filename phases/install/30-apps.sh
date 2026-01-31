@@ -13,11 +13,34 @@ log_phase "install/30-apps"
 ensure_kubectl || exit 1
 check_kubectl_context || exit 1
 
+# Wait for webhook deployments to be ready (required before applying apps)
+log_info "Waiting for webhook deployments to be ready (required for app admission)..."
+TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"
+
+# Wait for cert-manager-webhook
+if run_kubectl get deployment cert-manager-webhook -n cert-manager >/dev/null 2>&1; then
+  log_info "Waiting for cert-manager-webhook..."
+  if ! wait_rollout_status "cert-manager" "deployment" "cert-manager-webhook" "${TIMEOUT}"; then
+    log_error "cert-manager-webhook not ready after ${TIMEOUT}s"
+    die 1 "cert-manager-webhook must be ready before applying apps"
+  fi
+  log_ok "cert-manager-webhook is ready"
+fi
+
+# Wait for kyverno-admission-controller
+if run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
+  log_info "Waiting for kyverno-admission-controller..."
+  if ! wait_rollout_status "kyverno" "deployment" "kyverno-admission-controller" "${TIMEOUT}"; then
+    log_error "kyverno-admission-controller not ready after ${TIMEOUT}s"
+    die 1 "kyverno-admission-controller must be ready before applying apps"
+  fi
+  log_ok "kyverno-admission-controller is ready"
+fi
+
 # Wait for PostgreSQL to be ready (controller depends on it)
 log_info "Waiting for PostgreSQL to be ready (controller dependency)..."
 if run_kubectl get statefulset postgres -n infra-db >/dev/null 2>&1; then
   log_info "PostgreSQL StatefulSet found, waiting for rollout..."
-  TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"
   if ! wait_rollout_status "infra-db" "statefulset" "postgres" "${TIMEOUT}"; then
     log_error "PostgreSQL StatefulSet not ready after ${TIMEOUT}s"
     log_info "PostgreSQL StatefulSet status:"

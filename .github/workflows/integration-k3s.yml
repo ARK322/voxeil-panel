@@ -179,18 +179,56 @@ jobs:
           export KUBECONFIG=~/.kube/config
           bash voxeil.sh install --skip-k3s
 
-      - name: Collect logs after first install
+      - name: Collect debug artifacts on failure
         if: failure()
         run: |
           export KUBECONFIG=~/.kube/config
-          echo "=== Pods Status ==="
-          kubectl get pods -A || true
-          echo ""
-          echo "=== Recent Events ==="
-          kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 200 || true
-          echo ""
-          echo "=== Pod Descriptions ==="
-          kubectl describe pods -A | tail -n 200 || true
+          mkdir -p debug-artifacts
+          echo "==========================================" > debug-artifacts/debug-bundle.txt
+          echo "DEBUG BUNDLE START" >> debug-artifacts/debug-bundle.txt
+          echo "==========================================" >> debug-artifacts/debug-bundle.txt
+          echo "" >> debug-artifacts/debug-bundle.txt
+          echo "=== All Pods Status ===" >> debug-artifacts/debug-bundle.txt
+          kubectl get pods -A -o wide >> debug-artifacts/debug-bundle.txt 2>&1 || true
+          echo "" >> debug-artifacts/debug-bundle.txt
+          echo "=== Recent Events (sorted by timestamp) ===" >> debug-artifacts/debug-bundle.txt
+          kubectl get events -A --sort-by='.lastTimestamp' | tail -n 200 >> debug-artifacts/debug-bundle.txt 2>&1 || true
+          echo "" >> debug-artifacts/debug-bundle.txt
+          echo "=== Controller Deployment ===" >> debug-artifacts/debug-bundle.txt
+          kubectl describe deployment controller -n platform >> debug-artifacts/debug-bundle.txt 2>&1 || true
+          echo "" >> debug-artifacts/debug-bundle.txt
+          echo "=== Panel Deployment ===" >> debug-artifacts/debug-bundle.txt
+          kubectl describe deployment panel -n platform >> debug-artifacts/debug-bundle.txt 2>&1 || true
+          echo "" >> debug-artifacts/debug-bundle.txt
+          echo "=== Controller Pods ===" >> debug-artifacts/debug-bundle.txt
+          kubectl get pods -n platform -l app=controller -o wide >> debug-artifacts/debug-bundle.txt 2>&1 || true
+          for pod in $(kubectl get pods -n platform -l app=controller -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo ""); do
+            if [ -n "${pod}" ]; then
+              echo "--- Logs: ${pod} ---" >> debug-artifacts/debug-bundle.txt
+              kubectl logs "${pod}" -n platform --tail=200 >> debug-artifacts/debug-bundle.txt 2>&1 || true
+            fi
+          done
+          echo "" >> debug-artifacts/debug-bundle.txt
+          echo "=== Panel Pods ===" >> debug-artifacts/debug-bundle.txt
+          kubectl get pods -n platform -l app=panel -o wide >> debug-artifacts/debug-bundle.txt 2>&1 || true
+          for pod in $(kubectl get pods -n platform -l app=panel -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo ""); do
+            if [ -n "${pod}" ]; then
+              echo "--- Logs: ${pod} ---" >> debug-artifacts/debug-bundle.txt
+              kubectl logs "${pod}" -n platform --tail=200 >> debug-artifacts/debug-bundle.txt 2>&1 || true
+            fi
+          done
+          echo "" >> debug-artifacts/debug-bundle.txt
+          echo "==========================================" >> debug-artifacts/debug-bundle.txt
+          echo "DEBUG BUNDLE END" >> debug-artifacts/debug-bundle.txt
+          echo "==========================================" >> debug-artifacts/debug-bundle.txt
+          
+      - name: Upload debug artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-bundle
+          path: debug-artifacts/
+          retention-days: 7
 
       - name: First doctor check
         run: |
@@ -220,18 +258,19 @@ jobs:
           export KUBECONFIG=~/.kube/config
           bash voxeil.sh install --skip-k3s
 
-      - name: Collect logs after second install
+      - name: Collect debug artifacts after second install
         if: failure()
         run: |
           export KUBECONFIG=~/.kube/config
-          echo "=== Pods Status ==="
-          kubectl get pods -A || true
-          echo ""
-          echo "=== Recent Events ==="
-          kubectl get events -A --sort-by=.metadata.creationTimestamp | tail -n 200 || true
-          echo ""
-          echo "=== Pod Descriptions ==="
-          kubectl describe pods -A | tail -n 200 || true
+          mkdir -p debug-artifacts
+          echo "==========================================" > debug-artifacts/debug-bundle-second-install.txt
+          echo "DEBUG BUNDLE START" >> debug-artifacts/debug-bundle-second-install.txt
+          echo "==========================================" >> debug-artifacts/debug-bundle-second-install.txt
+          kubectl get pods -A -o wide >> debug-artifacts/debug-bundle-second-install.txt 2>&1 || true
+          kubectl get events -A --sort-by='.lastTimestamp' | tail -n 200 >> debug-artifacts/debug-bundle-second-install.txt 2>&1 || true
+          echo "==========================================" >> debug-artifacts/debug-bundle-second-install.txt
+          echo "DEBUG BUNDLE END" >> debug-artifacts/debug-bundle-second-install.txt
+          echo "==========================================" >> debug-artifacts/debug-bundle-second-install.txt
 
       - name: Final doctor check
         run: |

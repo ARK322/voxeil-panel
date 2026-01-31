@@ -302,8 +302,9 @@ dump_deployment_debug() {
   
   echo ""
   echo "=========================================="
-  echo "DEBUG BUNDLE: ${resource_type}/${resource_name} in ${namespace}"
+  echo "DEBUG BUNDLE START"
   echo "=========================================="
+  echo "Resource: ${resource_type}/${resource_name} in ${namespace}"
   
   # Pods status
   echo ""
@@ -366,7 +367,7 @@ dump_deployment_debug() {
   
   echo ""
   echo "=========================================="
-  echo "END DEBUG BUNDLE"
+  echo "DEBUG BUNDLE END"
   echo "=========================================="
   echo ""
 }
