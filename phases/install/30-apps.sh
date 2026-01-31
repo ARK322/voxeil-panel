@@ -330,11 +330,27 @@ EOF
         sleep 2
       done
       
-      # Delete the prebind pod
+      # Delete the prebind pod and wait for it to be fully deleted
       log_info "Deleting prebind pod..."
       run_kubectl delete pod "${TEMP_PREBIND_POD}" -n "${ns}" --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
-      # Wait for pod to be fully deleted
-      sleep 2
+      # Wait for pod to be fully deleted (max 30s)
+      for i in $(seq 1 15); do
+        if ! run_kubectl get pod "${TEMP_PREBIND_POD}" -n "${ns}" >/dev/null 2>&1; then
+          break
+        fi
+        if [ $i -eq 15 ]; then
+          log_warn "Prebind pod still exists after 30s, forcing deletion..."
+          run_kubectl delete pod "${TEMP_PREBIND_POD}" -n "${ns}" --force --grace-period=0 --request-timeout=30s >/dev/null 2>&1 || true
+        fi
+        sleep 2
+      done
+      # Verify PVC is still Bound after pod deletion
+      pvc_phase_after=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+      if [ "${pvc_phase_after}" != "Bound" ]; then
+        log_error "PVC '${pvc}' became unbound after prebind pod deletion (phase: ${pvc_phase_after})"
+        die 1 "PVC '${pvc}' must remain Bound after prebind pod deletion"
+      fi
+      log_ok "Prebind pod deleted, PVC remains Bound"
     else
       # Immediate binding mode - PVC should bind quickly
       log_info "StorageClass uses Immediate binding, waiting for PVC '${pvc}' to bind..."
