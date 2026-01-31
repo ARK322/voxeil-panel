@@ -77,10 +77,10 @@ if [ "${POSTGRES_READY}" = "true" ]; then
     # Try to connect using a test pod or kubectl exec
     if run_kubectl run postgres-test-connection --rm -i --restart=Never --image=postgres:16-alpine -n infra-db --env="PGPASSWORD=$(run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.data.POSTGRES_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.stringData.POSTGRES_PASSWORD}' 2>/dev/null || echo '')" -- psql -h postgres.infra-db.svc.cluster.local -U postgres -d postgres -c "SELECT 1" >/dev/null 2>&1; then
       POSTGRES_CONNECT_OK=true
-      run_kubectl delete pod postgres-test-connection -n infra-db --ignore-not-found >/dev/null 2>&1 || true
+      run_kubectl delete pod postgres-test-connection -n infra-db --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
       break
     fi
-    run_kubectl delete pod postgres-test-connection -n infra-db --ignore-not-found >/dev/null 2>&1 || true
+    run_kubectl delete pod postgres-test-connection -n infra-db --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
     if [ $((i % 5)) -eq 0 ]; then
       log_info "Still waiting for PostgreSQL to accept connections... ($i/30)"
     fi
