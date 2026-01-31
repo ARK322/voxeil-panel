@@ -200,41 +200,41 @@ if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1; then
     }
     log_ok "postgres-secret updated with password"
     
-    # If PostgreSQL pod exists, we need to update the actual database password
+    # If PostgreSQL pod exists and was using placeholder password, we need to update the database password
     # PostgreSQL only reads POSTGRES_PASSWORD on first initialization
-    # If database already exists, we must change it via ALTER USER
+    # If database already exists with old password, we must change it via ALTER USER
+    # But we can't know the old password, so we restart the pod and try to update
     if run_kubectl get pods -n infra-db -l app=postgres --no-headers 2>/dev/null | grep -q Running; then
       POSTGRES_POD=$(run_kubectl get pods -n infra-db -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
       if [ -n "${POSTGRES_POD}" ]; then
-        log_info "PostgreSQL pod exists, updating database password..."
-        # Try to update password using current secret (might be placeholder)
-        # Use a temporary connection to change password
-        # First, try to connect with any existing password or use trust (if possible)
-        # Since we can't know the current password, we'll restart the pod to pick up new secret
-        # But PostgreSQL won't use new password if DB already initialized
-        # So we need to exec into pod and change it manually
-        log_info "Restarting PostgreSQL pod to pick up new password secret..."
+        log_info "PostgreSQL pod exists, restarting to pick up new password secret..."
+        # Restart pod to pick up new secret
         run_kubectl delete pod "${POSTGRES_POD}" -n infra-db --request-timeout=30s >/dev/null 2>&1 || true
-        log_info "Waiting for PostgreSQL pod to restart..."
-        sleep 5
-        # Wait for pod to be ready
-        for i in $(seq 1 30); do
-          if run_kubectl get pods -n infra-db -l app=postgres --no-headers 2>/dev/null | grep -q Running; then
-            NEW_POSTGRES_POD=$(run_kubectl get pods -n infra-db -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-            if [ -n "${NEW_POSTGRES_POD}" ] && run_kubectl get pod "${NEW_POSTGRES_POD}" -n infra-db -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running; then
-              log_info "PostgreSQL pod restarted, updating database password via ALTER USER..."
-              # Update password in database (PostgreSQL reads POSTGRES_PASSWORD from env, so we can use it)
-              if run_kubectl exec "${NEW_POSTGRES_POD}" -n infra-db -- env PGPASSWORD="${POSTGRES_PASSWORD_FROM_SECRET}" psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD '${POSTGRES_PASSWORD_FROM_SECRET}';" >/dev/null 2>&1; then
-                log_ok "PostgreSQL database password updated"
-              else
-                # If that fails, try without PGPASSWORD (might work if trust auth is enabled)
-                log_warn "Failed to update password via ALTER USER (database may need to be recreated)"
+        log_info "Waiting for PostgreSQL pod to restart and be ready..."
+        # Wait for new pod to be ready
+        for i in $(seq 1 60); do
+          NEW_POSTGRES_POD=$(run_kubectl get pods -n infra-db -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+          if [ -n "${NEW_POSTGRES_POD}" ]; then
+            pod_phase=$(run_kubectl get pod "${NEW_POSTGRES_POD}" -n infra-db -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            if [ "${pod_phase}" = "Running" ]; then
+              # Check if pod is ready (not just Running)
+              if run_kubectl get pod "${NEW_POSTGRES_POD}" -n infra-db -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null | grep -q True; then
+                log_info "PostgreSQL pod is ready, verifying password works..."
+                # Test connection with new password
+                if run_kubectl exec "${NEW_POSTGRES_POD}" -n infra-db -- env PGPASSWORD="${POSTGRES_PASSWORD_FROM_SECRET}" psql -U postgres -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+                  log_ok "PostgreSQL password verified after restart"
+                  break
+                else
+                  log_warn "PostgreSQL password test failed after restart (database may have old password)"
+                  # Try to update password - but we need old password first
+                  # Since we can't know old password, this is a limitation
+                  # In practice, if this is first install, DB should be fresh
+                fi
               fi
-              break
             fi
           fi
-          if [ $((i % 5)) -eq 0 ]; then
-            log_info "Still waiting for PostgreSQL pod to restart... ($i/30)"
+          if [ $((i % 10)) -eq 0 ]; then
+            log_info "Still waiting for PostgreSQL pod to be ready... ($i/60)"
           fi
           sleep 2
         done
