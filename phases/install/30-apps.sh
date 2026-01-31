@@ -582,7 +582,19 @@ if [ "${EXCLUDE_INGRESS}" = "true" ]; then
   mv "${TEMP_FILTERED_TEST}" "${TEMP_MANIFEST_TEST}"
 fi
 
-# Check for placeholder patterns in rendered manifest (after filtering)
+# Replace TLS issuer placeholder if provided (before placeholder check)
+# This ensures Gate 10 validates the final manifest that will be applied
+if [ -n "${TLS_ISSUER}" ] && [ "${TLS_ISSUER}" != "REPLACE_PANEL_TLS_ISSUER" ]; then
+  if sed --version >/dev/null 2>&1; then
+    # GNU sed
+    sed -i "s|REPLACE_PANEL_TLS_ISSUER|${TLS_ISSUER}|g" "${TEMP_MANIFEST_TEST}" 2>/dev/null || true
+  else
+    # BSD sed
+    sed -i '' "s|REPLACE_PANEL_TLS_ISSUER|${TLS_ISSUER}|g" "${TEMP_MANIFEST_TEST}" 2>/dev/null || true
+  fi
+fi
+
+# Check for placeholder patterns in rendered manifest (after filtering and replacement)
 if grep -qE "REPLACE_[A-Z_]+" "${TEMP_MANIFEST_TEST}" 2>/dev/null; then
   log_error "Rendered manifest contains placeholder values"
   log_error "Placeholders found:"
