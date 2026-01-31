@@ -5399,10 +5399,10 @@ rules:
     resourceNames:
       - 'cert-manager-webhook-ca'
     verbs: ["get", "list", "watch", "update"]
-# It's not possible to grant CREATE permission on a single resourceName.
-- apiGroups: [""]
-  resources: ["secrets"]
-  verbs: ["create"]
+  # It's not possible to grant CREATE permission on a single resourceName.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create"]
 ---
 # Source: cert-manager/templates/cainjector-rbac.yaml
 # grant cert-manager permission to manage the leaderelection configmap in the
@@ -5628,9 +5628,9 @@ spec:
             - containerPort: 9402
               name: http-metrics
               protocol: TCP
-          - containerPort: 9403
-            name: http-healthz
-            protocol: TCP
+            - containerPort: 9403
+              name: http-healthz
+              protocol: TCP
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
@@ -5708,9 +5708,9 @@ spec:
             - name: https
               protocol: TCP
               containerPort: 10250
-          - name: healthcheck
-            protocol: TCP
-            containerPort: 6080
+            - name: healthcheck
+              protocol: TCP
+              containerPort: 6080
           livenessProbe:
             httpGet:
               path: /livez

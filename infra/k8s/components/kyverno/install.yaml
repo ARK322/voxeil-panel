@@ -223,35 +223,35 @@ spec:
   versions:
     - additionalPrinterColumns:
         - jsonPath: .metadata.creationTimestamp
-      name: AGE
-      type: date
-    - jsonPath: .spec.summary.pass
-      name: PASS
-      type: integer
-    - jsonPath: .spec.summary.fail
-      name: FAIL
-      type: integer
-    - jsonPath: .spec.summary.warn
-      name: WARN
-      type: integer
-    - jsonPath: .spec.summary.error
-      name: ERROR
-      type: integer
-    - jsonPath: .spec.summary.skip
-      name: SKIP
-      type: integer
-    - jsonPath: .metadata.labels['audit\.kyverno\.io/resource\.gvr']
-      name: GVR
-      priority: 1
-      type: string
-    - jsonPath: .metadata.labels['audit\.kyverno\.io/resource\.name']
-      name: REF
-      priority: 1
-      type: string
-    - jsonPath: .metadata.labels['audit\.kyverno\.io/report\.aggregate']
-      name: AGGREGATE
-      priority: 1
-      type: string
+          name: AGE
+          type: date
+        - jsonPath: .spec.summary.pass
+          name: PASS
+          type: integer
+        - jsonPath: .spec.summary.fail
+          name: FAIL
+          type: integer
+        - jsonPath: .spec.summary.warn
+          name: WARN
+          type: integer
+        - jsonPath: .spec.summary.error
+          name: ERROR
+          type: integer
+        - jsonPath: .spec.summary.skip
+          name: SKIP
+          type: integer
+        - jsonPath: .metadata.labels['audit\.kyverno\.io/resource\.gvr']
+          name: GVR
+          priority: 1
+          type: string
+        - jsonPath: .metadata.labels['audit\.kyverno\.io/resource\.name']
+          name: REF
+          priority: 1
+          type: string
+        - jsonPath: .metadata.labels['audit\.kyverno\.io/report\.aggregate']
+          name: AGGREGATE
+          priority: 1
+          type: string
       name: v1alpha2
       schema:
         openAPIV3Schema:
@@ -526,9 +526,7 @@ spec:
                 type: object
             required:
               - owner
-            type: object
-            type: object
-          - spec
+              - spec
             type: object
       served: true
       storage: true
@@ -562,45 +560,44 @@ spec:
   versions:
     - additionalPrinterColumns:
         - jsonPath: .metadata.ownerReferences[0].apiVersion
-      name: ApiVersion
-      priority: 1
-      type: string
-    - jsonPath: .metadata.ownerReferences[0].kind
-      name: Kind
-      priority: 1
-      type: string
-    - jsonPath: .metadata.ownerReferences[0].name
-      name: Subject
-      priority: 1
-      type: string
-    - jsonPath: .spec.summary.pass
-      name: Pass
-      type: integer
-    - jsonPath: .spec.summary.fail
-      name: Fail
-      type: integer
-    - jsonPath: .spec.summary.warn
-      name: Warn
-      type: integer
-    - jsonPath: .spec.summary.error
-      name: Error
-      type: integer
-    - jsonPath: .spec.summary.skip
-      name: Skip
-      type: integer
-    - jsonPath: .metadata.creationTimestamp
-      name: Age
-      type: date
-    - jsonPath: .metadata.labels['audit\.kyverno\.io/resource\.hash']
-      name: Hash
-      priority: 1
-      type: string
-    name: v1alpha2
-    schema:
-      openAPIV3Schema:
-        description: BackgroundScanReport is the Schema for the BackgroundScanReports
-        API
-      properties:
+          name: ApiVersion
+          priority: 1
+          type: string
+        - jsonPath: .metadata.ownerReferences[0].kind
+          name: Kind
+          priority: 1
+          type: string
+        - jsonPath: .metadata.ownerReferences[0].name
+          name: Subject
+          priority: 1
+          type: string
+        - jsonPath: .spec.summary.pass
+          name: Pass
+          type: integer
+        - jsonPath: .spec.summary.fail
+          name: Fail
+          type: integer
+        - jsonPath: .spec.summary.warn
+          name: Warn
+          type: integer
+        - jsonPath: .spec.summary.error
+          name: Error
+          type: integer
+        - jsonPath: .spec.summary.skip
+          name: Skip
+          type: integer
+        - jsonPath: .metadata.creationTimestamp
+          name: Age
+          type: date
+        - jsonPath: .metadata.labels['audit\.kyverno\.io/resource\.hash']
+          name: Hash
+          priority: 1
+          type: string
+      name: v1alpha2
+      schema:
+        openAPIV3Schema:
+          description: BackgroundScanReport is the Schema for the BackgroundScanReports API
+        properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
               of an object. Servers should convert recognized schemas to the latest
