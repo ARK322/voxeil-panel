@@ -252,9 +252,9 @@ spec:
       name: AGGREGATE
       priority: 1
       type: string
-    name: v1alpha2
-    schema:
-      openAPIV3Schema:
+      name: v1alpha2
+      schema:
+        openAPIV3Schema:
           description: AdmissionReport is the Schema for the AdmissionReports API
           properties:
           apiVersion:
@@ -529,7 +529,7 @@ spec:
             type: object
         required:
           - spec
-        type: object
+          type: object
       served: true
       storage: true
       subresources: {}
@@ -595,10 +595,10 @@ spec:
       name: Hash
       priority: 1
       type: string
-    name: v1alpha2
-    schema:
-      openAPIV3Schema:
-        description: BackgroundScanReport is the Schema for the BackgroundScanReports
+      name: v1alpha2
+      schema:
+        openAPIV3Schema:
+          description: BackgroundScanReport is the Schema for the BackgroundScanReports
           API
         properties:
           apiVersion:
@@ -836,7 +836,7 @@ spec:
             type: object
         required:
           - spec
-        type: object
+          type: object
       served: true
       storage: true
       subresources: {}
@@ -867,8 +867,8 @@ spec:
     singular: cleanuppolicy
   scope: Namespaced
   versions:
-  - additionalPrinterColumns:
-    - jsonPath: .spec.schedule
+    - additionalPrinterColumns:
+        - jsonPath: .spec.schedule
       name: Schedule
       type: string
     - jsonPath: .metadata.creationTimestamp
@@ -2102,9 +2102,9 @@ spec:
                 format: date-time
                 type: string
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: false
     subresources:
@@ -3343,9 +3343,9 @@ spec:
                 format: date-time
                 type: string
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: true
     subresources:
@@ -3686,7 +3686,7 @@ spec:
             type: object
         required:
           - spec
-        type: object
+          type: object
       served: true
       storage: true
       subresources: {}
@@ -3993,7 +3993,7 @@ spec:
             type: object
         required:
           - spec
-        type: object
+          type: object
       served: true
       storage: true
       subresources: {}
@@ -5259,9 +5259,9 @@ spec:
                 format: date-time
                 type: string
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: false
     subresources:
@@ -6500,9 +6500,9 @@ spec:
                 format: date-time
                 type: string
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: true
     subresources:
@@ -15517,9 +15517,9 @@ spec:
             required:
             - ready
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: true
     subresources:
@@ -24233,9 +24233,9 @@ spec:
             required:
             - ready
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: false
     subresources:
@@ -33252,9 +33252,9 @@ spec:
             required:
             - ready
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: true
     subresources:
@@ -41969,9 +41969,9 @@ spec:
             required:
             - ready
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: false
     subresources:
@@ -42498,9 +42498,9 @@ spec:
             - exceptions
             - match
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: false
   - name: v2beta1
@@ -42997,9 +42997,9 @@ spec:
             - exceptions
             - match
             type: object
-        required:
-          - spec
-        type: object
+          required:
+            - spec
+          type: object
     served: true
     storage: true
 ---
@@ -43779,7 +43779,7 @@ spec:
                   requirements were not met
                 type: integer
             type: object
-        type: object
+          type: object
       served: true
       storage: true
       subresources: {}
@@ -44147,7 +44147,7 @@ spec:
                   requirements were not met
                 type: integer
             type: object
-        type: object
+          type: object
       served: true
       storage: true
       subresources: {}
