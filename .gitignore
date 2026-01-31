@@ -3,3 +3,9 @@ node_modules
 dist
 npm-debug.log
 *.log
+
+# CI logs and temporary files
+*.txt
+ci-logs*/
+bash-logs*/
+temp_logs*/
