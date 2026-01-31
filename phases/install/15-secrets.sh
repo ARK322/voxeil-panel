@@ -5,6 +5,7 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../../lib/common.sh"
 source "${SCRIPT_DIR}/../../lib/kube.sh"
+source "${SCRIPT_DIR}/../../lib/prompt.sh"
 
 log_phase "install/15-secrets"
 
@@ -66,16 +67,62 @@ get_or_generate_secret() {
 # Generate all required secrets
 log_info "Generating platform secrets..."
 
+# Prompt for critical configuration if interactive
+if is_interactive; then
+  log_info "Interactive mode: Please provide the following information"
+  echo ""
+fi
+
+# Panel domain (required for ingress)
+PANEL_DOMAIN=""
+PANEL_DOMAIN=$(prompt_value "Panel Domain" "${VOXEIL_PANEL_DOMAIN:-}" "false")
+if [ -z "${PANEL_DOMAIN}" ]; then
+  if is_interactive; then
+    log_error "Panel domain is required"
+    exit 1
+  else
+    log_warn "Panel domain not provided, using placeholder (ingress will be excluded)"
+    PANEL_DOMAIN="REPLACE_PANEL_DOMAIN"
+  fi
+fi
+
+# SSL/TLS issuer (optional, defaults to letsencrypt-prod)
+TLS_ISSUER=""
+TLS_ISSUER=$(prompt_value "TLS Issuer (ClusterIssuer name)" "${VOXEIL_TLS_ISSUER:-letsencrypt-prod}" "false")
+if [ -z "${TLS_ISSUER}" ]; then
+  TLS_ISSUER="letsencrypt-prod"
+fi
+
+# Panel admin credentials
+PANEL_ADMIN_USERNAME=""
+PANEL_ADMIN_USERNAME=$(prompt_value "Panel Admin Username" "${VOXEIL_PANEL_ADMIN_USERNAME:-admin}" "false")
+if [ -z "${PANEL_ADMIN_USERNAME}" ]; then
+  PANEL_ADMIN_USERNAME="admin"
+fi
+
+PANEL_ADMIN_PASSWORD=""
+if is_interactive; then
+  PANEL_ADMIN_PASSWORD=$(prompt_value "Panel Admin Password" "" "true")
+  if [ -z "${PANEL_ADMIN_PASSWORD}" ]; then
+    log_warn "No password provided, generating random password"
+    PANEL_ADMIN_PASSWORD=$(rand)
+  fi
+else
+  # Non-interactive: use env var or generate
+  PANEL_ADMIN_PASSWORD=$(get_or_generate_secret "PANEL_ADMIN_PASSWORD" "VOXEIL_PANEL_ADMIN_PASSWORD")
+fi
+
+PANEL_ADMIN_EMAIL=""
+PANEL_ADMIN_EMAIL=$(prompt_value "Panel Admin Email" "${VOXEIL_PANEL_ADMIN_EMAIL:-admin@${PANEL_DOMAIN}}" "false")
+if [ -z "${PANEL_ADMIN_EMAIL}" ]; then
+  PANEL_ADMIN_EMAIL="admin@${PANEL_DOMAIN}"
+fi
+
+# Other secrets (can be auto-generated)
 ADMIN_API_KEY=""
 ADMIN_API_KEY=$(get_or_generate_secret "ADMIN_API_KEY" "VOXEIL_ADMIN_API_KEY")
 JWT_SECRET=""
 JWT_SECRET=$(get_or_generate_secret "JWT_SECRET" "VOXEIL_JWT_SECRET")
-PANEL_ADMIN_USERNAME=""
-PANEL_ADMIN_USERNAME=$(get_or_generate_secret "PANEL_ADMIN_USERNAME" "VOXEIL_PANEL_ADMIN_USERNAME" 'echo "admin"')
-PANEL_ADMIN_PASSWORD=""
-PANEL_ADMIN_PASSWORD=$(get_or_generate_secret "PANEL_ADMIN_PASSWORD" "VOXEIL_PANEL_ADMIN_PASSWORD")
-PANEL_ADMIN_EMAIL=""
-PANEL_ADMIN_EMAIL=$(get_or_generate_secret "PANEL_ADMIN_EMAIL" "VOXEIL_PANEL_ADMIN_EMAIL" 'echo "admin@voxeil.local"')
 SITE_NODEPORT_START=""
 SITE_NODEPORT_START=$(get_or_generate_secret "SITE_NODEPORT_START" "VOXEIL_SITE_NODEPORT_START" 'echo "30000"')
 SITE_NODEPORT_END=""
@@ -149,6 +196,16 @@ run_kubectl create secret generic platform-secrets \
 
 log_ok "Platform secrets created/updated (secrets not printed to stdout)"
 log_info "Secret values are stored in ${STATE_ENV_FILE} (if generated)"
+
+# Save panel domain and TLS issuer to state.env for later use
+if ! grep -q "^PANEL_DOMAIN=" "${STATE_ENV_FILE}" 2>/dev/null; then
+  echo "PANEL_DOMAIN=${PANEL_DOMAIN}" >> "${STATE_ENV_FILE}"
+  chmod 600 "${STATE_ENV_FILE}"
+fi
+if ! grep -q "^TLS_ISSUER=" "${STATE_ENV_FILE}" 2>/dev/null; then
+  echo "TLS_ISSUER=${TLS_ISSUER}" >> "${STATE_ENV_FILE}"
+  chmod 600 "${STATE_ENV_FILE}"
+fi
 
 # Ensure dns-zone namespace exists and create bind9-tsig secret
 log_info "Ensuring dns-zone namespace and bind9-tsig secret..."
