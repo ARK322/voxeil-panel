@@ -241,7 +241,43 @@ if ! run_kubectl get deployment controller -n platform >/dev/null 2>&1; then
 fi
 log_info "Controller deployment found, checking image..."
 run_kubectl get deployment controller -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>&1 && echo "" || true
+
+# Check controller-config PVC before rollout (controller requires it)
+log_info "Checking controller-config PVC..."
+if run_kubectl get pvc controller-config-pvc -n platform >/dev/null 2>&1; then
+  pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+  if [ "${pvc_phase}" != "Bound" ]; then
+    log_warn "controller-config-pvc is not bound (phase: ${pvc_phase}), waiting..."
+    for i in $(seq 1 30); do
+      pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+      if [ "${pvc_phase}" = "Bound" ]; then
+        log_ok "controller-config-pvc is bound"
+        break
+      fi
+      if [ $((i % 5)) -eq 0 ]; then
+        log_info "Still waiting for controller-config-pvc... ($i/30) - Current phase: ${pvc_phase}"
+      fi
+      sleep 2
+    done
+    if [ "${pvc_phase}" != "Bound" ]; then
+      log_error "controller-config-pvc not bound after 60s"
+      run_kubectl get pvc controller-config-pvc -n platform -o yaml || true
+      die 1 "controller-config-pvc must be bound before controller rollout"
+    fi
+  else
+    log_ok "controller-config-pvc is bound"
+  fi
+else
+  log_warn "controller-config-pvc not found (may be created by deployment)"
+fi
+
 wait_rollout_status "platform" "deployment" "controller" "${TIMEOUT}" "app=controller" || {
+  # Additional diagnostics on failure
+  log_error "Controller deployment failed - collecting additional diagnostics..."
+  log_info "Controller pods status:"
+  run_kubectl get pods -n platform -l app=controller -o wide 2>&1 || true
+  log_info "Controller pod events:"
+  run_kubectl get events -n platform --field-selector involvedObject.kind=Pod --sort-by='.lastTimestamp' 2>&1 | grep -i controller | tail -20 || true
   die 1 "controller deployment not ready"
 }
 
