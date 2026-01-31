@@ -423,39 +423,7 @@ for key in "${REQUIRED_SECRET_KEYS[@]}"; do
 done
 log_ok "All required secrets are present and non-placeholder"
 
-# Gate 10: All manifests render cleanly (no missing vars)
-log_info "Gate 10/10: Verifying manifests render cleanly..."
-if [ ! -f "${APPS_DIR}/kustomization.yaml" ]; then
-  log_error "Application kustomization not found: ${APPS_DIR}/kustomization.yaml"
-  die 1 "Kustomization file must exist before applying applications"
-fi
-# Test kustomize build (dry-run)
-TEMP_MANIFEST_TEST=$(mktemp) || TEMP_MANIFEST_TEST="/tmp/kustomize-test-$$.yaml"
-if ! run_kubectl kustomize "${APPS_DIR}" > "${TEMP_MANIFEST_TEST}" 2>&1; then
-  log_error "Kustomize build failed"
-  log_error "Build output:"
-  cat "${TEMP_MANIFEST_TEST}" >&2 || true
-  rm -f "${TEMP_MANIFEST_TEST}"
-  die 1 "Kustomize build must succeed before applying applications"
-fi
-# Check for placeholder patterns in rendered manifest
-if grep -qE "REPLACE_[A-Z_]+" "${TEMP_MANIFEST_TEST}" 2>/dev/null; then
-  log_error "Rendered manifest contains placeholder values"
-  log_error "Placeholders found:"
-  grep -E "REPLACE_[A-Z_]+" "${TEMP_MANIFEST_TEST}" | head -n 10 >&2 || true
-  rm -f "${TEMP_MANIFEST_TEST}"
-  die 1 "Manifests must not contain placeholder values before applying applications"
-fi
-rm -f "${TEMP_MANIFEST_TEST}"
-log_ok "All manifests render cleanly without placeholders"
-
-log_ok "All validation gates passed (10/10)"
-
-# Apply applications (required)
-log_info "Applying application manifests..."
-APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
-log_info "Kustomization directory: ${APPS_DIR}"
-
+# Determine if ingress should be excluded (BEFORE Gate 10)
 # Load panel domain and TLS issuer from state.env (if available)
 PANEL_DOMAIN=""
 TLS_ISSUER=""
@@ -479,6 +447,78 @@ if [ "${VOXEIL_CI:-0}" = "1" ] && ([ -z "${PANEL_DOMAIN}" ] || [ "${PANEL_DOMAIN
   log_info "CI mode: Panel domain not provided, excluding ingress (requires valid domain)"
   EXCLUDE_INGRESS=true
 fi
+
+# Gate 10: All manifests render cleanly (no missing vars)
+# This gate validates the FINAL manifest that will be applied (after ingress filtering)
+log_info "Gate 10/10: Verifying manifests render cleanly..."
+if [ ! -f "${APPS_DIR}/kustomization.yaml" ]; then
+  log_error "Application kustomization not found: ${APPS_DIR}/kustomization.yaml"
+  die 1 "Kustomization file must exist before applying applications"
+fi
+# Test kustomize build (dry-run)
+TEMP_MANIFEST_TEST=$(mktemp) || TEMP_MANIFEST_TEST="/tmp/kustomize-test-$$.yaml"
+if ! run_kubectl kustomize "${APPS_DIR}" > "${TEMP_MANIFEST_TEST}" 2>&1; then
+  log_error "Kustomize build failed"
+  log_error "Build output:"
+  cat "${TEMP_MANIFEST_TEST}" >&2 || true
+  rm -f "${TEMP_MANIFEST_TEST}"
+  die 1 "Kustomize build must succeed before applying applications"
+fi
+
+# If ingress should be excluded, filter it out before checking for placeholders
+if [ "${EXCLUDE_INGRESS}" = "true" ]; then
+  TEMP_FILTERED_TEST=$(mktemp) || TEMP_FILTERED_TEST="/tmp/filtered-test-$$.yaml"
+  awk '
+    BEGIN {
+      skip = 0;
+      in_ingress = 0;
+    }
+    /^---$/ {
+      if (!skip) {
+        print;
+      }
+      skip = 0;
+      in_ingress = 0;
+      next;
+    }
+    /^kind:[[:space:]]*Ingress/ {
+      in_ingress = 1;
+      if ($0 ~ /REPLACE_PANEL_DOMAIN/) {
+        skip = 1;
+        next;
+      }
+    }
+    /REPLACE_PANEL_DOMAIN/ {
+      if (in_ingress) {
+        skip = 1;
+      }
+    }
+    {
+      if (!skip) {
+        print;
+      }
+    }
+  ' "${TEMP_MANIFEST_TEST}" > "${TEMP_FILTERED_TEST}" 2>/dev/null || cp "${TEMP_MANIFEST_TEST}" "${TEMP_FILTERED_TEST}"
+  mv "${TEMP_FILTERED_TEST}" "${TEMP_MANIFEST_TEST}"
+fi
+
+# Check for placeholder patterns in rendered manifest (after filtering)
+if grep -qE "REPLACE_[A-Z_]+" "${TEMP_MANIFEST_TEST}" 2>/dev/null; then
+  log_error "Rendered manifest contains placeholder values"
+  log_error "Placeholders found:"
+  grep -E "REPLACE_[A-Z_]+" "${TEMP_MANIFEST_TEST}" | head -n 10 >&2 || true
+  rm -f "${TEMP_MANIFEST_TEST}"
+  die 1 "Manifests must not contain placeholder values before applying applications"
+fi
+rm -f "${TEMP_MANIFEST_TEST}"
+log_ok "All manifests render cleanly without placeholders"
+
+log_ok "All validation gates passed (10/10)"
+
+# Apply applications (required)
+log_info "Applying application manifests..."
+APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
+log_info "Kustomization directory: ${APPS_DIR}"
 
 if [ ! -f "${APPS_DIR}/kustomization.yaml" ]; then
   log_error "Application kustomization not found: ${APPS_DIR}/kustomization.yaml"
