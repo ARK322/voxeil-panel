@@ -312,6 +312,23 @@ spec:
   restartPolicy: Never
 EOF
       
+      # Wait for prebind pod to be scheduled (triggers PVC binding)
+      log_info "Waiting for prebind pod to be scheduled..."
+      for i in $(seq 1 15); do
+        pod_phase=$(run_kubectl get pod "${TEMP_PREBIND_POD}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+        if [ "${pod_phase}" = "Running" ] || [ "${pod_phase}" = "Pending" ]; then
+          # Pod is scheduled (Pending or Running), which triggers PVC binding
+          break
+        fi
+        if [ $i -eq 15 ]; then
+          log_error "Prebind pod failed to be scheduled after 30s"
+          run_kubectl describe pod "${TEMP_PREBIND_POD}" -n "${ns}" >&2 || true
+          run_kubectl delete pod "${TEMP_PREBIND_POD}" -n "${ns}" --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
+          die 1 "Prebind pod must be scheduled to trigger PVC binding"
+        fi
+        sleep 2
+      done
+      
       # Wait for PVC to bind (timeout: 60s)
       log_info "Waiting for PVC '${pvc}' to bind..."
       for i in $(seq 1 30); do
@@ -323,6 +340,7 @@ EOF
         if [ $i -eq 30 ]; then
           log_error "PVC '${pvc}' did not bind after 60s"
           run_kubectl describe pvc "${name}" -n "${ns}" >&2 || true
+          run_kubectl describe pod "${TEMP_PREBIND_POD}" -n "${ns}" >&2 || true
           # Clean up prebind pod
           run_kubectl delete pod "${TEMP_PREBIND_POD}" -n "${ns}" --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
           die 1 "PVC '${pvc}' must be Bound before applying applications"
