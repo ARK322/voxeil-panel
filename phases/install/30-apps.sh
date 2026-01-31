@@ -111,7 +111,7 @@ if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1 && run_kub
       POSTGRES_ADMIN_PASSWORD="${POSTGRES_PWD_FROM_INFRA}"
       
       # Recreate secret
-      run_kubectl delete secret platform-secrets -n platform --ignore-not-found >/dev/null 2>&1
+      run_kubectl delete secret platform-secrets -n platform --ignore-not-found --request-timeout=30s >/dev/null 2>&1
       run_kubectl create secret generic platform-secrets \
         --namespace=platform \
         --from-literal=ADMIN_API_KEY="${ADMIN_API_KEY}" \

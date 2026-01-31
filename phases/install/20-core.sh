@@ -191,7 +191,7 @@ if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1; then
     fi
     
     # Update postgres-secret with actual password
-    run_kubectl delete secret postgres-secret -n infra-db --ignore-not-found >/dev/null 2>&1
+    run_kubectl delete secret postgres-secret -n infra-db --ignore-not-found --request-timeout=30s >/dev/null 2>&1
     run_kubectl create secret generic postgres-secret \
       --namespace=infra-db \
       --from-literal=POSTGRES_PASSWORD="${POSTGRES_PASSWORD_FROM_SECRET}" >/dev/null 2>&1 || {
@@ -225,7 +225,7 @@ if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1; then
       POSTGRES_ADMIN_PASSWORD="${POSTGRES_PASSWORD_FROM_SECRET}"
       
       # Recreate secret with synced password
-      run_kubectl delete secret platform-secrets -n platform --ignore-not-found >/dev/null 2>&1
+      run_kubectl delete secret platform-secrets -n platform --ignore-not-found --request-timeout=30s >/dev/null 2>&1
       run_kubectl create secret generic platform-secrets \
         --namespace=platform \
         --from-literal=ADMIN_API_KEY="${ADMIN_API_KEY}" \
