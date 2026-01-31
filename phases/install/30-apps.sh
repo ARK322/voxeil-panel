@@ -307,31 +307,55 @@ if [ "${VOXEIL_CI:-0}" = "1" ] && [ -n "${VOXEIL_CONTROLLER_IMAGE:-}" ] && [ -n 
     if [ "${EXCLUDE_INGRESS}" = "true" ]; then
       # Remove Ingress resources containing REPLACE_PANEL_DOMAIN
       TEMP_FILTERED=$(mktemp) || TEMP_FILTERED="/tmp/filtered-$$"
-      # Use awk to filter: skip Ingress resources that contain REPLACE_PANEL_DOMAIN
+      # Use awk to completely remove Ingress resources that contain REPLACE_PANEL_DOMAIN
+      # Process line by line, tracking when we're in an Ingress resource
       awk '
         BEGIN { 
           in_ingress = 0;
           skip_block = 0;
+          buffer = "";
         }
         /^---$/ {
+          # End of resource: if we were skipping, discard buffer; otherwise print it
+          if (!skip_block && buffer != "") {
+            print buffer;
+          }
+          # Print separator only if we're not skipping and there's content before
           if (!skip_block) {
             print;
           }
+          # Reset state
           in_ingress = 0;
           skip_block = 0;
+          buffer = "";
           next;
         }
         /^kind:[[:space:]]*Ingress/ {
           in_ingress = 1;
+          buffer = $0 "\n";
+          next;
         }
         /REPLACE_PANEL_DOMAIN/ {
           if (in_ingress) {
             skip_block = 1;
+            buffer = "";
           }
         }
         {
-          if (!skip_block) {
+          if (skip_block) {
+            # Discard this line
+            next;
+          }
+          if (in_ingress) {
+            buffer = buffer $0 "\n";
+          } else {
             print;
+          }
+        }
+        END {
+          # Handle last resource if no trailing ---
+          if (!skip_block && buffer != "") {
+            print buffer;
           }
         }
       ' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || cp "${TEMP_MANIFEST}" "${TEMP_FILTERED}"
