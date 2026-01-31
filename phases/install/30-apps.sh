@@ -283,17 +283,35 @@ for pvc in "${REQUIRED_PVCS[@]}"; do
       
       if [ "${volume_binding_mode}" = "WaitForFirstConsumer" ]; then
         log_info "PVC uses WaitForFirstConsumer, creating temporary pod to trigger binding..."
-        # Create a temporary pod that mounts the PVC
-        TEMP_POD_NAME="pvc-prebind-${name}-$(date +%s)"
-        run_kubectl run "${TEMP_POD_NAME}" \
-          --namespace="${ns}" \
-          --image=busybox:1.36 \
-          --restart=Never \
-          --overrides="{\"spec\":{\"containers\":[{\"name\":\"prebind\",\"image\":\"busybox:1.36\",\"command\":[\"sleep\",\"3600\"],\"volumeMounts\":[{\"name\":\"pvc\",\"mountPath\":\"/data\"}]}],\"volumes\":[{\"name\":\"pvc\",\"persistentVolumeClaim\":{\"claimName\":\"${name}\"}}]}}" \
-          >/dev/null 2>&1 || {
+        # Create a temporary pod that mounts the PVC using YAML manifest (more reliable than --overrides)
+        TEMP_POD_NAME="pvc-prebind-${name}-$(date +%s | tr -d '\n')"
+        TEMP_POD_YAML=$(mktemp) || TEMP_POD_YAML="/tmp/prebind-pod-$$.yaml"
+        cat > "${TEMP_POD_YAML}" <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${TEMP_POD_NAME}
+  namespace: ${ns}
+spec:
+  containers:
+  - name: prebind
+    image: busybox:1.36
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: pvc
+      mountPath: /data
+  volumes:
+  - name: pvc
+    persistentVolumeClaim:
+      claimName: ${name}
+  restartPolicy: Never
+EOF
+        if ! run_kubectl apply -f "${TEMP_POD_YAML}" >/dev/null 2>&1; then
+          rm -f "${TEMP_POD_YAML}"
           log_error "Failed to create pre-bind pod for PVC '${pvc}'"
           die 1 "Cannot pre-bind PVC '${pvc}' - required for deterministic CI"
-        }
+        fi
+        rm -f "${TEMP_POD_YAML}"
         
         # Wait for PVC to bind (pod creation triggers binding)
         log_info "Waiting for PVC '${pvc}' to bind (triggered by pre-bind pod)..."
