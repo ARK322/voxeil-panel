@@ -3,6 +3,7 @@
 # Source this file: source "$(dirname "$0")/../lib/fs.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
 # Initialize RENDER_DIR (for installer)

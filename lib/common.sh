@@ -177,6 +177,7 @@ state_load() {
   if [ -f "${STATE_FILE}" ]; then
     # shellcheck disable=SC1090
     set +u
+    # shellcheck disable=SC1090
     source "${STATE_FILE}" 2>/dev/null || true
     set -u
   fi

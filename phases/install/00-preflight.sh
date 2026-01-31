@@ -3,7 +3,9 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../../lib/common.sh
 source "${SCRIPT_DIR}/../../lib/common.sh"
+# shellcheck source=../../lib/validate.sh
 source "${SCRIPT_DIR}/../../lib/validate.sh"
 
 log_phase "install/00-preflight"

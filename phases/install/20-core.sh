@@ -168,6 +168,7 @@ if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1; then
     if [ -f "${STATE_ENV_FILE}" ]; then
       # shellcheck disable=SC1090
       set +u
+      # shellcheck disable=SC1090
       source "${STATE_ENV_FILE}" 2>/dev/null || true
       set -u
     fi

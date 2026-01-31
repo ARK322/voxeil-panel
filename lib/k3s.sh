@@ -3,6 +3,7 @@
 # Source this file: source "$(dirname "$0")/../lib/k3s.sh"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
 # Install k3s (calls official installer)

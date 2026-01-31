@@ -52,6 +52,7 @@ if [ -f "${STATE_ENV_FILE}" ]; then
   log_info "Loading existing secrets from ${STATE_ENV_FILE}"
   # shellcheck disable=SC1090
   set +u
+  # shellcheck disable=SC1090
   source "${STATE_ENV_FILE}" 2>/dev/null || true
   set -u
 fi

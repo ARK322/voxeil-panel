@@ -4,6 +4,7 @@
 
 # Source common first
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=common.sh
 source "${SCRIPT_DIR}/common.sh"
 
 # Global kubectl binary path (empty until resolved)
@@ -181,10 +182,10 @@ retry_apply() {
   local output=""
   
   while [ "${attempt}" -le "${max_attempts}" ]; do
-    output="$(run_kubectl apply --server-side --force-conflicts -f "${file}" 2>&1)"
-    if [ $? -eq 0 ]; then
+    if run_kubectl apply --server-side --force-conflicts -f "${file}" >/dev/null 2>&1; then
       return 0
     fi
+    output="$(run_kubectl apply --server-side --force-conflicts -f "${file}" 2>&1)"
     
     if echo "${output}" | grep -q "webhook.*timeout\|context deadline exceeded"; then
       if [ "${attempt}" -lt "${max_attempts}" ]; then
@@ -196,10 +197,10 @@ retry_apply() {
       fi
     fi
     
-    output="$(run_kubectl apply -f "${file}" 2>&1)"
-    if [ $? -eq 0 ]; then
+    if run_kubectl apply -f "${file}" >/dev/null 2>&1; then
       return 0
     fi
+    output="$(run_kubectl apply -f "${file}" 2>&1)"
     
     if echo "${output}" | grep -q "webhook.*timeout\|context deadline exceeded"; then
       if [ "${attempt}" -lt "${max_attempts}" ]; then
