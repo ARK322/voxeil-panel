@@ -213,6 +213,22 @@ if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1 && run_kub
         # Test connection using the actual password from platform-secrets
         if run_kubectl exec "${POSTGRES_POD}" -n infra-db -- env PGPASSWORD="${FINAL_POSTGRES_PWD}" psql -U postgres -d postgres -c "SELECT 1" >/dev/null 2>&1; then
           log_ok "PostgreSQL connection verified with platform-secrets password"
+          
+          # Also verify the password matches postgres-secret
+          POSTGRES_SECRET_PWD=""
+          if command_exists base64; then
+            POSTGRES_SECRET_PWD=$(run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.data.POSTGRES_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.stringData.POSTGRES_PASSWORD}' 2>/dev/null || echo "")
+          else
+            POSTGRES_SECRET_PWD=$(run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.stringData.POSTGRES_PASSWORD}' 2>/dev/null || echo "")
+          fi
+          
+          if [ "${FINAL_POSTGRES_PWD}" = "${POSTGRES_SECRET_PWD}" ]; then
+            log_ok "Password values match between postgres-secret and platform-secrets"
+          else
+            log_error "Password mismatch detected! postgres-secret and platform-secrets have different values"
+            log_error "This will cause controller authentication failures"
+            die 1 "Password sync verification failed - passwords do not match"
+          fi
         else
           log_warn "PostgreSQL connection test failed with platform-secrets password (controller may still fail)"
         fi
