@@ -252,9 +252,9 @@ spec:
       name: AGGREGATE
       priority: 1
       type: string
-      name: v1alpha2
-      schema:
-        openAPIV3Schema:
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
           description: AdmissionReport is the Schema for the AdmissionReports API
           properties:
           apiVersion:
@@ -560,8 +560,8 @@ spec:
     singular: backgroundscanreport
   scope: Namespaced
   versions:
-  - additionalPrinterColumns:
-    - jsonPath: .metadata.ownerReferences[0].apiVersion
+    - additionalPrinterColumns:
+        - jsonPath: .metadata.ownerReferences[0].apiVersion
       name: ApiVersion
       priority: 1
       type: string
@@ -835,7 +835,7 @@ spec:
                 type: object
             type: object
         required:
-        - spec
+          - spec
         type: object
       served: true
       storage: true
@@ -858,12 +858,12 @@ spec:
   group: kyverno.io
   names:
     categories:
-    - kyverno
+      - kyverno
     kind: CleanupPolicy
     listKind: CleanupPolicyList
     plural: cleanuppolicies
     shortNames:
-    - cleanpol
+      - cleanpol
     singular: cleanuppolicy
   scope: Namespaced
   versions:
@@ -920,9 +920,9 @@ spec:
                             LessThanOrEquals, LessThan, DurationGreaterThanOrEquals,
                             DurationGreaterThan, DurationLessThanOrEquals, DurationLessThan'
                           enum:
-                          - Equals
-                          - NotEquals
-                          - AnyIn
+                            - Equals
+                            - NotEquals
+                            - AnyIn
                           - AllIn
                           - AnyNotIn
                           - AllNotIn
@@ -963,9 +963,9 @@ spec:
                             LessThanOrEquals, LessThan, DurationGreaterThanOrEquals,
                             DurationGreaterThan, DurationLessThanOrEquals, DurationLessThan'
                           enum:
-                          - Equals
-                          - NotEquals
-                          - AnyIn
+                            - Equals
+                            - NotEquals
+                            - AnyIn
                           - AllIn
                           - AnyNotIn
                           - AllNotIn
@@ -2103,7 +2103,7 @@ spec:
                 type: string
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: false
@@ -2161,9 +2161,9 @@ spec:
                             LessThanOrEquals, LessThan, DurationGreaterThanOrEquals,
                             DurationGreaterThan, DurationLessThanOrEquals, DurationLessThan'
                           enum:
-                          - Equals
-                          - NotEquals
-                          - AnyIn
+                            - Equals
+                            - NotEquals
+                            - AnyIn
                           - AllIn
                           - AnyNotIn
                           - AllNotIn
@@ -2204,9 +2204,9 @@ spec:
                             LessThanOrEquals, LessThan, DurationGreaterThanOrEquals,
                             DurationGreaterThan, DurationLessThanOrEquals, DurationLessThan'
                           enum:
-                          - Equals
-                          - NotEquals
-                          - AnyIn
+                            - Equals
+                            - NotEquals
+                            - AnyIn
                           - AllIn
                           - AnyNotIn
                           - AllNotIn
@@ -3344,7 +3344,7 @@ spec:
                 type: string
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: true
@@ -3992,7 +3992,7 @@ spec:
                 type: object
             type: object
         required:
-        - spec
+          - spec
         type: object
       served: true
       storage: true
@@ -4077,9 +4077,9 @@ spec:
                             LessThanOrEquals, LessThan, DurationGreaterThanOrEquals,
                             DurationGreaterThan, DurationLessThanOrEquals, DurationLessThan'
                           enum:
-                          - Equals
-                          - NotEquals
-                          - AnyIn
+                            - Equals
+                            - NotEquals
+                            - AnyIn
                           - AllIn
                           - AnyNotIn
                           - AllNotIn
@@ -4120,9 +4120,9 @@ spec:
                             LessThanOrEquals, LessThan, DurationGreaterThanOrEquals,
                             DurationGreaterThan, DurationLessThanOrEquals, DurationLessThan'
                           enum:
-                          - Equals
-                          - NotEquals
-                          - AnyIn
+                            - Equals
+                            - NotEquals
+                            - AnyIn
                           - AllIn
                           - AnyNotIn
                           - AllNotIn
@@ -5260,7 +5260,7 @@ spec:
                 type: string
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: false
@@ -5318,9 +5318,9 @@ spec:
                             LessThanOrEquals, LessThan, DurationGreaterThanOrEquals,
                             DurationGreaterThan, DurationLessThanOrEquals, DurationLessThan'
                           enum:
-                          - Equals
-                          - NotEquals
-                          - AnyIn
+                            - Equals
+                            - NotEquals
+                            - AnyIn
                           - AllIn
                           - AnyNotIn
                           - AllNotIn
@@ -5361,9 +5361,9 @@ spec:
                             LessThanOrEquals, LessThan, DurationGreaterThanOrEquals,
                             DurationGreaterThan, DurationLessThanOrEquals, DurationLessThan'
                           enum:
-                          - Equals
-                          - NotEquals
-                          - AnyIn
+                            - Equals
+                            - NotEquals
+                            - AnyIn
                           - AllIn
                           - AnyNotIn
                           - AllNotIn
@@ -6501,7 +6501,7 @@ spec:
                 type: string
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: true
@@ -15518,7 +15518,7 @@ spec:
             - ready
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: true
@@ -24234,7 +24234,7 @@ spec:
             - ready
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: false
@@ -33253,7 +33253,7 @@ spec:
             - ready
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: true
@@ -41970,7 +41970,7 @@ spec:
             - ready
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: false
@@ -42499,7 +42499,7 @@ spec:
             - match
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: false
@@ -42998,7 +42998,7 @@ spec:
             - match
             type: object
         required:
-        - spec
+          - spec
         type: object
     served: true
     storage: true
