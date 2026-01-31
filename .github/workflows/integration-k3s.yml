@@ -28,20 +28,29 @@ jobs:
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml || true
           export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
           echo "KUBECONFIG=/etc/rancher/k3s/k3s.yaml" >> $GITHUB_ENV
+          # Ensure k3s service is running
+          sudo systemctl start k3s || true
+          sudo systemctl enable k3s || true
           # Wait for k3s API to be ready
-          timeout 120 bash -c 'until kubectl cluster-info &>/dev/null; do sleep 2; done'
+          timeout 120 bash -c 'until kubectl cluster-info &>/dev/null; do sleep 2; done' || exit 1
           kubectl cluster-info
+          kubectl config get-contexts
           # Wait for node to be registered (k3s needs time to register the node)
           echo "Waiting for node to be registered..."
-          for i in {1..60}; do
+          for i in {1..90}; do
             if kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
               echo "Node registered!"
-              kubectl get nodes
+              kubectl get nodes -o wide
+              # Wait for node to be Ready
+              kubectl wait node --all --for=condition=Ready --timeout=180s || exit 1
+              echo "Node is Ready!"
               break
             fi
-            if [ $i -eq 60 ]; then
-              echo "WARNING: Node not registered after 120 seconds, continuing anyway"
-              kubectl get nodes || true
+            if [ $i -eq 90 ]; then
+              echo "ERROR: Node not registered after 180 seconds"
+              kubectl get nodes
+              sudo systemctl status k3s || true
+              exit 1
             fi
             sleep 2
           done
@@ -54,22 +63,16 @@ jobs:
           export KUBECONFIG=~/.kube/config
           echo "KUBECONFIG=~/.kube/config" >> $GITHUB_ENV
           kubectl cluster-info
-          # Wait for nodes to exist (k3s may take time to register the node)
-          echo "Waiting for nodes to appear..."
-          for i in {1..60}; do
-            if kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
-              echo "Nodes found!"
-              # Wait for all nodes to be Ready
-              kubectl wait node --all --for=condition=Ready --timeout=180s || echo "WARNING: Some nodes not Ready, continuing"
-              kubectl get nodes -o wide
-              break
-            fi
-            if [ $i -eq 60 ]; then
-              echo "WARNING: Nodes did not appear after 120 seconds, but continuing (installation phase will handle node readiness)"
-              kubectl get nodes || echo "No nodes found"
-            fi
-            sleep 2
-          done
+          kubectl config get-contexts
+          # Verify nodes exist and are Ready (should already be from Install k3s step, but verify)
+          kubectl get nodes -o wide
+          if ! kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
+            echo "ERROR: No nodes found after k3s installation"
+            kubectl get nodes
+            exit 1
+          fi
+          kubectl wait node --all --for=condition=Ready --timeout=60s || exit 1
+          echo "All nodes are Ready"
 
       - name: Setup GHCR image pull secret (if private images)
         if: github.event_name != 'pull_request'

@@ -22,6 +22,10 @@ if [ "${SKIP_K3S}" = "true" ]; then
     die 1 "kubectl cannot reach cluster and --skip-k3s specified. Cannot proceed."
   fi
   log_info "Skipping k3s installation (--skip-k3s)"
+  # Verify nodes exist when skipping k3s installation
+  if ! run_kubectl get nodes --no-headers 2>/dev/null | grep -q .; then
+    die 1 "No nodes found in cluster. k3s may not be running or kubeconfig is incorrect."
+  fi
 elif [ "${INSTALL_K3S}" = "true" ] || ! command_exists kubectl; then
   if ! is_k3s_installed; then
     install_k3s || die 1 "k3s installation failed"
@@ -53,7 +57,7 @@ fi
 # Wait for k3s API
 wait_for_k3s_api || die 1 "k3s API not ready"
 
-# Wait for nodes to exist and be Ready (if they appear)
+# Wait for nodes to exist and be Ready (REQUIRED - fail if nodes don't appear)
 log_info "Waiting for nodes to exist..."
 node_wait_attempts=0
 node_wait_max=90
@@ -71,17 +75,20 @@ while [ ${node_wait_attempts} -lt ${node_wait_max} ]; do
   sleep 2
 done
 
-if [ "${nodes_exist}" = "true" ]; then
-  # Wait for all nodes to be Ready
-  log_info "Waiting for all nodes to be Ready..."
-  if run_kubectl wait node --all --for=condition=Ready --timeout=180s >/dev/null 2>&1; then
-    log_ok "All nodes are Ready"
-  else
-    log_warn "Some nodes not Ready, but continuing (cluster API is functional)"
-  fi
-else
-  log_warn "Nodes did not appear after $((node_wait_max * 2)) seconds, but continuing (cluster API is functional)"
+if [ "${nodes_exist}" != "true" ]; then
+  log_error "Nodes did not appear after $((node_wait_max * 2)) seconds"
+  run_kubectl get nodes || true
+  die 1 "Cluster has no nodes. k3s may not be running properly or kubeconfig is incorrect."
 fi
+
+# Wait for all nodes to be Ready (REQUIRED)
+log_info "Waiting for all nodes to be Ready..."
+if ! run_kubectl wait node --all --for=condition=Ready --timeout=180s >/dev/null 2>&1; then
+  log_error "Nodes did not become Ready within 180s"
+  run_kubectl get nodes -o wide || true
+  die 1 "Nodes are not Ready. Cluster is not functional."
+fi
+log_ok "All nodes are Ready"
 
 # Check kubectl context
 check_kubectl_context || die 1 "kubectl context check failed"
