@@ -23,7 +23,7 @@ jobs:
 
       - name: Install k3s
         run: |
-          curl -sfL https://get.k3s.io | INSTALL_K3S_EXEC="--container-runtime-endpoint=unix:///run/containerd/containerd.sock" sh -
+          curl -sfL https://get.k3s.io | sh -
           sudo mkdir -p /etc/rancher/k3s
           sudo chmod 644 /etc/rancher/k3s/k3s.yaml || true
           export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
