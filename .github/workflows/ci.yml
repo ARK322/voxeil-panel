@@ -42,7 +42,7 @@ jobs:
       - name: Build workspaces
         run: |
           echo "::group::Building workspaces"
-          npm run build --workspaces --if-present
+          npm run build:ci
           echo "::endgroup::"
 
       - name: Typecheck workspaces
