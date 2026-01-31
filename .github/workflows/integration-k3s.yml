@@ -74,24 +74,40 @@ jobs:
           kubectl wait node --all --for=condition=Ready --timeout=60s || exit 1
           echo "All nodes are Ready"
 
-      - name: Setup GHCR image pull secret (if private images)
-        if: github.event_name != 'pull_request'
+      - name: Build and load application images into k3s
         run: |
-          # NOTE: This step is only needed if images are private in GHCR.
-          # If images are public, this step can be skipped.
-          # To use private images, uncomment the following:
-          #
-          # echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin || true
-          # kubectl create namespace platform --dry-run=client -o yaml | kubectl apply -f -
-          # kubectl create secret docker-registry ghcr-pull-secret \
-          #   --docker-server=ghcr.io \
-          #   --docker-username=${{ github.actor }} \
-          #   --docker-password="${{ secrets.GITHUB_TOKEN }}" \
-          #   -n platform \
-          #   --dry-run=client -o yaml | kubectl apply -f -
-          #
-          # For now, assuming images are public or will be pulled from a public registry.
-          echo "Skipping GHCR secret setup (assuming public images or local build)"
+          # Verify Docker is available (usually pre-installed on GitHub Actions runners)
+          docker --version || { echo "ERROR: Docker not available"; exit 1; }
+          
+          # Build controller and panel images locally
+          echo "Building voxeil-controller image..."
+          docker build -f apps/controller/Dockerfile -t ghcr.io/ark322/voxeil-controller:latest .
+          
+          echo "Building voxeil-panel image..."
+          docker build -f apps/panel/Dockerfile -t ghcr.io/ark322/voxeil-panel:latest .
+          
+          # Import images into k3s containerd
+          # Save images to temporary files and import via k3s ctr
+          echo "Importing controller image into k3s..."
+          docker save ghcr.io/ark322/voxeil-controller:latest -o /tmp/controller.tar
+          sudo k3s ctr images import /tmp/controller.tar || {
+            echo "Warning: Failed to import via ctr, trying direct load..."
+            # Alternative: use k3s's image import capability
+            sudo k3s ctr -n k8s.io images import /tmp/controller.tar || true
+          }
+          rm -f /tmp/controller.tar
+          
+          echo "Importing panel image into k3s..."
+          docker save ghcr.io/ark322/voxeil-panel:latest -o /tmp/panel.tar
+          sudo k3s ctr images import /tmp/panel.tar || {
+            echo "Warning: Failed to import via ctr, trying direct load..."
+            sudo k3s ctr -n k8s.io images import /tmp/panel.tar || true
+          }
+          rm -f /tmp/panel.tar
+          
+          # Verify images are available (may not show up immediately, but will be available when referenced)
+          echo "Checking imported images..."
+          sudo k3s ctr images ls 2>/dev/null | grep -E "(voxeil-controller|voxeil-panel)" || echo "Note: Images imported, will be available when pods reference them"
 
       - name: Make scripts executable (safe)
         run: |

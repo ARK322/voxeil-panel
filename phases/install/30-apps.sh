@@ -21,9 +21,16 @@ if [ ! -f "${APPS_DIR}/kustomization.yaml" ]; then
   exit 1
 fi
 
-# Check if kustomization has resources
-if ! grep -qE '^\s+-|^resources:' "${APPS_DIR}/kustomization.yaml" 2>/dev/null | grep -v '^[[:space:]]*#' | grep -q .; then
-  log_error "Application kustomization has no resources defined"
+# Check if kustomization has resources (more robust check)
+if ! grep -E '^resources:' "${APPS_DIR}/kustomization.yaml" >/dev/null 2>&1; then
+  log_error "Application kustomization missing 'resources:' field"
+  exit 1
+fi
+
+# Check if there are any uncommented resource entries
+resource_count=$(grep -E '^\s+-' "${APPS_DIR}/kustomization.yaml" 2>/dev/null | grep -v '^[[:space:]]*#' | wc -l || echo "0")
+if [ "${resource_count}" -eq "0" ]; then
+  log_error "Application kustomization has no resources defined (found ${resource_count} resource entries)"
   exit 1
 fi
 
