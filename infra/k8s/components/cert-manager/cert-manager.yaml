@@ -5563,8 +5563,8 @@ spec:
             - --v=2
             - --leader-election-namespace=kube-system
           env:
-          - name: POD_NAMESPACE
-            valueFrom:
+            - name: POD_NAMESPACE
+              valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
           securityContext:
@@ -5626,8 +5626,8 @@ spec:
             - --max-concurrent-challenges=60
           ports:
             - containerPort: 9402
-            name: http-metrics
-            protocol: TCP
+              name: http-metrics
+              protocol: TCP
           - containerPort: 9403
             name: http-healthz
             protocol: TCP
@@ -5638,8 +5638,8 @@ spec:
                 - ALL
             readOnlyRootFilesystem: true
           env:
-          - name: POD_NAMESPACE
-            valueFrom:
+            - name: POD_NAMESPACE
+              valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
           # LivenessProbe settings are based on those used for the Kubernetes
@@ -5706,8 +5706,8 @@ spec:
             - --dynamic-serving-dns-names=cert-manager-webhook.$(POD_NAMESPACE).svc
           ports:
             - name: https
-            protocol: TCP
-            containerPort: 10250
+              protocol: TCP
+              containerPort: 10250
           - name: healthcheck
             protocol: TCP
             containerPort: 6080
@@ -5738,8 +5738,8 @@ spec:
                 - ALL
             readOnlyRootFilesystem: true
           env:
-          - name: POD_NAMESPACE
-            valueFrom:
+            - name: POD_NAMESPACE
+              valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
       nodeSelector:
