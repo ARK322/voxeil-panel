@@ -597,7 +597,7 @@ log_ok "All validation gates passed (10/10)"
 
 # Apply applications (required)
 log_info "Applying application manifests..."
-APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
+# APPS_DIR already set above (before Gate 10)
 log_info "Kustomization directory: ${APPS_DIR}"
 
 if [ ! -f "${APPS_DIR}/kustomization.yaml" ]; then
