@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "build:ci": "npm run build -w @voxeil/shared && npm run build -w @voxeil/api-client && npm run build -w vhp-panel",
+    "build:ci": "tsc --build && npm run build -w vhp-panel",
     "lint": "npm run lint --workspaces --if-present"
   },
   "engines": {
