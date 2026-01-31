@@ -293,12 +293,91 @@ wait_sts_ready() {
   return 1
 }
 
+# Debug dump for failed deployment/statefulset
+dump_deployment_debug() {
+  local namespace="$1"
+  local resource_type="$2"  # deployment or statefulset
+  local resource_name="$3"
+  local label_selector="${4:-}"
+  
+  echo ""
+  echo "=========================================="
+  echo "DEBUG BUNDLE: ${resource_type}/${resource_name} in ${namespace}"
+  echo "=========================================="
+  
+  # Pods status
+  echo ""
+  echo "--- Pods Status (${namespace}) ---"
+  if [ -n "${label_selector}" ]; then
+    run_kubectl get pods -n "${namespace}" -l "${label_selector}" -o wide 2>&1 || true
+  else
+    run_kubectl get pods -n "${namespace}" -o wide 2>&1 || true
+  fi
+  
+  # Deployment/StatefulSet describe
+  echo ""
+  echo "--- ${resource_type} Describe: ${resource_name} ---"
+  run_kubectl describe "${resource_type}" "${resource_name}" -n "${namespace}" 2>&1 | head -100 || true
+  
+  # Pods describe
+  echo ""
+  echo "--- Pods Describe (${namespace}) ---"
+  if [ -n "${label_selector}" ]; then
+    for pod in $(run_kubectl get pods -n "${namespace}" -l "${label_selector}" -o jsonpath='{.items[*].metadata.name}' 2>/dev/null || echo ""); do
+      if [ -n "${pod}" ]; then
+        echo "--- Pod: ${pod} ---"
+        run_kubectl describe pod "${pod}" -n "${namespace}" 2>&1 | head -80 || true
+      fi
+    done
+  else
+    run_kubectl describe pods -n "${namespace}" 2>&1 | head -100 || true
+  fi
+  
+  # Events (sorted by timestamp, most recent last)
+  echo ""
+  echo "--- Recent Events (${namespace}, sorted by timestamp) ---"
+  run_kubectl get events -n "${namespace}" --sort-by='.lastTimestamp' 2>&1 | tail -120 || true
+  
+  # Pod logs (first pod found, all containers, tail 200)
+  echo ""
+  echo "--- Pod Logs (first pod, all containers, tail 200) ---"
+  local first_pod
+  if [ -n "${label_selector}" ]; then
+    first_pod=$(run_kubectl get pods -n "${namespace}" -l "${label_selector}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  else
+    first_pod=$(run_kubectl get pods -n "${namespace}" -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+  fi
+  
+  if [ -n "${first_pod}" ]; then
+    local containers
+    containers=$(run_kubectl get pod "${first_pod}" -n "${namespace}" -o jsonpath='{.spec.containers[*].name}' 2>/dev/null || echo "")
+    if [ -n "${containers}" ]; then
+      for container in ${containers}; do
+        echo "--- Logs: ${first_pod}/${container} ---"
+        run_kubectl logs "${first_pod}" -n "${namespace}" -c "${container}" --tail=200 2>&1 || true
+      done
+    else
+      # No containers found, try without container name
+      run_kubectl logs "${first_pod}" -n "${namespace}" --tail=200 2>&1 || true
+    fi
+  else
+    echo "No pods found for logging"
+  fi
+  
+  echo ""
+  echo "=========================================="
+  echo "END DEBUG BUNDLE"
+  echo "=========================================="
+  echo ""
+}
+
 # Wait for rollout status (deployment or statefulset)
 wait_rollout_status() {
   local namespace="$1"
   local resource_type="$2"  # deployment or statefulset
   local resource_name="$3"
   local timeout="${4:-${VOXEIL_WAIT_TIMEOUT}}"
+  local label_selector="${5:-}"  # Optional label selector for pods
   
   log_info "Waiting for ${resource_type} ${resource_name} rollout in namespace ${namespace} (timeout: ${timeout}s)..."
   
@@ -328,11 +407,8 @@ wait_rollout_status() {
     elapsed=$(($(date +%s) - start_time))
     log_error "${resource_type} ${resource_name} rollout failed or timed out after ${elapsed}s (timeout: ${timeout}s)"
     
-    # Show current status for debugging
-    log_info "Current ${resource_type} status:"
-    run_kubectl get "${resource_type}" "${resource_name}" -n "${namespace}" -o wide 2>&1 | head -5 || true
-    log_info "Recent events:"
-    run_kubectl get events -n "${namespace}" --field-selector involvedObject.name="${resource_name}" --sort-by='.lastTimestamp' 2>&1 | tail -10 || true
+    # Dump comprehensive debug information
+    dump_deployment_debug "${namespace}" "${resource_type}" "${resource_name}" "${label_selector}"
     
     # Show rollout output if available
     if [ -f "${rollout_output}" ] && [ -s "${rollout_output}" ]; then
