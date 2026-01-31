@@ -308,57 +308,63 @@ if [ "${VOXEIL_CI:-0}" = "1" ] && [ -n "${VOXEIL_CONTROLLER_IMAGE:-}" ] && [ -n 
       # Remove Ingress resources containing REPLACE_PANEL_DOMAIN
       TEMP_FILTERED=$(mktemp) || TEMP_FILTERED="/tmp/filtered-$$"
       # Use awk to completely remove Ingress resources that contain REPLACE_PANEL_DOMAIN
-      # Process line by line, tracking when we're in an Ingress resource
+      # Split by --- separator, check each resource, skip Ingress with REPLACE_PANEL_DOMAIN
       awk '
-        BEGIN { 
-          in_ingress = 0;
-          skip_block = 0;
-          buffer = "";
-        }
-        /^---$/ {
-          # End of resource: if we were skipping, discard buffer; otherwise print it
-          if (!skip_block && buffer != "") {
-            print buffer;
-          }
-          # Print separator only if we're not skipping and there's content before
-          if (!skip_block) {
-            print;
-          }
-          # Reset state
-          in_ingress = 0;
-          skip_block = 0;
-          buffer = "";
-          next;
-        }
-        /^kind:[[:space:]]*Ingress/ {
-          in_ingress = 1;
-          buffer = $0 "\n";
-          next;
-        }
-        /REPLACE_PANEL_DOMAIN/ {
-          if (in_ingress) {
-            skip_block = 1;
-            buffer = "";
-          }
+        BEGIN {
+          RS = "\n---\n";
+          ORS = "\n---\n";
         }
         {
-          if (skip_block) {
-            # Discard this line
+          # Check if this resource is an Ingress containing REPLACE_PANEL_DOMAIN
+          if ($0 ~ /^kind:[[:space:]]*Ingress/ && $0 ~ /REPLACE_PANEL_DOMAIN/) {
+            # Skip this entire resource
             next;
           }
-          if (in_ingress) {
-            buffer = buffer $0 "\n";
-          } else {
-            print;
-          }
+          # Otherwise, print the resource
+          print;
         }
         END {
-          # Handle last resource if no trailing ---
-          if (!skip_block && buffer != "") {
-            print buffer;
+          # Handle case where file doesn't end with ---
+          if (RT != "" && $0 !~ /^kind:[[:space:]]*Ingress/ || $0 !~ /REPLACE_PANEL_DOMAIN/) {
+            # Last resource was not skipped, ensure it's printed
           }
         }
-      ' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || cp "${TEMP_MANIFEST}" "${TEMP_FILTERED}"
+      ' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || {
+        # Fallback: use simpler approach with line-by-line processing
+        awk '
+          BEGIN {
+            skip = 0;
+            in_ingress = 0;
+          }
+          /^---$/ {
+            if (!skip) {
+              print;
+            }
+            skip = 0;
+            in_ingress = 0;
+            next;
+          }
+          /^kind:[[:space:]]*Ingress/ {
+            in_ingress = 1;
+            # Check if this line or next lines contain REPLACE_PANEL_DOMAIN
+            # We need to check ahead, so set a flag
+            if ($0 ~ /REPLACE_PANEL_DOMAIN/) {
+              skip = 1;
+              next;
+            }
+          }
+          /REPLACE_PANEL_DOMAIN/ {
+            if (in_ingress) {
+              skip = 1;
+            }
+          }
+          {
+            if (!skip) {
+              print;
+            }
+          }
+        ' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || cp "${TEMP_MANIFEST}" "${TEMP_FILTERED}"
+      }
       mv "${TEMP_FILTERED}" "${TEMP_MANIFEST}"
       log_info "Filtered out ingress resources (domain not provided in CI)"
     fi
