@@ -300,10 +300,28 @@ if [ "${VOXEIL_CI:-0}" = "1" ] && [ -n "${VOXEIL_CONTROLLER_IMAGE:-}" ] && [ -n 
       # GNU sed (Linux)
       sed -i "s|ghcr.io/[^/]*/voxeil-controller:[^[:space:]]*|${VOXEIL_CONTROLLER_IMAGE}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
       sed -i "s|ghcr.io/[^/]*/voxeil-panel:[^[:space:]]*|${VOXEIL_PANEL_IMAGE}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+      # Replace panel domain and TLS issuer if provided
+      if [ -n "${PANEL_DOMAIN}" ] && [ "${PANEL_DOMAIN}" != "REPLACE_PANEL_DOMAIN" ]; then
+        sed -i "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+        log_info "Replaced panel domain: ${PANEL_DOMAIN}"
+      fi
+      if [ -n "${TLS_ISSUER}" ] && [ "${TLS_ISSUER}" != "REPLACE_PANEL_TLS_ISSUER" ]; then
+        sed -i "s|REPLACE_PANEL_TLS_ISSUER|${TLS_ISSUER}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+        log_info "Replaced TLS issuer: ${TLS_ISSUER}"
+      fi
     else
       # BSD sed (macOS) - requires empty string after -i
       sed -i '' "s|ghcr.io/[^/]*/voxeil-controller:[^[:space:]]*|${VOXEIL_CONTROLLER_IMAGE}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
       sed -i '' "s|ghcr.io/[^/]*/voxeil-panel:[^[:space:]]*|${VOXEIL_PANEL_IMAGE}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+      # Replace panel domain and TLS issuer if provided
+      if [ -n "${PANEL_DOMAIN}" ] && [ "${PANEL_DOMAIN}" != "REPLACE_PANEL_DOMAIN" ]; then
+        sed -i '' "s|REPLACE_PANEL_DOMAIN|${PANEL_DOMAIN}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+        log_info "Replaced panel domain: ${PANEL_DOMAIN}"
+      fi
+      if [ -n "${TLS_ISSUER}" ] && [ "${TLS_ISSUER}" != "REPLACE_PANEL_TLS_ISSUER" ]; then
+        sed -i '' "s|REPLACE_PANEL_TLS_ISSUER|${TLS_ISSUER}|g" "${TEMP_MANIFEST}" 2>/dev/null || true
+        log_info "Replaced TLS issuer: ${TLS_ISSUER}"
+      fi
     fi
     
     log_info "Applying kustomization with CI image overrides..."
