@@ -45,6 +45,16 @@ jobs:
           npm install
           echo "::endgroup::"
 
+      - name: Verify workspace links
+        run: |
+          echo "::group::Verifying workspace links"
+          ls -la node_modules/@voxeil/ || echo "No @voxeil packages found"
+          test -L node_modules/@voxeil/shared && echo "✓ @voxeil/shared is linked" || echo "✗ @voxeil/shared is not linked"
+          test -L node_modules/@voxeil/api-client && echo "✓ @voxeil/api-client is linked" || echo "✗ @voxeil/api-client is not linked"
+          test -f packages/shared/dist/index.js && echo "✓ shared/dist/index.js exists" || echo "✗ shared/dist/index.js missing"
+          test -f packages/api-client/dist/index.js && echo "✓ api-client/dist/index.js exists" || echo "✗ api-client/dist/index.js missing"
+          echo "::endgroup::"
+
       - name: Lint workspaces
         run: |
           echo "::group::Linting workspaces"
