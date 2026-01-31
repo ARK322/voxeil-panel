@@ -221,10 +221,14 @@ setup_repo() {
     log_warn "cmd/install.sh not found in extracted archive"
     log_warn "Extracted root: ${extracted_root}"
     log_warn "Top-level contents of extracted archive:"
-    ls -la "${extracted_root}/" 2>/dev/null | head -20 || log_warn "Cannot list extracted root"
+    find "${extracted_root}/" -maxdepth 1 ! -path "${extracted_root}/" 2>/dev/null | head -20 | while IFS= read -r item; do
+      ls -ld "$item" 2>/dev/null || true
+    done || log_warn "Cannot list extracted root"
     if [[ -d "${extracted_root}/cmd" ]]; then
       log_warn "Contents of cmd directory:"
-      ls -la "${extracted_root}/cmd/" 2>/dev/null || true
+      find "${extracted_root}/cmd/" -maxdepth 1 ! -path "${extracted_root}/cmd/" 2>/dev/null | while IFS= read -r item; do
+        ls -ld "$item" 2>/dev/null || true
+      done || true
     else
       log_warn "cmd directory does not exist"
       log_warn "This usually means the cmd/ directory hasn't been pushed to the remote repository."
@@ -402,8 +406,10 @@ if [[ "${SUBCMD}" == "install" ]]; then
     log_error "This may indicate the repository archive is incomplete or the file is not tracked in git."
     if [[ -d "${REPO_ROOT}/cmd" ]]; then
       log_error "Files found in cmd directory:"
-      ls -la "${REPO_ROOT}/cmd/" 2>/dev/null | while read -r line; do
-        log_error "  $line"
+      find "${REPO_ROOT}/cmd/" -maxdepth 1 ! -path "${REPO_ROOT}/cmd/" 2>/dev/null | while IFS= read -r item; do
+        ls -ld "$item" 2>/dev/null | while IFS= read -r line; do
+          log_error "  $line"
+        done || true
       done || true
     else
       log_error "cmd directory does not exist at: ${REPO_ROOT}/cmd"
