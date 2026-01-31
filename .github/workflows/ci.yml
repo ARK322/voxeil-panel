@@ -33,6 +33,18 @@ jobs:
           npm ci
           echo "::endgroup::"
 
+      - name: Build TypeScript packages
+        run: |
+          echo "::group::Building TypeScript packages"
+          npm run build:packages
+          echo "::endgroup::"
+
+      - name: Reinstall to update workspace links
+        run: |
+          echo "::group::Updating workspace links"
+          npm install
+          echo "::endgroup::"
+
       - name: Lint workspaces
         run: |
           echo "::group::Linting workspaces"
@@ -42,7 +54,7 @@ jobs:
       - name: Build workspaces
         run: |
           echo "::group::Building workspaces"
-          npm run build:ci
+          npm run build -w vhp-panel
           echo "::endgroup::"
 
       - name: Typecheck workspaces
