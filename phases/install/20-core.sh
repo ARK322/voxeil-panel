@@ -46,4 +46,79 @@ if run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null
   wait_rollout_status "kyverno" "deployment" "kyverno-admission-controller" "${TIMEOUT}" || log_warn "kyverno-admission-controller deployment not ready (may continue)"
 fi
 
+# Ensure local-path StorageClass exists (required for PVCs)
+log_info "Checking for local-path StorageClass..."
+if ! run_kubectl get storageclass local-path >/dev/null 2>&1; then
+  log_warn "local-path StorageClass not found. Waiting for it to appear..."
+  SC_WAIT_ATTEMPTS=30
+  sc_found=false
+  for i in $(seq 1 ${SC_WAIT_ATTEMPTS}); do
+    if run_kubectl get storageclass local-path >/dev/null 2>&1; then
+      log_ok "local-path StorageClass found"
+      sc_found=true
+      break
+    fi
+    if [ $((i % 5)) -eq 0 ]; then
+      log_info "Still waiting for local-path StorageClass... ($i/${SC_WAIT_ATTEMPTS})"
+    fi
+    sleep 2
+  done
+  if [ "${sc_found}" != "true" ]; then
+    log_error "local-path StorageClass not found after $((SC_WAIT_ATTEMPTS * 2))s. PVCs may not bind."
+    run_kubectl get storageclass || true
+  fi
+else
+  log_ok "local-path StorageClass exists"
+fi
+
+# Wait for PVCs to be bound (required for postgres, pgadmin, bind9)
+log_info "Waiting for PVCs to be bound..."
+PVC_WAIT_TIMEOUT=120
+PVC_WAIT_INTERVAL=5
+PVC_WAIT_ATTEMPTS=$((PVC_WAIT_TIMEOUT / PVC_WAIT_INTERVAL))
+
+# Wait for infra-db PVCs
+for pvc_name in postgres-pvc pgadmin-pvc; do
+  if run_kubectl get pvc "${pvc_name}" -n infra-db >/dev/null 2>&1; then
+    log_info "Waiting for PVC ${pvc_name} to be bound..."
+    pvc_bound=false
+    for i in $(seq 1 ${PVC_WAIT_ATTEMPTS}); do
+      if run_kubectl get pvc "${pvc_name}" -n infra-db -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Bound"; then
+        log_ok "PVC ${pvc_name} is bound"
+        pvc_bound=true
+        break
+      fi
+      if [ $((i % 4)) -eq 0 ]; then
+        log_info "Still waiting for PVC ${pvc_name}... ($i/${PVC_WAIT_ATTEMPTS})"
+      fi
+      sleep ${PVC_WAIT_INTERVAL}
+    done
+    if [ "${pvc_bound}" != "true" ]; then
+      log_error "PVC ${pvc_name} not bound after ${PVC_WAIT_TIMEOUT}s"
+      run_kubectl get pvc "${pvc_name}" -n infra-db -o yaml || true
+    fi
+  fi
+done
+
+# Wait for dns-zone PVC
+if run_kubectl get pvc dns-zones-pvc -n dns-zone >/dev/null 2>&1; then
+  log_info "Waiting for PVC dns-zones-pvc to be bound..."
+  pvc_bound=false
+  for i in $(seq 1 ${PVC_WAIT_ATTEMPTS}); do
+    if run_kubectl get pvc dns-zones-pvc -n dns-zone -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Bound"; then
+      log_ok "PVC dns-zones-pvc is bound"
+      pvc_bound=true
+      break
+    fi
+    if [ $((i % 4)) -eq 0 ]; then
+      log_info "Still waiting for PVC dns-zones-pvc... ($i/${PVC_WAIT_ATTEMPTS})"
+    fi
+    sleep ${PVC_WAIT_INTERVAL}
+  done
+  if [ "${pvc_bound}" != "true" ]; then
+    log_error "PVC dns-zones-pvc not bound after ${PVC_WAIT_TIMEOUT}s"
+    run_kubectl get pvc dns-zones-pvc -n dns-zone -o yaml || true
+  fi
+fi
+
 log_ok "Core infrastructure phase complete"
