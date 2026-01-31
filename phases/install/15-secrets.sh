@@ -3,9 +3,39 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${SCRIPT_DIR}/../../lib/common.sh"
-source "${SCRIPT_DIR}/../../lib/kube.sh"
-source "${SCRIPT_DIR}/../../lib/prompt.sh"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+source "${REPO_ROOT}/lib/common.sh"
+source "${REPO_ROOT}/lib/kube.sh"
+if [ -f "${REPO_ROOT}/lib/prompt.sh" ]; then
+  source "${REPO_ROOT}/lib/prompt.sh"
+else
+  # Fallback if prompt.sh doesn't exist (backward compatibility)
+  is_interactive() {
+    if [ "${VOXEIL_CI:-0}" = "1" ] || [ "${CI:-}" = "true" ] || [ ! -t 0 ]; then
+      return 1
+    fi
+    return 0
+  }
+  prompt_value() {
+    local label="$1"
+    local default_value="${2:-}"
+    local is_secret="${3:-false}"
+    local env_var="VOXEIL_$(echo "${label}" | tr '[:lower:] ' '[:upper:]_' | tr -d '()')"
+    if [ -n "${!env_var:-}" ]; then
+      echo "${!env_var}"
+      return 0
+    fi
+    if [ -n "${default_value}" ]; then
+      echo "${default_value}"
+      return 0
+    fi
+    if [ "${is_secret}" = "true" ]; then
+      rand
+    else
+      echo ""
+    fi
+  }
+fi
 
 log_phase "install/15-secrets"
 
