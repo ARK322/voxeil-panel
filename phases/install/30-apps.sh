@@ -374,7 +374,82 @@ if [ "${POSTGRES_SECRET_PWD}" != "${PLATFORM_SECRET_PWD}" ]; then
 fi
 log_ok "Secrets are valid and consistent"
 
-log_ok "All validation gates passed (7/7)"
+# Gate 8: PostgreSQL accepts auth using EXACT credentials controller will use
+log_info "Gate 8/10: Verifying PostgreSQL accepts auth with controller credentials..."
+if [ -n "${POSTGRES_POD}" ] && [ -n "${PLATFORM_SECRET_PWD}" ]; then
+  # Test connection using EXACT credentials from platform-secrets
+  if ! run_kubectl exec "${POSTGRES_POD}" -n infra-db -- env PGPASSWORD="${PLATFORM_SECRET_PWD}" psql -U postgres -d postgres -c "SELECT 1" >/dev/null 2>&1; then
+    log_error "PostgreSQL authentication failed with platform-secrets password"
+    log_error "Controller will fail to connect with these credentials"
+    die 1 "PostgreSQL must accept authentication with controller credentials before applying applications"
+  fi
+  log_ok "PostgreSQL accepts authentication with controller credentials"
+else
+  log_error "Cannot verify PostgreSQL auth: pod or password missing"
+  die 1 "PostgreSQL auth verification failed"
+fi
+
+# Gate 9: NO placeholder / empty / auto-generated secrets at runtime
+log_info "Gate 9/10: Verifying no placeholder/empty/auto-generated secrets..."
+# Check all required secrets in platform-secrets
+REQUIRED_SECRET_KEYS=(
+  "ADMIN_API_KEY"
+  "JWT_SECRET"
+  "PANEL_ADMIN_USERNAME"
+  "PANEL_ADMIN_PASSWORD"
+  "PANEL_ADMIN_EMAIL"
+  "POSTGRES_HOST"
+  "POSTGRES_PORT"
+  "POSTGRES_ADMIN_USER"
+  "POSTGRES_ADMIN_PASSWORD"
+  "POSTGRES_DB"
+)
+for key in "${REQUIRED_SECRET_KEYS[@]}"; do
+  secret_value=""
+  if command_exists base64; then
+    secret_value=$(run_kubectl get secret platform-secrets -n platform -o jsonpath="{.data.${key}}" 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath="{.stringData.${key}}" 2>/dev/null || echo "")
+  else
+    secret_value=$(run_kubectl get secret platform-secrets -n platform -o jsonpath="{.stringData.${key}}" 2>/dev/null || echo "")
+  fi
+  if [ -z "${secret_value}" ]; then
+    log_error "platform-secrets has empty value for key: ${key}"
+    die 1 "platform-secrets must have all required keys with non-empty values before applying applications"
+  fi
+  # Check for placeholder patterns
+  if echo "${secret_value}" | grep -qE "^(REPLACE_|PLACEHOLDER_|AUTO_)"; then
+    log_error "platform-secrets has placeholder value for key: ${key}"
+    die 1 "platform-secrets must not contain placeholder values before applying applications"
+  fi
+done
+log_ok "All required secrets are present and non-placeholder"
+
+# Gate 10: All manifests render cleanly (no missing vars)
+log_info "Gate 10/10: Verifying manifests render cleanly..."
+if [ ! -f "${APPS_DIR}/kustomization.yaml" ]; then
+  log_error "Application kustomization not found: ${APPS_DIR}/kustomization.yaml"
+  die 1 "Kustomization file must exist before applying applications"
+fi
+# Test kustomize build (dry-run)
+TEMP_MANIFEST_TEST=$(mktemp) || TEMP_MANIFEST_TEST="/tmp/kustomize-test-$$.yaml"
+if ! run_kubectl kustomize "${APPS_DIR}" > "${TEMP_MANIFEST_TEST}" 2>&1; then
+  log_error "Kustomize build failed"
+  log_error "Build output:"
+  cat "${TEMP_MANIFEST_TEST}" >&2 || true
+  rm -f "${TEMP_MANIFEST_TEST}"
+  die 1 "Kustomize build must succeed before applying applications"
+fi
+# Check for placeholder patterns in rendered manifest
+if grep -qE "REPLACE_[A-Z_]+" "${TEMP_MANIFEST_TEST}" 2>/dev/null; then
+  log_error "Rendered manifest contains placeholder values"
+  log_error "Placeholders found:"
+  grep -E "REPLACE_[A-Z_]+" "${TEMP_MANIFEST_TEST}" | head -n 10 >&2 || true
+  rm -f "${TEMP_MANIFEST_TEST}"
+  die 1 "Manifests must not contain placeholder values before applying applications"
+fi
+rm -f "${TEMP_MANIFEST_TEST}"
+log_ok "All manifests render cleanly without placeholders"
+
+log_ok "All validation gates passed (10/10)"
 
 # Apply applications (required)
 log_info "Applying application manifests..."
