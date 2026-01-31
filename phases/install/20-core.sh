@@ -95,7 +95,6 @@ for pvc_name in postgres-pvc pgadmin-pvc; do
     log_info "Waiting for PVC ${pvc_name} to be bound..."
     pvc_bound=false
     for i in $(seq 1 ${PVC_WAIT_ATTEMPTS}); do
-      local pvc_phase
       pvc_phase=$(run_kubectl get pvc "${pvc_name}" -n infra-db -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
       if [ "${pvc_phase}" = "Bound" ]; then
         log_ok "PVC ${pvc_name} is bound"
