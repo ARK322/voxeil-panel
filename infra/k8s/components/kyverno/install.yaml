@@ -252,10 +252,10 @@ spec:
       name: AGGREGATE
       priority: 1
       type: string
-      name: v1alpha2
-      schema:
-        openAPIV3Schema:
-          description: AdmissionReport is the Schema for the AdmissionReports API
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: AdmissionReport is the Schema for the AdmissionReports API
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -300,9 +300,9 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names#uids'
                     type: string
                 required:
-                - apiVersion
-                - kind
-                - name
+                  - apiVersion
+                  - kind
+                  - name
                 - uid
                 type: object
                 x-kubernetes-map-type: atomic
@@ -362,8 +362,8 @@ spec:
                                   type: string
                                 type: array
                             required:
-                            - key
-                            - operator
+                              - key
+                              - operator
                             type: object
                           type: array
                         matchLabels:
@@ -449,9 +449,9 @@ spec:
                       description: Result indicates the outcome of the policy rule
                         execution
                       enum:
-                      - pass
-                      - fail
-                      - warn
+                        - pass
+                        - fail
+                        - warn
                       - error
                       - skip
                       type: string
@@ -465,9 +465,9 @@ spec:
                     severity:
                       description: Severity indicates policy check result criticality
                       enum:
-                      - critical
-                      - high
-                      - low
+                        - critical
+                        - high
+                        - low
                       - medium
                       - info
                       type: string
@@ -493,11 +493,11 @@ spec:
                           format: int64
                           type: integer
                       required:
-                      - nanos
-                      - seconds
+                        - nanos
+                        - seconds
                       type: object
                   required:
-                  - policy
+                    - policy
                   type: object
                 type: array
               summary:
@@ -671,8 +671,8 @@ spec:
                                   type: string
                                 type: array
                             required:
-                            - key
-                            - operator
+                              - key
+                              - operator
                             type: object
                           type: array
                         matchLabels:
@@ -758,9 +758,9 @@ spec:
                       description: Result indicates the outcome of the policy rule
                         execution
                       enum:
-                      - pass
-                      - fail
-                      - warn
+                        - pass
+                        - fail
+                        - warn
                       - error
                       - skip
                       type: string
@@ -774,9 +774,9 @@ spec:
                     severity:
                       description: Severity indicates policy check result criticality
                       enum:
-                      - critical
-                      - high
-                      - low
+                        - critical
+                        - high
+                        - low
                       - medium
                       - info
                       type: string
@@ -802,11 +802,11 @@ spec:
                           format: int64
                           type: integer
                       required:
-                      - nanos
-                      - seconds
+                        - nanos
+                        - seconds
                       type: object
                   required:
-                  - policy
+                    - policy
                   type: object
                 type: array
               summary:
@@ -3457,9 +3457,9 @@ spec:
                     description: 'UID of the referent. More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names#uids'
                     type: string
                 required:
-                - apiVersion
-                - kind
-                - name
+                  - apiVersion
+                  - kind
+                  - name
                 - uid
                 type: object
                 x-kubernetes-map-type: atomic
@@ -3519,8 +3519,8 @@ spec:
                                   type: string
                                 type: array
                             required:
-                            - key
-                            - operator
+                              - key
+                              - operator
                             type: object
                           type: array
                         matchLabels:
@@ -3606,9 +3606,9 @@ spec:
                       description: Result indicates the outcome of the policy rule
                         execution
                       enum:
-                      - pass
-                      - fail
-                      - warn
+                        - pass
+                        - fail
+                        - warn
                       - error
                       - skip
                       type: string
@@ -3622,9 +3622,9 @@ spec:
                     severity:
                       description: Severity indicates policy check result criticality
                       enum:
-                      - critical
-                      - high
-                      - low
+                        - critical
+                        - high
+                        - low
                       - medium
                       - info
                       type: string
@@ -3650,11 +3650,11 @@ spec:
                           format: int64
                           type: integer
                       required:
-                      - nanos
-                      - seconds
+                        - nanos
+                        - seconds
                       type: object
                   required:
-                  - policy
+                    - policy
                   type: object
                 type: array
               summary:
@@ -3828,8 +3828,8 @@ spec:
                                   type: string
                                 type: array
                             required:
-                            - key
-                            - operator
+                              - key
+                              - operator
                             type: object
                           type: array
                         matchLabels:
@@ -3915,9 +3915,9 @@ spec:
                       description: Result indicates the outcome of the policy rule
                         execution
                       enum:
-                      - pass
-                      - fail
-                      - warn
+                        - pass
+                        - fail
+                        - warn
                       - error
                       - skip
                       type: string
@@ -3931,9 +3931,9 @@ spec:
                     severity:
                       description: Severity indicates policy check result criticality
                       enum:
-                      - critical
-                      - high
-                      - low
+                        - critical
+                        - high
+                        - low
                       - medium
                       - info
                       type: string
@@ -3959,11 +3959,11 @@ spec:
                           format: int64
                           type: integer
                       required:
-                      - nanos
-                      - seconds
+                        - nanos
+                        - seconds
                       type: object
                   required:
-                  - policy
+                    - policy
                   type: object
                 type: array
               summary:
@@ -10935,8 +10935,8 @@ spec:
                                   type: string
                                 type: array
                             required:
-                            - key
-                            - operator
+                              - key
+                              - operator
                             type: object
                           type: array
                         matchLabels:
@@ -19651,8 +19651,8 @@ spec:
                                   type: string
                                 type: array
                             required:
-                            - key
-                            - operator
+                              - key
+                              - operator
                             type: object
                           type: array
                         matchLabels:
@@ -28669,8 +28669,8 @@ spec:
                                   type: string
                                 type: array
                             required:
-                            - key
-                            - operator
+                              - key
+                              - operator
                             type: object
                           type: array
                         matchLabels:
@@ -37387,8 +37387,8 @@ spec:
                                   type: string
                                 type: array
                             required:
-                            - key
-                            - operator
+                              - key
+                              - operator
                             type: object
                           type: array
                         matchLabels:
