@@ -45,7 +45,7 @@ spec:
       initContainers:
         - name: render-tsig
           image: busybox:1.36
-          command: ["/bin/sh","-c"]
+          command: ["/bin/sh", "-c"]
           args:
             - >
               set -eu;

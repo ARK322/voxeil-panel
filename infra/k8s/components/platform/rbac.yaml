@@ -15,7 +15,7 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: ["namespaces"]
-    verbs: ["get","list","create","patch","delete"]
+    verbs: ["get", "list", "create", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
@@ -27,51 +27,51 @@ rules:
   # Namespaces: get, list (for listing and reading namespaces)
   - apiGroups: [""]
     resources: ["namespaces"]
-    verbs: ["get","list"]
+    verbs: ["get", "list"]
   # Services: patch, get, create, delete
   - apiGroups: [""]
     resources: ["services"]
-    verbs: ["get","create","patch","delete"]
-  # ConfigMaps: create, patch, get, delete (DNS zone yönetimi için)
+    verbs: ["get", "create", "patch", "delete"]
+  # ConfigMaps: create, patch, get, delete (DNS zone yÃ¶netimi iÃ§in)
   - apiGroups: [""]
     resources: ["configmaps"]
-    verbs: ["get","create","patch","delete"]
+    verbs: ["get", "create", "patch", "delete"]
   # Secrets: create, patch, delete, get (DB credentials, image pull secrets)
   - apiGroups: [""]
     resources: ["secrets"]
-    verbs: ["get","create","patch","delete"]
-  # PVCs: create, replace, get (PVC yönetimi)
+    verbs: ["get", "create", "patch", "delete"]
+  # PVCs: create, replace, get (PVC yÃ¶netimi)
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
-    verbs: ["get","create","replace"]
+    verbs: ["get", "create", "replace"]
   # ResourceQuotas: create, patch, replace, get
   - apiGroups: [""]
     resources: ["resourcequotas"]
-    verbs: ["get","create","patch","replace"]
+    verbs: ["get", "create", "patch", "replace"]
   # LimitRanges: create, patch, get
   - apiGroups: [""]
     resources: ["limitranges"]
-    verbs: ["get","create","patch"]
+    verbs: ["get", "create", "patch"]
   # Deployments: patch, get, create, delete
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get","create","patch","delete"]
+    verbs: ["get", "create", "patch", "delete"]
   # Ingresses: patch, get, create, delete
   - apiGroups: ["networking.k8s.io"]
     resources: ["ingresses"]
-    verbs: ["get","create","patch","delete"]
+    verbs: ["get", "create", "patch", "delete"]
   # NetworkPolicies: create, patch, get
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
-    verbs: ["get","create","patch"]
+    verbs: ["get", "create", "patch"]
   # RoleBindings: create, patch, get
   - apiGroups: ["rbac.authorization.k8s.io"]
     resources: ["rolebindings"]
-    verbs: ["get","create","patch"]
+    verbs: ["get", "create", "patch"]
   # Pods: create, delete, get
   - apiGroups: [""]
     resources: ["pods"]
-    verbs: ["get","create","delete"]
+    verbs: ["get", "create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -115,4 +115,3 @@ roleRef:
   kind: Role
   name: controller-platform-secrets
   apiGroup: rbac.authorization.k8s.io
-

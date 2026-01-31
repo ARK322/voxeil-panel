@@ -20,14 +20,14 @@ spec:
             User-Agent: keep
             Authorization: drop
             Cookie: drop
-    
+
     # Additional security settings
     globalArguments:
       - "--log.level=INFO"
       - "--accesslog=true"
       - "--accesslog.format=json"
       - "--accesslog.filepath=/var/log/traefik/access.log"
-    
+
     ports:
       web:
         port: 80

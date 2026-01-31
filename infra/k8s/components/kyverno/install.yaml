@@ -252,11 +252,11 @@ spec:
       name: AGGREGATE
       priority: 1
       type: string
-      name: v1alpha2
-      schema:
-        openAPIV3Schema:
-          description: AdmissionReport is the Schema for the AdmissionReports API
-          properties:
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: AdmissionReport is the Schema for the AdmissionReports API
+      properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
               of an object. Servers should convert recognized schemas to the latest
@@ -303,7 +303,7 @@ spec:
                   - apiVersion
                   - kind
                   - name
-                - uid
+                  - uid
                 type: object
                 x-kubernetes-map-type: atomic
               results:
@@ -452,8 +452,8 @@ spec:
                         - pass
                         - fail
                         - warn
-                      - error
-                      - skip
+                        - error
+                        - skip
                       type: string
                     rule:
                       description: Rule is the name or identifier of the rule within
@@ -468,8 +468,8 @@ spec:
                         - critical
                         - high
                         - low
-                      - medium
-                      - info
+                        - medium
+                        - info
                       type: string
                     source:
                       description: Source is an identifier for the policy engine that
@@ -529,7 +529,7 @@ spec:
             type: object
         required:
           - spec
-          type: object
+            type: object
       served: true
       storage: true
       subresources: {}
@@ -595,12 +595,12 @@ spec:
       name: Hash
       priority: 1
       type: string
-      name: v1alpha2
-      schema:
-        openAPIV3Schema:
-          description: BackgroundScanReport is the Schema for the BackgroundScanReports
-          API
-        properties:
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: BackgroundScanReport is the Schema for the BackgroundScanReports
+        API
+      properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
               of an object. Servers should convert recognized schemas to the latest
@@ -761,8 +761,8 @@ spec:
                         - pass
                         - fail
                         - warn
-                      - error
-                      - skip
+                        - error
+                        - skip
                       type: string
                     rule:
                       description: Rule is the name or identifier of the rule within
@@ -2102,9 +2102,9 @@ spec:
                 format: date-time
                 type: string
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: false
     subresources:
@@ -3343,9 +3343,9 @@ spec:
                 format: date-time
                 type: string
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: true
     subresources:
@@ -3460,7 +3460,7 @@ spec:
                   - apiVersion
                   - kind
                   - name
-                - uid
+                  - uid
                 type: object
                 x-kubernetes-map-type: atomic
               results:
@@ -3609,8 +3609,8 @@ spec:
                         - pass
                         - fail
                         - warn
-                      - error
-                      - skip
+                        - error
+                        - skip
                       type: string
                     rule:
                       description: Rule is the name or identifier of the rule within
@@ -3918,8 +3918,8 @@ spec:
                         - pass
                         - fail
                         - warn
-                      - error
-                      - skip
+                        - error
+                        - skip
                       type: string
                     rule:
                       description: Rule is the name or identifier of the rule within
@@ -5259,9 +5259,9 @@ spec:
                 format: date-time
                 type: string
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: false
     subresources:
@@ -6500,9 +6500,9 @@ spec:
                 format: date-time
                 type: string
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: true
     subresources:
@@ -15517,9 +15517,9 @@ spec:
             required:
             - ready
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: true
     subresources:
@@ -24233,9 +24233,9 @@ spec:
             required:
             - ready
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: false
     subresources:
@@ -33252,9 +33252,9 @@ spec:
             required:
             - ready
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: true
     subresources:
@@ -41969,9 +41969,9 @@ spec:
             required:
             - ready
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: false
     subresources:
@@ -42498,9 +42498,9 @@ spec:
             - exceptions
             - match
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: false
   - name: v2beta1
@@ -42997,9 +42997,9 @@ spec:
             - exceptions
             - match
             type: object
-          required:
-            - spec
-          type: object
+        required:
+          - spec
+        type: object
     served: true
     storage: true
 ---
@@ -43268,7 +43268,7 @@ spec:
                         - kind
                         - operation
                         - resource
-                        - uid
+                          - uid
                         - userInfo
                         type: object
                       operation:
@@ -45246,7 +45246,7 @@ metadata:
     app.kubernetes.io/part-of: kyverno
     app.kubernetes.io/version: v1.11.0
 spec:
-  replicas: 
+  replicas:
   strategy:
     rollingUpdate:
       maxSurge: 1
@@ -45437,7 +45437,7 @@ metadata:
     app.kubernetes.io/part-of: kyverno
     app.kubernetes.io/version: v1.11.0
 spec:
-  replicas: 
+  replicas:
   strategy:
     rollingUpdate:
       maxSurge: 1
@@ -45535,7 +45535,7 @@ metadata:
     app.kubernetes.io/part-of: kyverno
     app.kubernetes.io/version: v1.11.0
 spec:
-  replicas: 
+  replicas:
   strategy:
     rollingUpdate:
       maxSurge: 1
@@ -45666,7 +45666,7 @@ metadata:
     app.kubernetes.io/part-of: kyverno
     app.kubernetes.io/version: v1.11.0
 spec:
-  replicas: 
+  replicas:
   strategy:
     rollingUpdate:
       maxSurge: 1
@@ -45796,7 +45796,7 @@ spec:
           containers:
           - name: cleanup
             image: "alpine/k8s:1.30.0"
-            imagePullPolicy: IfNotPresent 
+            imagePullPolicy: IfNotPresent
             command:
             - /bin/sh
             - -c
@@ -45844,7 +45844,7 @@ spec:
           containers:
           - name: cleanup
             image: "alpine/k8s:1.30.0"
-            imagePullPolicy: IfNotPresent 
+            imagePullPolicy: IfNotPresent
             command:
             - /bin/sh
             - -c
