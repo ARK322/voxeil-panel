@@ -36,15 +36,19 @@ fi
 log_info "Waiting for core infrastructure deployments to be ready..."
 TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"
 
-# Wait for cert-manager (critical for TLS)
-if run_kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
-  wait_rollout_status "cert-manager" "deployment" "cert-manager" "${TIMEOUT}" || log_warn "cert-manager deployment not ready (may continue)"
+# Wait for cert-manager (critical for TLS, required)
+if ! run_kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
+  log_error "cert-manager deployment not found after applying infrastructure"
+  exit 1
 fi
+wait_rollout_status "cert-manager" "deployment" "cert-manager" "${TIMEOUT}" || die 1 "cert-manager deployment not ready"
 
-# Wait for kyverno admission controller (critical for policy enforcement)
-if run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
-  wait_rollout_status "kyverno" "deployment" "kyverno-admission-controller" "${TIMEOUT}" || log_warn "kyverno-admission-controller deployment not ready (may continue)"
+# Wait for kyverno admission controller (critical for policy enforcement, required)
+if ! run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
+  log_error "kyverno-admission-controller deployment not found after applying infrastructure"
+  exit 1
 fi
+wait_rollout_status "kyverno" "deployment" "kyverno-admission-controller" "${TIMEOUT}" || die 1 "kyverno-admission-controller deployment not ready"
 
 # Ensure local-path StorageClass exists (required for PVCs)
 log_info "Checking for local-path StorageClass..."

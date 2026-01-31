@@ -208,7 +208,13 @@ need_cmd() {
 }
 
 rand() {
-  tr -dc 'A-Za-z0-9' </dev/urandom | head -c 48 || true
+  # Use openssl rand for deterministic, pipe-safe random generation
+  if command_exists openssl; then
+    openssl rand -hex 24 | tr -d '\n'
+  else
+    # Fallback to /dev/urandom with proper error handling
+    dd if=/dev/urandom bs=1 count=24 2>/dev/null | base64 | tr -d '\n' | head -c 48 || echo "fallback-$(date +%s)-$$"
+  fi
 }
 
 # Dry run wrapper

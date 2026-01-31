@@ -8,8 +8,8 @@ resources:
 
 images:
   - name: REPLACE_PANEL_IMAGE
-    newName: REPLACE_PANEL_IMAGE
-    newTag: REPLACE_PANEL_TAG
+    newName: ghcr.io/ark322/voxeil-panel
+    newTag: latest
 
 patches:
   - path: ingress-patch.yaml

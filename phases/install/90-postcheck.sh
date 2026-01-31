@@ -20,11 +20,13 @@ FAILED=0
 RESULTS=()
 
 # Helper to check and record result
+# Parameters: component_name namespace resource_type resource_name required
 check_component() {
   local component="$1"
   local namespace="$2"
   local resource_type="$3"  # deployment or statefulset
   local resource_name="$4"
+  local required="${5:-true}"  # Whether this component is required (default: true)
   local result=""
   local error_msg=""
   
@@ -32,10 +34,18 @@ check_component() {
   
   # Check if resource exists
   if ! run_kubectl get "${resource_type}" "${resource_name}" -n "${namespace}" >/dev/null 2>&1; then
-    result="SKIP"
-    log_warn "  ${component}: Resource not found (may not be deployed)"
-    RESULTS+=("${component}|SKIP|Resource not found")
-    return 0
+    if [ "${required}" = "true" ]; then
+      result="FAIL"
+      FAILED=$((FAILED + 1))
+      log_error "  ${component}: Required resource not found"
+      RESULTS+=("${component}|FAIL|Resource not found (required)")
+      return 1
+    else
+      result="SKIP"
+      log_warn "  ${component}: Resource not found (optional, skipping)"
+      RESULTS+=("${component}|SKIP|Resource not found (optional)")
+      return 0
+    fi
   fi
   
   # Wait for rollout
@@ -77,27 +87,27 @@ else
   RESULTS+=("Nodes|FAIL|Cannot access cluster")
 fi
 
-# Check platform deployments
-check_component "Platform-Controller" "platform" "deployment" "controller"
-check_component "Platform-Panel" "platform" "deployment" "panel"
+# Check platform deployments (required)
+check_component "Platform-Controller" "platform" "deployment" "controller" "true"
+check_component "Platform-Panel" "platform" "deployment" "panel" "true"
 
-# Check cert-manager deployments
-check_component "CertManager" "cert-manager" "deployment" "cert-manager"
-check_component "CertManager-Webhook" "cert-manager" "deployment" "cert-manager-webhook"
-check_component "CertManager-CAInjector" "cert-manager" "deployment" "cert-manager-cainjector"
+# Check cert-manager deployments (required)
+check_component "CertManager" "cert-manager" "deployment" "cert-manager" "true"
+check_component "CertManager-Webhook" "cert-manager" "deployment" "cert-manager-webhook" "true"
+check_component "CertManager-CAInjector" "cert-manager" "deployment" "cert-manager-cainjector" "true"
 
-# Check kyverno deployments
-check_component "Kyverno-Admission" "kyverno" "deployment" "kyverno-admission-controller"
-check_component "Kyverno-Background" "kyverno" "deployment" "kyverno-background-controller"
-check_component "Kyverno-Cleanup" "kyverno" "deployment" "kyverno-cleanup-controller"
-check_component "Kyverno-Reports" "kyverno" "deployment" "kyverno-reports-controller"
+# Check kyverno deployments (required)
+check_component "Kyverno-Admission" "kyverno" "deployment" "kyverno-admission-controller" "true"
+check_component "Kyverno-Background" "kyverno" "deployment" "kyverno-background-controller" "true"
+check_component "Kyverno-Cleanup" "kyverno" "deployment" "kyverno-cleanup-controller" "true"
+check_component "Kyverno-Reports" "kyverno" "deployment" "kyverno-reports-controller" "true"
 
-# Check infra-db (if deployed)
-check_component "InfraDB-Postgres" "infra-db" "statefulset" "postgres"
-check_component "InfraDB-PGAdmin" "infra-db" "deployment" "pgadmin"
+# Check infra-db (required)
+check_component "InfraDB-Postgres" "infra-db" "statefulset" "postgres" "true"
+check_component "InfraDB-PGAdmin" "infra-db" "deployment" "pgadmin" "true"
 
-# Check dns-zone (if deployed)
-check_component "DNS-Bind9" "dns-zone" "deployment" "bind9"
+# Check dns-zone (required)
+check_component "DNS-Bind9" "dns-zone" "deployment" "bind9" "true"
 
 # Print summary table
 echo ""

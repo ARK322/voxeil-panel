@@ -13,37 +13,41 @@ log_phase "install/30-apps"
 ensure_kubectl || exit 1
 check_kubectl_context || exit 1
 
-# Apply applications (if kustomization has resources)
+# Apply applications (required)
 log_info "Applying application manifests..."
 APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
-if [ -f "${APPS_DIR}/kustomization.yaml" ]; then
-  # Check if kustomization has any uncommented resources
-  if grep -qE '^\s+-|^resources:' "${APPS_DIR}/kustomization.yaml" 2>/dev/null | grep -v '^[[:space:]]*#' | grep -q .; then
-    if ! run_kubectl apply -k "${APPS_DIR}"; then
-      log_error "Failed to apply applications"
-      exit 1
-    fi
-  else
-    log_info "No application resources to apply (all excluded in kustomization)"
-  fi
+if [ ! -f "${APPS_DIR}/kustomization.yaml" ]; then
+  log_error "Application kustomization not found: ${APPS_DIR}/kustomization.yaml"
+  exit 1
 fi
 
-# Wait for application deployments to be ready (if they exist)
+# Check if kustomization has resources
+if ! grep -qE '^\s+-|^resources:' "${APPS_DIR}/kustomization.yaml" 2>/dev/null | grep -v '^[[:space:]]*#' | grep -q .; then
+  log_error "Application kustomization has no resources defined"
+  exit 1
+fi
+
+if ! run_kubectl apply -k "${APPS_DIR}"; then
+  log_error "Failed to apply applications"
+  exit 1
+fi
+
+# Wait for application deployments to be ready (required)
 log_info "Waiting for application deployments to be ready..."
 TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"
 
-# Wait for controller (if deployment exists)
-if run_kubectl get deployment controller -n platform >/dev/null 2>&1; then
-  wait_rollout_status "platform" "deployment" "controller" "${TIMEOUT}" || die 1 "controller deployment not ready"
-else
-  log_info "Controller deployment not found (may be excluded in kustomization)"
+# Wait for controller (required)
+if ! run_kubectl get deployment controller -n platform >/dev/null 2>&1; then
+  log_error "Controller deployment not found after applying manifests"
+  exit 1
 fi
+wait_rollout_status "platform" "deployment" "controller" "${TIMEOUT}" || die 1 "controller deployment not ready"
 
-# Wait for panel (if deployment exists)
-if run_kubectl get deployment panel -n platform >/dev/null 2>&1; then
-  wait_rollout_status "platform" "deployment" "panel" "${TIMEOUT}" || die 1 "panel deployment not ready"
-else
-  log_info "Panel deployment not found (may be excluded in kustomization)"
+# Wait for panel (required)
+if ! run_kubectl get deployment panel -n platform >/dev/null 2>&1; then
+  log_error "Panel deployment not found after applying manifests"
+  exit 1
 fi
+wait_rollout_status "platform" "deployment" "panel" "${TIMEOUT}" || die 1 "panel deployment not ready"
 
 log_ok "Applications phase complete"
