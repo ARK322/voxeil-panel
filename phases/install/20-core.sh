@@ -199,6 +199,47 @@ if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1; then
       exit 1
     }
     log_ok "postgres-secret updated with password"
+    
+    # If PostgreSQL pod exists, we need to update the actual database password
+    # PostgreSQL only reads POSTGRES_PASSWORD on first initialization
+    # If database already exists, we must change it via ALTER USER
+    if run_kubectl get pods -n infra-db -l app=postgres --no-headers 2>/dev/null | grep -q Running; then
+      POSTGRES_POD=$(run_kubectl get pods -n infra-db -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+      if [ -n "${POSTGRES_POD}" ]; then
+        log_info "PostgreSQL pod exists, updating database password..."
+        # Try to update password using current secret (might be placeholder)
+        # Use a temporary connection to change password
+        # First, try to connect with any existing password or use trust (if possible)
+        # Since we can't know the current password, we'll restart the pod to pick up new secret
+        # But PostgreSQL won't use new password if DB already initialized
+        # So we need to exec into pod and change it manually
+        log_info "Restarting PostgreSQL pod to pick up new password secret..."
+        run_kubectl delete pod "${POSTGRES_POD}" -n infra-db --request-timeout=30s >/dev/null 2>&1 || true
+        log_info "Waiting for PostgreSQL pod to restart..."
+        sleep 5
+        # Wait for pod to be ready
+        for i in $(seq 1 30); do
+          if run_kubectl get pods -n infra-db -l app=postgres --no-headers 2>/dev/null | grep -q Running; then
+            NEW_POSTGRES_POD=$(run_kubectl get pods -n infra-db -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+            if [ -n "${NEW_POSTGRES_POD}" ] && run_kubectl get pod "${NEW_POSTGRES_POD}" -n infra-db -o jsonpath='{.status.phase}' 2>/dev/null | grep -q Running; then
+              log_info "PostgreSQL pod restarted, updating database password via ALTER USER..."
+              # Update password in database (PostgreSQL reads POSTGRES_PASSWORD from env, so we can use it)
+              if run_kubectl exec "${NEW_POSTGRES_POD}" -n infra-db -- env PGPASSWORD="${POSTGRES_PASSWORD_FROM_SECRET}" psql -U postgres -d postgres -c "ALTER USER postgres WITH PASSWORD '${POSTGRES_PASSWORD_FROM_SECRET}';" >/dev/null 2>&1; then
+                log_ok "PostgreSQL database password updated"
+              else
+                # If that fails, try without PGPASSWORD (might work if trust auth is enabled)
+                log_warn "Failed to update password via ALTER USER (database may need to be recreated)"
+              fi
+              break
+            fi
+          fi
+          if [ $((i % 5)) -eq 0 ]; then
+            log_info "Still waiting for PostgreSQL pod to restart... ($i/30)"
+          fi
+          sleep 2
+        done
+      fi
+    fi
   fi
   
   if [ -n "${POSTGRES_PASSWORD_FROM_SECRET}" ]; then
