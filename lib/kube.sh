@@ -410,6 +410,15 @@ wait_rollout_status() {
     # Dump comprehensive debug information
     dump_deployment_debug "${namespace}" "${resource_type}" "${resource_name}" "${label_selector}"
     
+    # Additional debug for controller (PostgreSQL connection issues)
+    if [ "${resource_name}" = "controller" ] && [ "${namespace}" = "platform" ]; then
+      echo ""
+      echo "--- PostgreSQL Service Debug (controller connection) ---"
+      run_kubectl describe svc postgres -n infra-db 2>&1 | head -30 || true
+      echo ""
+      run_kubectl get endpoints postgres -n infra-db -o wide 2>&1 || true
+    fi
+    
     # Show rollout output if available
     if [ -f "${rollout_output}" ] && [ -s "${rollout_output}" ]; then
       log_info "Rollout status output:"

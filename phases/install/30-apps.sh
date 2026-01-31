@@ -50,6 +50,75 @@ else
   log_warn "PostgreSQL service endpoint not ready, but proceeding (may cause connection errors)"
 fi
 
+# Verify PostgreSQL password sync (self-healing check)
+log_info "Verifying PostgreSQL password sync between infra-db/postgres-secret and platform/platform-secrets..."
+if run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1 && run_kubectl get secret platform-secrets -n platform >/dev/null 2>&1; then
+  # Read passwords from both secrets
+  POSTGRES_PWD_FROM_INFRA=""
+  POSTGRES_PWD_FROM_PLATFORM=""
+  
+  if command_exists base64; then
+    POSTGRES_PWD_FROM_INFRA=$(run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.data.POSTGRES_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.stringData.POSTGRES_PASSWORD}' 2>/dev/null || echo "")
+    POSTGRES_PWD_FROM_PLATFORM=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.POSTGRES_ADMIN_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_ADMIN_PASSWORD}' 2>/dev/null || echo "")
+  else
+    POSTGRES_PWD_FROM_INFRA=$(run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.stringData.POSTGRES_PASSWORD}' 2>/dev/null || echo "")
+    POSTGRES_PWD_FROM_PLATFORM=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_ADMIN_PASSWORD}' 2>/dev/null || echo "")
+  fi
+  
+  if [ -n "${POSTGRES_PWD_FROM_INFRA}" ] && [ -n "${POSTGRES_PWD_FROM_PLATFORM}" ]; then
+    if [ "${POSTGRES_PWD_FROM_INFRA}" != "${POSTGRES_PWD_FROM_PLATFORM}" ]; then
+      log_warn "PostgreSQL password mismatch detected - auto-syncing..."
+      # Sync password (use same logic as 20-core.sh)
+      # Read all existing platform-secrets values
+      ADMIN_API_KEY=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.ADMIN_API_KEY}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.ADMIN_API_KEY}' 2>/dev/null || echo "")
+      JWT_SECRET=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.JWT_SECRET}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.JWT_SECRET}' 2>/dev/null || echo "")
+      PANEL_ADMIN_USERNAME=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.PANEL_ADMIN_USERNAME}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.PANEL_ADMIN_USERNAME}' 2>/dev/null || echo "")
+      PANEL_ADMIN_PASSWORD=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.PANEL_ADMIN_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.PANEL_ADMIN_PASSWORD}' 2>/dev/null || echo "")
+      PANEL_ADMIN_EMAIL=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.PANEL_ADMIN_EMAIL}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.PANEL_ADMIN_EMAIL}' 2>/dev/null || echo "")
+      SITE_NODEPORT_START=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.SITE_NODEPORT_START}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.SITE_NODEPORT_START}' 2>/dev/null || echo "")
+      SITE_NODEPORT_END=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.SITE_NODEPORT_END}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.SITE_NODEPORT_END}' 2>/dev/null || echo "")
+      MAILCOW_API_URL=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.MAILCOW_API_URL}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.MAILCOW_API_URL}' 2>/dev/null || echo "")
+      MAILCOW_API_KEY=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.MAILCOW_API_KEY}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.MAILCOW_API_KEY}' 2>/dev/null || echo "")
+      POSTGRES_HOST=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.POSTGRES_HOST}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_HOST}' 2>/dev/null || echo "postgres.infra-db.svc.cluster.local")
+      POSTGRES_PORT=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.POSTGRES_PORT}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_PORT}' 2>/dev/null || echo "5432")
+      POSTGRES_ADMIN_USER=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.POSTGRES_ADMIN_USER}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_ADMIN_USER}' 2>/dev/null || echo "postgres")
+      POSTGRES_DB=$(run_kubectl get secret platform-secrets -n platform -o jsonpath='{.data.POSTGRES_DB}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret platform-secrets -n platform -o jsonpath='{.stringData.POSTGRES_DB}' 2>/dev/null || echo "voxeil")
+      
+      # Update password to match infra-db secret
+      POSTGRES_ADMIN_PASSWORD="${POSTGRES_PWD_FROM_INFRA}"
+      
+      # Recreate secret
+      run_kubectl delete secret platform-secrets -n platform --ignore-not-found >/dev/null 2>&1
+      run_kubectl create secret generic platform-secrets \
+        --namespace=platform \
+        --from-literal=ADMIN_API_KEY="${ADMIN_API_KEY}" \
+        --from-literal=JWT_SECRET="${JWT_SECRET}" \
+        --from-literal=PANEL_ADMIN_USERNAME="${PANEL_ADMIN_USERNAME}" \
+        --from-literal=PANEL_ADMIN_PASSWORD="${PANEL_ADMIN_PASSWORD}" \
+        --from-literal=PANEL_ADMIN_EMAIL="${PANEL_ADMIN_EMAIL}" \
+        --from-literal=SITE_NODEPORT_START="${SITE_NODEPORT_START}" \
+        --from-literal=SITE_NODEPORT_END="${SITE_NODEPORT_END}" \
+        --from-literal=MAILCOW_API_URL="${MAILCOW_API_URL}" \
+        --from-literal=MAILCOW_API_KEY="${MAILCOW_API_KEY}" \
+        --from-literal=POSTGRES_HOST="${POSTGRES_HOST}" \
+        --from-literal=POSTGRES_PORT="${POSTGRES_PORT}" \
+        --from-literal=POSTGRES_ADMIN_USER="${POSTGRES_ADMIN_USER}" \
+        --from-literal=POSTGRES_ADMIN_PASSWORD="${POSTGRES_ADMIN_PASSWORD}" \
+        --from-literal=POSTGRES_DB="${POSTGRES_DB}" >/dev/null 2>&1 || {
+        log_error "Failed to sync PostgreSQL password"
+        die 1 "PostgreSQL password sync failed - controller will not be able to connect"
+      }
+      log_ok "PostgreSQL password auto-synced (self-healing)"
+    else
+      log_ok "PostgreSQL passwords match"
+    fi
+  else
+    log_warn "Could not verify password sync (secrets may use different formats)"
+  fi
+else
+  log_warn "Could not verify password sync (secrets not found)"
+fi
+
 # Apply applications (required)
 log_info "Applying application manifests..."
 APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
