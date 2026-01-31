@@ -85,11 +85,11 @@ retry() {
   local cmd="$*"
   local attempt=1
   
-  while [ ${attempt} -le ${max_attempts} ]; do
+  while [ "${attempt}" -le "${max_attempts}" ]; do
     if eval "${cmd}"; then
       return 0
     fi
-    if [ ${attempt} -lt ${max_attempts} ]; then
+    if [ "${attempt}" -lt "${max_attempts}" ]; then
       log_warn "Attempt ${attempt}/${max_attempts} failed, retrying in ${delay}s..."
       sleep "${delay}"
       delay=$((delay * 2))  # Exponential backoff

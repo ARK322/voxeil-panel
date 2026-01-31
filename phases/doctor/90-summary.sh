@@ -11,11 +11,11 @@ EXIT_CODE="${EXIT_CODE:-0}"
 
 echo ""
 echo "=== Doctor Check Summary ==="
-if [ ${EXIT_CODE} -eq 0 ]; then
+if [ "${EXIT_CODE}" -eq 0 ]; then
   log_ok "System is healthy - all checks passed"
   echo ""
   echo "Cluster is ready for production use."
-elif [ ${EXIT_CODE} -eq 2 ]; then
+elif [ "${EXIT_CODE}" -eq 2 ]; then
   log_error "Unable to check system (kubectl/cluster not accessible)"
   echo ""
   echo "Please ensure k3s is installed and kubectl can access the cluster."
@@ -28,4 +28,4 @@ else
   echo "  - For deployment issues: Check pod logs and events"
 fi
 
-exit ${EXIT_CODE}
+exit "${EXIT_CODE}"

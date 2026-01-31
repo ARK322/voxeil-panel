@@ -83,7 +83,7 @@ wait_for_k3s_api() {
   local max_attempts=60
   local attempt=0
   
-  while [ ${attempt} -lt ${max_attempts} ]; do
+  while [ "${attempt}" -lt "${max_attempts}" ]; do
     if run_kubectl get --raw=/healthz >/dev/null 2>&1; then
       log_ok "k3s API is ready"
       return 0
@@ -135,7 +135,7 @@ run_with_timeout() {
       return 0
     else
       local elapsed=$(($(date +%s) - start_time))
-      if [ ${elapsed} -ge ${timeout} ]; then
+      if [ "${elapsed}" -ge "${timeout}" ]; then
         log_warn "Command timed out after ${timeout}s: ${cmd}"
         return 1
       fi
@@ -179,16 +179,16 @@ retry_apply() {
   local delay=2
   local output=""
   
-  while [ ${attempt} -le ${max_attempts} ]; do
+  while [ "${attempt}" -le "${max_attempts}" ]; do
     output="$(run_kubectl apply --server-side --force-conflicts -f "${file}" 2>&1)"
     if [ $? -eq 0 ]; then
       return 0
     fi
     
     if echo "${output}" | grep -q "webhook.*timeout\|context deadline exceeded"; then
-      if [ ${attempt} -lt ${max_attempts} ]; then
+      if [ "${attempt}" -lt "${max_attempts}" ]; then
         log_warn "Webhook timeout detected (server-side), retrying in ${delay}s (attempt ${attempt}/${max_attempts})..."
-        sleep ${delay}
+        sleep "${delay}"
         delay=$((delay * 2))
         attempt=$((attempt + 1))
         continue
@@ -201,9 +201,9 @@ retry_apply() {
     fi
     
     if echo "${output}" | grep -q "webhook.*timeout\|context deadline exceeded"; then
-      if [ ${attempt} -lt ${max_attempts} ]; then
+      if [ "${attempt}" -lt "${max_attempts}" ]; then
         log_warn "Webhook timeout detected, retrying in ${delay}s (attempt ${attempt}/${max_attempts})..."
-        sleep ${delay}
+        sleep "${delay}"
         delay=$((delay * 2))
         attempt=$((attempt + 1))
         continue
@@ -222,7 +222,7 @@ wait_ns_ready() {
   local timeout="${2:-30}"
   local waited=0
   
-  while [ ${waited} -lt ${timeout} ]; do
+  while [ "${waited}" -lt "${timeout}" ]; do
     if run_kubectl get namespace "${namespace}" >/dev/null 2>&1; then
       log_ok "Namespace ${namespace} ready"
       return 0
@@ -244,7 +244,7 @@ wait_deploy_ready() {
   
   log_info "Waiting for deployment ${deployment} in namespace ${namespace} (timeout: ${timeout}s)..."
   
-  while [ ${waited} -lt ${timeout} ]; do
+  while [ "${waited}" -lt "${timeout}" ]; do
     if run_kubectl get deployment "${deployment}" -n "${namespace}" >/dev/null 2>&1; then
       local ready=$(run_kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
       local desired=$(run_kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
@@ -273,7 +273,7 @@ wait_sts_ready() {
   
   log_info "Waiting for statefulset ${statefulset} in namespace ${namespace} (timeout: ${timeout}s)..."
   
-  while [ ${waited} -lt ${timeout} ]; do
+  while [ "${waited}" -lt "${timeout}" ]; do
     if run_kubectl get statefulset "${statefulset}" -n "${namespace}" >/dev/null 2>&1; then
       local ready=$(run_kubectl get statefulset "${statefulset}" -n "${namespace}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
       local desired=$(run_kubectl get statefulset "${statefulset}" -n "${namespace}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
@@ -443,7 +443,7 @@ wait_ns_deleted() {
   
   log_info "Waiting for namespace ${namespace} to be deleted (timeout: ${timeout}s)..."
   
-  while [ ${waited} -lt ${timeout} ]; do
+  while [ "${waited}" -lt "${timeout}" ]; do
     if ! run_kubectl get namespace "${namespace}" >/dev/null 2>&1; then
       log_ok "Namespace ${namespace} deleted"
       return 0

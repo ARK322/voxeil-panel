@@ -60,7 +60,7 @@ run_phases() {
     fi
   done <<< "${phases}"
   
-  return ${exit_code}
+  return "${exit_code}"
 }
 
 # Main

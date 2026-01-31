@@ -25,7 +25,7 @@ TIMEOUT="${VOXEIL_WAIT_TIMEOUT:-600}"
 if run_kubectl get namespace platform >/dev/null 2>&1; then
   # Wait for deployments to be deleted
   waited=0
-  while [ ${waited} -lt ${TIMEOUT} ]; do
+  while [ "${waited}" -lt "${TIMEOUT}" ]; do
     deploy_count=$(run_kubectl get deployments -n platform --no-headers 2>/dev/null | wc -l || echo "0")
     if [ "${deploy_count}" -eq "0" ]; then
       log_ok "All application deployments deleted"
@@ -38,7 +38,7 @@ if run_kubectl get namespace platform >/dev/null 2>&1; then
     waited=$((waited + 2))
   done
   
-  if [ ${waited} -ge ${TIMEOUT} ]; then
+  if [ "${waited}" -ge "${TIMEOUT}" ]; then
     log_warn "Some deployments may still exist (will be cleaned up in namespace phase)"
   fi
 fi

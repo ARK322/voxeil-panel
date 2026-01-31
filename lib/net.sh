@@ -71,8 +71,8 @@ fetch_file() {
   
   local url="${github_raw_base}/${repo_path}"
   
-  while [ ${attempt} -le ${max_retries} ]; do
-    if curl -fL --retry 2 --retry-delay ${retry_delay} --max-time 30 -o "${output_path}" "${url}" 2>/dev/null; then
+  while [ "${attempt}" -le "${max_retries}" ]; do
+    if curl -fL --retry 2 --retry-delay "${retry_delay}" --max-time 30 -o "${output_path}" "${url}" 2>/dev/null; then
       if [ -s "${output_path}" ]; then
         return 0
       else
@@ -82,8 +82,8 @@ fetch_file() {
       log_warn "Failed to fetch ${url} (attempt ${attempt}/${max_retries})"
     fi
     
-    if [ ${attempt} -lt ${max_retries} ]; then
-      sleep ${retry_delay}
+    if [ "${attempt}" -lt "${max_retries}" ]; then
+      sleep "${retry_delay}"
       retry_delay=$((retry_delay * 2))
     fi
     attempt=$((attempt + 1))

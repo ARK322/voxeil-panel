@@ -21,7 +21,8 @@ prompt_value() {
   # Non-interactive mode: use default or environment variable
   if ! is_interactive; then
     # Try environment variable first (e.g., VOXEIL_PANEL_DOMAIN for "Panel Domain")
-    local env_var="VOXEIL_$(echo "${label}" | tr '[:lower:] ' '[:upper:]_' | tr -d '()')"
+    local env_var
+    env_var="VOXEIL_$(echo "${label}" | tr '[:lower:] ' '[:upper:]_' | tr -d '()')"
     if [ -n "${!env_var:-}" ]; then
       echo "${!env_var}"
       return 0
@@ -49,11 +50,11 @@ prompt_value() {
   
   if [ "${is_secret}" = "true" ]; then
     # Secret input (hidden)
-    read -s -p "${prompt_text}" value
+    read -rs -p "${prompt_text}" value
     echo "" >&2  # Newline after hidden input
   else
     # Normal input
-    read -p "${prompt_text}" value
+    read -r -p "${prompt_text}" value
   fi
   
   # Use default if empty
@@ -83,7 +84,7 @@ prompt_yesno() {
     prompt_text="${question} [Y/n]: "
   fi
   
-  read -p "${prompt_text}" answer
+  read -r -p "${prompt_text}" answer
   answer="${answer:-${default}}"
   
   case "${answer}" in
