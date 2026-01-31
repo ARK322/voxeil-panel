@@ -284,7 +284,13 @@ for pvc in "${REQUIRED_PVCS[@]}"; do
   if [ "${pvc_phase}" != "Bound" ]; then
     # For WaitForFirstConsumer PVCs, we need to pre-bind by creating a temporary pod
     log_info "PVC '${pvc}' is ${pvc_phase}, checking binding mode..."
+    # Get StorageClass binding mode (default to Immediate if query fails)
+    if ! run_kubectl get storageclass local-path >/dev/null 2>&1; then
+      log_error "StorageClass 'local-path' not found (required for PVC binding check)"
+      die 1 "StorageClass 'local-path' must exist to determine PVC binding mode"
+    fi
     binding_mode=$(run_kubectl get storageclass local-path -o jsonpath='{.volumeBindingMode}' 2>/dev/null || echo "Immediate")
+    log_info "StorageClass binding mode: ${binding_mode}"
     
     if [ "${binding_mode}" = "WaitForFirstConsumer" ]; then
       log_info "StorageClass uses WaitForFirstConsumer, pre-binding PVC '${pvc}'..."
