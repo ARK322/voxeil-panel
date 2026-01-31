@@ -663,6 +663,49 @@ if [ "${VOXEIL_CI:-0}" = "1" ] && [ -n "${VOXEIL_CONTROLLER_IMAGE:-}" ] && [ -n 
     fi
     rm -f "${TEMP_MANIFEST}"
     log_ok "Applications applied with CI image overrides"
+    
+    # POST-APPLY VALIDATION: controller-config-pvc must be Bound before controller rollout
+    # This PVC is created in 20-core but may take time to bind (local-path provisioning)
+    log_info "Post-apply validation: Ensuring controller-config-pvc is Bound before controller rollout..."
+    if ! run_kubectl get pvc controller-config-pvc -n platform >/dev/null 2>&1; then
+      log_error "controller-config-pvc not found after applying applications"
+      log_error "This PVC should have been created in phase 20-core"
+      die 1 "controller-config-pvc must exist before controller rollout"
+    fi
+    
+    pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+    if [ "${pvc_phase}" != "Bound" ]; then
+      log_info "controller-config-pvc is not bound (phase: ${pvc_phase}), waiting for binding..."
+      # Wait up to 120s for PVC to bind (local-path should bind quickly, but be patient)
+      for i in $(seq 1 60); do
+        sleep 2
+        pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+        if [ "${pvc_phase}" = "Bound" ]; then
+          log_ok "controller-config-pvc is bound"
+          break
+        fi
+        if [ $((i % 10)) -eq 0 ]; then
+          log_info "Still waiting for controller-config-pvc... ($i/60) - Current phase: ${pvc_phase}"
+          # Show PVC events for diagnostics
+          run_kubectl describe pvc controller-config-pvc -n platform 2>&1 | grep -A 10 "Events:" || true
+        fi
+      done
+      
+      # Final check: fail if still not Bound
+      pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+      if [ "${pvc_phase}" != "Bound" ]; then
+        log_error "controller-config-pvc not bound after 120s (phase: ${pvc_phase})"
+        log_error "PVC details:"
+        run_kubectl get pvc controller-config-pvc -n platform -o yaml || true
+        log_error "PVC events:"
+        run_kubectl describe pvc controller-config-pvc -n platform 2>&1 | grep -A 20 "Events:" || true
+        log_error "StorageClass status:"
+        run_kubectl get storageclass local-path -o yaml || true
+        die 1 "controller-config-pvc must be Bound before controller pods can start"
+      fi
+    else
+      log_ok "controller-config-pvc is already bound"
+    fi
   else
     log_warn "Failed to build kustomization, falling back to standard apply"
     # Fall back to standard apply
