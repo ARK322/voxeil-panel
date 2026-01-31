@@ -307,32 +307,32 @@ if [ "${VOXEIL_CI:-0}" = "1" ] && [ -n "${VOXEIL_CONTROLLER_IMAGE:-}" ] && [ -n 
     if [ "${EXCLUDE_INGRESS}" = "true" ]; then
       # Remove Ingress resources containing REPLACE_PANEL_DOMAIN
       TEMP_FILTERED=$(mktemp) || TEMP_FILTERED="/tmp/filtered-$$"
-      # Use kubectl to filter out Ingress resources (more reliable than sed)
-      if command -v yq >/dev/null 2>&1; then
-        # If yq is available, use it to filter
-        yq eval 'del(.items[] | select(.kind == "Ingress" and (.spec.rules[0].host // "" | contains("REPLACE_PANEL_DOMAIN"))))' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || cp "${TEMP_MANIFEST}" "${TEMP_FILTERED}"
-      else
-        # Fallback: use awk to filter out Ingress resources with REPLACE_PANEL_DOMAIN
-        awk '
-          BEGIN { in_ingress=0; skip_resource=0; }
-          /^kind: Ingress/ { in_ingress=1; skip_resource=0; }
-          /REPLACE_PANEL_DOMAIN/ && in_ingress { skip_resource=1; }
-          /^---$/ { 
-            if (!skip_resource) print prev_line;
-            prev_line=$0;
-            in_ingress=0;
-            skip_resource=0;
+      # Split manifest by ---, filter out Ingress resources with REPLACE_PANEL_DOMAIN, then rejoin
+      awk '
+        BEGIN { 
+          RS="\n---\n";
+          ORS="\n---\n";
+          skip=0;
+        }
+        {
+          if ($0 ~ /^kind:[[:space:]]*Ingress/ && $0 ~ /REPLACE_PANEL_DOMAIN/) {
+            skip=1;
             next;
           }
-          { 
-            if (skip_resource) next;
-            if (NR > 1 && prev_line != "") print prev_line;
-            prev_line=$0;
+          if (!skip) {
+            print $0;
           }
-          END { if (!skip_resource && prev_line != "") print prev_line; }
-        ' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || cp "${TEMP_MANIFEST}" "${TEMP_FILTERED}"
+          skip=0;
+        }
+      ' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || {
+        # Fallback: simple grep-based filter (less precise but more reliable)
+        grep -v "REPLACE_PANEL_DOMAIN" "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || cp "${TEMP_MANIFEST}" "${TEMP_FILTERED}"
+        # Remove Ingress resources that might still be present
+        awk '/^kind: Ingress/,/^---$/ { if (/^kind: Ingress/) skip=1; if (skip) next; } /^---$/ { skip=0; } { if (!skip) print; }' "${TEMP_FILTERED}" > "${TEMP_MANIFEST}" 2>/dev/null || mv "${TEMP_FILTERED}" "${TEMP_MANIFEST}"
+      }
+      if [ -f "${TEMP_FILTERED}" ]; then
+        mv "${TEMP_FILTERED}" "${TEMP_MANIFEST}"
       fi
-      mv "${TEMP_FILTERED}" "${TEMP_MANIFEST}"
       log_info "Filtered out ingress resources (domain not provided in CI)"
     fi
     
