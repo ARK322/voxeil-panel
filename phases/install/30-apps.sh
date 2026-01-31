@@ -243,7 +243,7 @@ fi
 log_info "Running validation gates before applying applications..."
 
 # Gate 1: StorageClass local-path exists
-log_info "Gate 1/10: Checking StorageClass local-path..."
+log_info "Gate 1/7: Checking StorageClass local-path..."
 if ! run_kubectl get storageclass local-path >/dev/null 2>&1; then
   log_error "StorageClass 'local-path' not found"
   die 1 "StorageClass 'local-path' must exist before applying applications"
@@ -251,7 +251,7 @@ fi
 log_ok "StorageClass local-path exists"
 
 # Gate 2: Required namespaces exist
-log_info "Gate 2/10: Checking required namespaces..."
+log_info "Gate 2/7: Checking required namespaces..."
 REQUIRED_NAMESPACES=("platform" "infra-db" "cert-manager" "kyverno")
 for ns in "${REQUIRED_NAMESPACES[@]}"; do
   if ! run_kubectl get namespace "${ns}" >/dev/null 2>&1; then
@@ -261,27 +261,86 @@ for ns in "${REQUIRED_NAMESPACES[@]}"; do
 done
 log_ok "All required namespaces exist"
 
-# Gate 3: All core PVCs are Bound (infrastructure PVCs only)
-# Note: controller-config-pvc is checked AFTER apps are applied (it's created in 20-core but may be WaitForFirstConsumer)
-log_info "Gate 3/10: Checking core infrastructure PVCs are Bound..."
+# Gate 3: All core PVCs are Bound
+log_info "Gate 3/7: Checking core PVCs are Bound..."
 REQUIRED_PVCS=(
   "infra-db/postgres-pvc"
   "infra-db/pgadmin-pvc"
   "dns-zone/dns-zones-pvc"
+  "platform/controller-config-pvc"
 )
 for pvc in "${REQUIRED_PVCS[@]}"; do
   ns="${pvc%%/*}"
   name="${pvc##*/}"
   pvc_phase=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
   if [ "${pvc_phase}" != "Bound" ]; then
-    log_error "PVC '${pvc}' is not Bound (phase: ${pvc_phase})"
-    die 1 "PVC '${pvc}' must be Bound before applying applications"
+    # Special handling for WaitForFirstConsumer PVCs: pre-bind by creating a temporary pod
+    if [ "${pvc_phase}" = "Pending" ]; then
+      log_info "PVC '${pvc}' is Pending (likely WaitForFirstConsumer), attempting pre-bind..."
+      # Check if PVC uses WaitForFirstConsumer
+      storage_class=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.spec.storageClassName}' 2>/dev/null || echo "")
+      volume_binding_mode=$(run_kubectl get storageclass "${storage_class}" -o jsonpath='{.volumeBindingMode}' 2>/dev/null || echo "")
+      
+      if [ "${volume_binding_mode}" = "WaitForFirstConsumer" ]; then
+        log_info "PVC uses WaitForFirstConsumer, creating temporary pod to trigger binding..."
+        # Create a temporary pod that mounts the PVC
+        TEMP_POD_NAME="pvc-prebind-${name}-$(date +%s)"
+        run_kubectl run "${TEMP_POD_NAME}" \
+          --namespace="${ns}" \
+          --image=busybox:1.36 \
+          --restart=Never \
+          --overrides="{\"spec\":{\"containers\":[{\"name\":\"prebind\",\"image\":\"busybox:1.36\",\"command\":[\"sleep\",\"3600\"],\"volumeMounts\":[{\"name\":\"pvc\",\"mountPath\":\"/data\"}]}],\"volumes\":[{\"name\":\"pvc\",\"persistentVolumeClaim\":{\"claimName\":\"${name}\"}}]}}" \
+          >/dev/null 2>&1 || {
+          log_error "Failed to create pre-bind pod for PVC '${pvc}'"
+          die 1 "Cannot pre-bind PVC '${pvc}' - required for deterministic CI"
+        }
+        
+        # Wait for PVC to bind (pod creation triggers binding)
+        log_info "Waiting for PVC '${pvc}' to bind (triggered by pre-bind pod)..."
+        for i in $(seq 1 60); do
+          sleep 2
+          pvc_phase=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+          if [ "${pvc_phase}" = "Bound" ]; then
+            log_ok "PVC '${pvc}' is now Bound"
+            break
+          fi
+          if [ $((i % 10)) -eq 0 ]; then
+            log_info "Still waiting for PVC '${pvc}' to bind... ($i/60) - Current phase: ${pvc_phase}"
+          fi
+        done
+        
+        # Delete the temporary pod
+        log_info "Deleting pre-bind pod..."
+        run_kubectl delete pod "${TEMP_POD_NAME}" -n "${ns}" --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
+        
+        # Final check
+        pvc_phase=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+        if [ "${pvc_phase}" != "Bound" ]; then
+          log_error "PVC '${pvc}' failed to bind after pre-bind attempt (phase: ${pvc_phase})"
+          log_error "PVC details:"
+          run_kubectl get pvc "${name}" -n "${ns}" -o yaml 2>&1 | head -n 50 || true
+          log_error "PVC events:"
+          run_kubectl describe pvc "${name}" -n "${ns}" 2>&1 | grep -A 20 "Events:" || true
+          die 1 "PVC '${pvc}' must be Bound before applying applications"
+        fi
+      else
+        # Not WaitForFirstConsumer, but still Pending - this is an error
+        log_error "PVC '${pvc}' is Pending but not WaitForFirstConsumer (phase: ${pvc_phase})"
+        log_error "PVC details:"
+        run_kubectl get pvc "${name}" -n "${ns}" -o yaml 2>&1 | head -n 50 || true
+        die 1 "PVC '${pvc}' must be Bound before applying applications"
+      fi
+    else
+      # Not Pending, but also not Bound - this is an error
+      log_error "PVC '${pvc}' is not Bound (phase: ${pvc_phase})"
+      die 1 "PVC '${pvc}' must be Bound before applying applications"
+    fi
   fi
 done
-log_ok "All core infrastructure PVCs are Bound"
+log_ok "All core PVCs are Bound"
 
 # Gate 4: cert-manager-webhook Ready
-log_info "Gate 4/10: Checking cert-manager-webhook is Ready..."
+log_info "Gate 4/7: Checking cert-manager-webhook is Ready..."
 if ! run_kubectl get deployment cert-manager-webhook -n cert-manager >/dev/null 2>&1; then
   log_error "cert-manager-webhook deployment not found"
   die 1 "cert-manager-webhook must exist and be Ready before applying applications"
@@ -295,7 +354,7 @@ fi
 log_ok "cert-manager-webhook is Ready"
 
 # Gate 5: kyverno-admission-controller Ready
-log_info "Gate 5/10: Checking kyverno-admission-controller is Ready..."
+log_info "Gate 5/7: Checking kyverno-admission-controller is Ready..."
 if ! run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
   log_error "kyverno-admission-controller deployment not found"
   die 1 "kyverno-admission-controller must exist and be Ready before applying applications"
@@ -309,7 +368,7 @@ fi
 log_ok "kyverno-admission-controller is Ready"
 
 # Gate 6: Postgres Ready AND accepts password auth (already verified above, but re-check)
-log_info "Gate 6/10: Verifying PostgreSQL is Ready and accepts connections..."
+log_info "Gate 6/7: Verifying PostgreSQL is Ready and accepts connections..."
 if ! run_kubectl get statefulset postgres -n infra-db >/dev/null 2>&1; then
   log_error "PostgreSQL StatefulSet not found"
   die 1 "PostgreSQL must exist and be Ready before applying applications"
@@ -333,7 +392,7 @@ fi
 log_ok "PostgreSQL is Ready and accepting connections"
 
 # Gate 7: Secrets are not placeholder/empty and are consistent
-log_info "Gate 7/10: Verifying secrets are not placeholder/empty and are consistent..."
+log_info "Gate 7/7: Verifying secrets are not placeholder/empty and are consistent..."
 # Check postgres-secret
 if ! run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1; then
   log_error "postgres-secret not found in infra-db namespace"
@@ -663,49 +722,6 @@ if [ "${VOXEIL_CI:-0}" = "1" ] && [ -n "${VOXEIL_CONTROLLER_IMAGE:-}" ] && [ -n 
     fi
     rm -f "${TEMP_MANIFEST}"
     log_ok "Applications applied with CI image overrides"
-    
-    # POST-APPLY VALIDATION: controller-config-pvc must be Bound before controller rollout
-    # This PVC is created in 20-core but may take time to bind (local-path provisioning)
-    log_info "Post-apply validation: Ensuring controller-config-pvc is Bound before controller rollout..."
-    if ! run_kubectl get pvc controller-config-pvc -n platform >/dev/null 2>&1; then
-      log_error "controller-config-pvc not found after applying applications"
-      log_error "This PVC should have been created in phase 20-core"
-      die 1 "controller-config-pvc must exist before controller rollout"
-    fi
-    
-    pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-    if [ "${pvc_phase}" != "Bound" ]; then
-      log_info "controller-config-pvc is not bound (phase: ${pvc_phase}), waiting for binding..."
-      # Wait up to 120s for PVC to bind (local-path should bind quickly, but be patient)
-      for i in $(seq 1 60); do
-        sleep 2
-        pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-        if [ "${pvc_phase}" = "Bound" ]; then
-          log_ok "controller-config-pvc is bound"
-          break
-        fi
-        if [ $((i % 10)) -eq 0 ]; then
-          log_info "Still waiting for controller-config-pvc... ($i/60) - Current phase: ${pvc_phase}"
-          # Show PVC events for diagnostics
-          run_kubectl describe pvc controller-config-pvc -n platform 2>&1 | grep -A 10 "Events:" || true
-        fi
-      done
-      
-      # Final check: fail if still not Bound
-      pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-      if [ "${pvc_phase}" != "Bound" ]; then
-        log_error "controller-config-pvc not bound after 120s (phase: ${pvc_phase})"
-        log_error "PVC details:"
-        run_kubectl get pvc controller-config-pvc -n platform -o yaml || true
-        log_error "PVC events:"
-        run_kubectl describe pvc controller-config-pvc -n platform 2>&1 | grep -A 20 "Events:" || true
-        log_error "StorageClass status:"
-        run_kubectl get storageclass local-path -o yaml || true
-        die 1 "controller-config-pvc must be Bound before controller pods can start"
-      fi
-    else
-      log_ok "controller-config-pvc is already bound"
-    fi
   else
     log_warn "Failed to build kustomization, falling back to standard apply"
     # Fall back to standard apply
@@ -777,47 +793,33 @@ fi
 log_info "Controller deployment found, checking image..."
 run_kubectl get deployment controller -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>&1 && echo "" || true
 
-# POST-APPLY VALIDATION: controller-config-pvc must be Bound before controller rollout
-# This PVC is created in 20-core but may take time to bind (local-path provisioning)
-log_info "Post-apply validation: Ensuring controller-config-pvc is Bound before controller rollout..."
-if ! run_kubectl get pvc controller-config-pvc -n platform >/dev/null 2>&1; then
-  log_error "controller-config-pvc not found after applying applications"
-  log_error "This PVC should have been created in phase 20-core"
-  die 1 "controller-config-pvc must exist before controller rollout"
-fi
-
-pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-if [ "${pvc_phase}" != "Bound" ]; then
-  log_info "controller-config-pvc is not bound (phase: ${pvc_phase}), waiting for binding..."
-  # Wait up to 120s for PVC to bind (local-path should bind quickly, but be patient)
-  for i in $(seq 1 60); do
-    sleep 2
-    pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
-    if [ "${pvc_phase}" = "Bound" ]; then
-      log_ok "controller-config-pvc is bound"
-      break
-    fi
-    if [ $((i % 10)) -eq 0 ]; then
-      log_info "Still waiting for controller-config-pvc... ($i/60) - Current phase: ${pvc_phase}"
-      # Show PVC events for diagnostics
-      run_kubectl describe pvc controller-config-pvc -n platform 2>&1 | grep -A 10 "Events:" || true
-    fi
-  done
-  
-  # Final check: fail if still not Bound
+# Check controller-config PVC before rollout (controller requires it)
+log_info "Checking controller-config PVC..."
+if run_kubectl get pvc controller-config-pvc -n platform >/dev/null 2>&1; then
   pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
   if [ "${pvc_phase}" != "Bound" ]; then
-    log_error "controller-config-pvc not bound after 120s (phase: ${pvc_phase})"
-    log_error "PVC details:"
-    run_kubectl get pvc controller-config-pvc -n platform -o yaml || true
-    log_error "PVC events:"
-    run_kubectl describe pvc controller-config-pvc -n platform 2>&1 | grep -A 20 "Events:" || true
-    log_error "StorageClass status:"
-    run_kubectl get storageclass local-path -o yaml || true
-    die 1 "controller-config-pvc must be Bound before controller pods can start"
+    log_warn "controller-config-pvc is not bound (phase: ${pvc_phase}), waiting..."
+    for i in $(seq 1 30); do
+      pvc_phase=$(run_kubectl get pvc controller-config-pvc -n platform -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+      if [ "${pvc_phase}" = "Bound" ]; then
+        log_ok "controller-config-pvc is bound"
+        break
+      fi
+      if [ $((i % 5)) -eq 0 ]; then
+        log_info "Still waiting for controller-config-pvc... ($i/30) - Current phase: ${pvc_phase}"
+      fi
+      sleep 2
+    done
+    if [ "${pvc_phase}" != "Bound" ]; then
+      log_error "controller-config-pvc not bound after 60s"
+      run_kubectl get pvc controller-config-pvc -n platform -o yaml || true
+      die 1 "controller-config-pvc must be bound before controller rollout"
+    fi
+  else
+    log_ok "controller-config-pvc is bound"
   fi
 else
-  log_ok "controller-config-pvc is already bound"
+  log_warn "controller-config-pvc not found (may be created by deployment)"
 fi
 
 wait_rollout_status "platform" "deployment" "controller" "${TIMEOUT}" "app=controller" || {
