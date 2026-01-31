@@ -260,6 +260,14 @@ if [ -z "${TLS_ISSUER}" ]; then
   TLS_ISSUER="${VOXEIL_TLS_ISSUER:-letsencrypt-prod}"
 fi
 
+# In CI mode, if domain is not provided, exclude ingress from kustomization
+# (ingress requires valid domain, cannot use placeholder)
+EXCLUDE_INGRESS=false
+if [ "${VOXEIL_CI:-0}" = "1" ] && ([ -z "${PANEL_DOMAIN}" ] || [ "${PANEL_DOMAIN}" = "REPLACE_PANEL_DOMAIN" ]); then
+  log_info "CI mode: Panel domain not provided, excluding ingress (requires valid domain)"
+  EXCLUDE_INGRESS=true
+fi
+
 if [ ! -f "${APPS_DIR}/kustomization.yaml" ]; then
   log_error "Application kustomization not found: ${APPS_DIR}/kustomization.yaml"
   exit 1
