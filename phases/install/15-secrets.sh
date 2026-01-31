@@ -150,4 +150,54 @@ run_kubectl create secret generic platform-secrets \
 log_ok "Platform secrets created/updated (secrets not printed to stdout)"
 log_info "Secret values are stored in ${STATE_ENV_FILE} (if generated)"
 
+# Ensure dns-zone namespace exists and create bind9-tsig secret
+log_info "Ensuring dns-zone namespace and bind9-tsig secret..."
+
+# Ensure dns-zone namespace exists
+if ! run_kubectl get namespace dns-zone >/dev/null 2>&1; then
+  log_info "Creating dns-zone namespace..."
+  run_kubectl create namespace dns-zone || true
+  run_kubectl label namespace dns-zone app.kubernetes.io/part-of=voxeil app.kubernetes.io/managed-by=voxeil voxeil.io/owned=true --overwrite || true
+fi
+
+# Generate or retrieve TSIG secret values
+TSIG_NAME="voxeil-tsig"
+TSIG_ALG="hmac-sha256"
+
+# Generate TSIG_SECRET as a secure random base64 string (minimum 16 bytes for hmac-sha256)
+if command_exists openssl; then
+  TSIG_SECRET=$(openssl rand -base64 32 | tr -d '\n' || rand)
+else
+  # Fallback to rand() if openssl not available
+  TSIG_SECRET=$(rand)
+fi
+
+# Check if we have a stored value in state.env
+if [ -f "${STATE_ENV_FILE}" ]; then
+  stored_tsig=$(grep "^BIND9_TSIG_SECRET=" "${STATE_ENV_FILE}" 2>/dev/null | cut -d'=' -f2- || echo "")
+  if [ -n "${stored_tsig}" ]; then
+    TSIG_SECRET="${stored_tsig}"
+  else
+    # Save generated value
+    echo "BIND9_TSIG_SECRET=${TSIG_SECRET}" >> "${STATE_ENV_FILE}"
+    chmod 600 "${STATE_ENV_FILE}"
+  fi
+fi
+
+# Create bind9-tsig secret (idempotent)
+log_info "Creating bind9-tsig secret in dns-zone namespace..."
+if ! run_kubectl get secret bind9-tsig -n dns-zone >/dev/null 2>&1; then
+  run_kubectl create secret generic bind9-tsig \
+    --namespace=dns-zone \
+    --from-literal=TSIG_NAME="${TSIG_NAME}" \
+    --from-literal=TSIG_ALG="${TSIG_ALG}" \
+    --from-literal=TSIG_SECRET="${TSIG_SECRET}" >/dev/null 2>&1 || {
+    log_error "Failed to create bind9-tsig secret"
+    exit 1
+  }
+  log_ok "bind9-tsig secret created"
+else
+  log_info "bind9-tsig secret already exists, skipping creation"
+fi
+
 log_ok "Secret generation phase complete"
