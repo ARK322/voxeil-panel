@@ -262,7 +262,7 @@ done
 log_ok "All required namespaces exist"
 
 # Gate 3: All core PVCs are Bound
-log_info "Gate 3/7: Checking core PVCs are Bound..."
+log_info "Gate 3/10: Checking core PVCs are Bound..."
 REQUIRED_PVCS=(
   "infra-db/postgres-pvc"
   "infra-db/pgadmin-pvc"
@@ -272,10 +272,92 @@ REQUIRED_PVCS=(
 for pvc in "${REQUIRED_PVCS[@]}"; do
   ns="${pvc%%/*}"
   name="${pvc##*/}"
+  
+  # Check if PVC exists
+  if ! run_kubectl get pvc "${name}" -n "${ns}" >/dev/null 2>&1; then
+    log_error "PVC '${pvc}' does not exist"
+    die 1 "PVC '${pvc}' must exist before applying applications"
+  fi
+  
   pvc_phase=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+  
   if [ "${pvc_phase}" != "Bound" ]; then
-    log_error "PVC '${pvc}' is not Bound (phase: ${pvc_phase})"
-    die 1 "PVC '${pvc}' must be Bound before applying applications"
+    # For WaitForFirstConsumer PVCs, we need to pre-bind by creating a temporary pod
+    log_info "PVC '${pvc}' is ${pvc_phase}, checking binding mode..."
+    binding_mode=$(run_kubectl get storageclass local-path -o jsonpath='{.volumeBindingMode}' 2>/dev/null || echo "Immediate")
+    
+    if [ "${binding_mode}" = "WaitForFirstConsumer" ]; then
+      log_info "StorageClass uses WaitForFirstConsumer, pre-binding PVC '${pvc}'..."
+      # Create a temporary pod to trigger binding
+      TEMP_PREBIND_POD="prebind-${name}-$(date +%s)"
+      cat <<EOF | run_kubectl apply -f - >/dev/null 2>&1
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${TEMP_PREBIND_POD}
+  namespace: ${ns}
+spec:
+  containers:
+  - name: prebind
+    image: busybox:1.36
+    command: ["sleep", "10"]
+    volumeMounts:
+    - name: pvc
+      mountPath: /data
+  volumes:
+  - name: pvc
+    persistentVolumeClaim:
+      claimName: ${name}
+  restartPolicy: Never
+EOF
+      
+      # Wait for PVC to bind (timeout: 60s)
+      log_info "Waiting for PVC '${pvc}' to bind..."
+      for i in $(seq 1 30); do
+        pvc_phase=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+        if [ "${pvc_phase}" = "Bound" ]; then
+          log_ok "PVC '${pvc}' is now Bound"
+          break
+        fi
+        if [ $i -eq 30 ]; then
+          log_error "PVC '${pvc}' did not bind after 60s"
+          run_kubectl describe pvc "${name}" -n "${ns}" >&2 || true
+          # Clean up prebind pod
+          run_kubectl delete pod "${TEMP_PREBIND_POD}" -n "${ns}" --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
+          die 1 "PVC '${pvc}' must be Bound before applying applications"
+        fi
+        sleep 2
+      done
+      
+      # Delete the prebind pod
+      log_info "Deleting prebind pod..."
+      run_kubectl delete pod "${TEMP_PREBIND_POD}" -n "${ns}" --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
+      # Wait for pod to be fully deleted
+      sleep 2
+    else
+      # Immediate binding mode - PVC should bind quickly
+      log_info "StorageClass uses Immediate binding, waiting for PVC '${pvc}' to bind..."
+      for i in $(seq 1 30); do
+        pvc_phase=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+        if [ "${pvc_phase}" = "Bound" ]; then
+          break
+        fi
+        if [ $i -eq 30 ]; then
+          log_error "PVC '${pvc}' did not bind after 60s (binding mode: ${binding_mode})"
+          run_kubectl describe pvc "${name}" -n "${ns}" >&2 || true
+          die 1 "PVC '${pvc}' must be Bound before applying applications"
+        fi
+        sleep 2
+      done
+    fi
+    
+    # Final verification
+    pvc_phase=$(run_kubectl get pvc "${name}" -n "${ns}" -o jsonpath='{.status.phase}' 2>/dev/null || echo "NotFound")
+    if [ "${pvc_phase}" != "Bound" ]; then
+      log_error "PVC '${pvc}' is still not Bound (phase: ${pvc_phase})"
+      run_kubectl describe pvc "${name}" -n "${ns}" >&2 || true
+      die 1 "PVC '${pvc}' must be Bound before applying applications"
+    fi
   fi
 done
 log_ok "All core PVCs are Bound"
@@ -295,7 +377,7 @@ fi
 log_ok "cert-manager-webhook is Ready"
 
 # Gate 5: kyverno-admission-controller Ready
-log_info "Gate 5/7: Checking kyverno-admission-controller is Ready..."
+log_info "Gate 5/10: Checking kyverno-admission-controller is Ready..."
 if ! run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
   log_error "kyverno-admission-controller deployment not found"
   die 1 "kyverno-admission-controller must exist and be Ready before applying applications"
@@ -309,7 +391,7 @@ fi
 log_ok "kyverno-admission-controller is Ready"
 
 # Gate 6: Postgres Ready AND accepts password auth (already verified above, but re-check)
-log_info "Gate 6/7: Verifying PostgreSQL is Ready and accepts connections..."
+log_info "Gate 6/10: Verifying PostgreSQL is Ready and accepts connections..."
 if ! run_kubectl get statefulset postgres -n infra-db >/dev/null 2>&1; then
   log_error "PostgreSQL StatefulSet not found"
   die 1 "PostgreSQL must exist and be Ready before applying applications"
@@ -333,7 +415,7 @@ fi
 log_ok "PostgreSQL is Ready and accepting connections"
 
 # Gate 7: Secrets are not placeholder/empty and are consistent
-log_info "Gate 7/7: Verifying secrets are not placeholder/empty and are consistent..."
+log_info "Gate 7/10: Verifying secrets are not placeholder/empty and are consistent..."
 # Check postgres-secret
 if ! run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1; then
   log_error "postgres-secret not found in infra-db namespace"
