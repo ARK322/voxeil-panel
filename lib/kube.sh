@@ -147,7 +147,7 @@ run_with_timeout() {
     bash -c "${cmd}" &
     local pid=$!
     local waited=0
-    while kill -0 ${pid} 2>/dev/null && [ ${waited} -lt ${timeout} ]; do
+    while kill -0 "${pid}" 2>/dev/null && [ "${waited}" -lt "${timeout}" ]; do
       sleep 1
       waited=$((waited + 1))
     done

@@ -125,7 +125,7 @@ else
   # Fallback to user's home directory or current directory
   STATE_DIR="${HOME:-.}/.voxeil"
   STATE_FILE="${STATE_DIR}/install.state"
-  STATE_ENV_FILE="${STATE_DIR}/state.env"
+    export STATE_ENV_FILE="${STATE_DIR}/state.env"
 fi
 
 ensure_state_dir() {
@@ -133,7 +133,7 @@ ensure_state_dir() {
     # If that fails, try using current directory
     STATE_DIR="${PWD}/.voxeil"
     STATE_FILE="${STATE_DIR}/install.state"
-    STATE_ENV_FILE="${STATE_DIR}/state.env"
+    export STATE_ENV_FILE="${STATE_DIR}/state.env"
     mkdir -p "${STATE_DIR}"
   }
 }
