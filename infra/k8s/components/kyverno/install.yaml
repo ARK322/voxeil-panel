@@ -252,10 +252,10 @@ spec:
       name: AGGREGATE
       priority: 1
       type: string
-    name: v1alpha2
-    schema:
-      openAPIV3Schema:
-        description: AdmissionReport is the Schema for the AdmissionReports API
+      name: v1alpha2
+      schema:
+        openAPIV3Schema:
+          description: AdmissionReport is the Schema for the AdmissionReports API
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
