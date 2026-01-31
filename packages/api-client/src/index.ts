@@ -4,7 +4,7 @@
 import type {
   SiteInfo,
   PanelUser,
-} from "@voxeil/shared/types";
+} from "@voxeil/shared";
 
 export type TokenGetter = () => string | null;
 
@@ -248,4 +248,4 @@ export function createControllerClient(
 }
 
 // Re-export types for convenience
-export type { SiteInfo, PanelUser } from "@voxeil/shared/types";
+export type { SiteInfo, PanelUser } from "@voxeil/shared";
