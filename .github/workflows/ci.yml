@@ -36,6 +36,7 @@ jobs:
       - name: Build TypeScript packages
         run: |
           echo "::group::Building TypeScript packages"
+          rm -rf packages/*/dist packages/*/tsconfig.tsbuildinfo
           npm run build:packages
           echo "::endgroup::"
 
