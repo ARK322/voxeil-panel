@@ -9,7 +9,7 @@
   ],
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "build:ci": "npx tsc --build && cd apps/panel && npm run build && cd ../..",
+    "build:ci": "cd packages/shared && npm run build && cd ../api-client && npm run build && cd ../../apps/panel && npm run build && cd ../..",
     "lint": "npm run lint --workspaces --if-present"
   },
   "engines": {
