@@ -88,8 +88,6 @@ VOXEIL_CRDS=(
   "gitrepositories.source.toolkit.fluxcd.io"
   "helmreleases.helm.toolkit.fluxcd.io"
 )
-
-REMAINING_CRDS=()
 for crd in "${VOXEIL_CRDS[@]}"; do
   if run_kubectl get crd "${crd}" >/dev/null 2>&1; then
     # Check if it's actually from our installation (has voxeil label or part-of label)

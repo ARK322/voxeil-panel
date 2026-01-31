@@ -11,7 +11,6 @@ source "${SCRIPT_DIR}/../../lib/kube.sh"
 log_phase "doctor/20-health"
 
 EXIT_CODE=0
-TIMEOUT=60  # Shorter timeout for doctor checks
 
 # Helper to check deployment/statefulset health
 check_resource_health() {

@@ -64,11 +64,9 @@ if [ ${#STUCK_NAMESPACES[@]} -gt 0 ]; then
     # Get all resource types
     resource_types=$(run_kubectl api-resources --verbs=list --namespaced -o name 2>/dev/null | grep -v "events" || echo "")
     
-    has_resources=false
     for resource_type in ${resource_types}; do
       count=$(run_kubectl get "${resource_type}" -n "${ns}" --no-headers 2>/dev/null | wc -l || echo "0")
       if [ "${count}" -gt 0 ]; then
-        has_resources=true
         log_info "Found ${count} ${resource_type} resource(s) in ${ns}"
         
         # Try to delete them

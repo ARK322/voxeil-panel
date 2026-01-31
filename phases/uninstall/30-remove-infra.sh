@@ -21,7 +21,6 @@ fi
 
 # Wait for infrastructure resources to be deleted before namespace cleanup
 log_info "Waiting for infrastructure resources to be deleted..."
-TIMEOUT="${VOXEIL_WAIT_TIMEOUT:-600}"
 
 # Wait for voxeil namespaces to have resources cleaned up
 VOXEIL_NAMESPACES=("platform" "cert-manager" "kyverno" "infra-db" "dns-zone" "mail-zone" "flux-system")

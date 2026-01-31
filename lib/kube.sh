@@ -398,8 +398,6 @@ wait_rollout_status() {
   # Use a progress monitor in the background to show periodic updates
   local start_time
   start_time=$(date +%s)
-  local check_interval=30
-  local last_check=0
   
   # Start rollout status check in background and capture output
   local rollout_output
