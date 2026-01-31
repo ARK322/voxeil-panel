@@ -122,7 +122,8 @@ run_with_timeout() {
   local timeout="${1}"
   shift
   local cmd="$*"
-  local start_time=$(date +%s)
+  local start_time
+  start_time=$(date +%s)
   local dry_run="${DRY_RUN:-false}"
   
   if [ "${dry_run}" = "true" ]; then
@@ -246,8 +247,10 @@ wait_deploy_ready() {
   
   while [ "${waited}" -lt "${timeout}" ]; do
     if run_kubectl get deployment "${deployment}" -n "${namespace}" >/dev/null 2>&1; then
-      local ready=$(run_kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-      local desired=$(run_kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+      local ready
+      ready=$(run_kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+      local desired
+      desired=$(run_kubectl get deployment "${deployment}" -n "${namespace}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
       if [ "${ready}" = "${desired}" ] && [ "${desired}" -gt 0 ]; then
         log_ok "Deployment ${deployment} ready (${ready}/${desired})"
         return 0
@@ -275,8 +278,10 @@ wait_sts_ready() {
   
   while [ "${waited}" -lt "${timeout}" ]; do
     if run_kubectl get statefulset "${statefulset}" -n "${namespace}" >/dev/null 2>&1; then
-      local ready=$(run_kubectl get statefulset "${statefulset}" -n "${namespace}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
-      local desired=$(run_kubectl get statefulset "${statefulset}" -n "${namespace}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
+      local ready
+      ready=$(run_kubectl get statefulset "${statefulset}" -n "${namespace}" -o jsonpath='{.status.readyReplicas}' 2>/dev/null || echo "0")
+      local desired
+      desired=$(run_kubectl get statefulset "${statefulset}" -n "${namespace}" -o jsonpath='{.spec.replicas}' 2>/dev/null || echo "0")
       if [ "${ready}" = "${desired}" ] && [ "${desired}" -gt 0 ]; then
         log_ok "Statefulset ${statefulset} ready (${ready}/${desired})"
         return 0
@@ -423,7 +428,7 @@ wait_rollout_status() {
     # Show rollout output if available
     if [ -f "${rollout_output}" ] && [ -s "${rollout_output}" ]; then
       log_info "Rollout status output:"
-      cat "${rollout_output}" | head -20 || true
+      head -20 "${rollout_output}" || true
     fi
     rm -f "${rollout_output}"
     return 1

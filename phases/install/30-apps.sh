@@ -523,7 +523,7 @@ fi
 # In CI mode, if domain is not provided, exclude ingress from kustomization
 # (ingress requires valid domain, cannot use placeholder)
 EXCLUDE_INGRESS=false
-if [ "${VOXEIL_CI:-0}" = "1" ] && ([ -z "${PANEL_DOMAIN}" ] || [ "${PANEL_DOMAIN}" = "REPLACE_PANEL_DOMAIN" ]); then
+if [ "${VOXEIL_CI:-0}" = "1" ] && { [ -z "${PANEL_DOMAIN}" ] || [ "${PANEL_DOMAIN}" = "REPLACE_PANEL_DOMAIN" ]; }; then
   log_info "CI mode: Panel domain not provided, excluding ingress (requires valid domain)"
   EXCLUDE_INGRESS=true
 fi
@@ -625,7 +625,7 @@ if ! grep -E '^resources:' "${APPS_DIR}/kustomization.yaml" >/dev/null 2>&1; the
 fi
 
 # Check if there are any uncommented resource entries
-resource_count=$(grep -E '^\s+-' "${APPS_DIR}/kustomization.yaml" 2>/dev/null | grep -v '^[[:space:]]*#' | wc -l || echo "0")
+resource_count=$(grep -E '^\s+-' "${APPS_DIR}/kustomization.yaml" 2>/dev/null | grep -vc '^[[:space:]]*#' || echo "0")
 log_info "Found ${resource_count} resource entries in kustomization"
 if [ "${resource_count}" -eq "0" ]; then
   log_error "Application kustomization has no resources defined (found ${resource_count} resource entries)"
@@ -824,7 +824,7 @@ if ! run_kubectl get deployment controller -n platform >/dev/null 2>&1; then
   exit 1
 fi
 log_info "Controller deployment found, checking image..."
-run_kubectl get deployment controller -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>&1 && echo "" || true
+if run_kubectl get deployment controller -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>&1; then echo ""; fi
 
 # Check controller-config PVC before rollout (controller requires it)
 log_info "Checking controller-config PVC..."
@@ -876,7 +876,7 @@ if ! run_kubectl get deployment panel -n platform >/dev/null 2>&1; then
   exit 1
 fi
 log_info "Panel deployment found, checking image..."
-run_kubectl get deployment panel -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>&1 && echo "" || true
+if run_kubectl get deployment panel -n platform -o jsonpath='{.spec.template.spec.containers[0].image}' 2>&1; then echo ""; fi
 wait_rollout_status "platform" "deployment" "panel" "${TIMEOUT}" "app=panel" || {
   die 1 "panel deployment not ready"
 }

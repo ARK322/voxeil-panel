@@ -20,7 +20,8 @@ else
     local label="$1"
     local default_value="${2:-}"
     local is_secret="${3:-false}"
-    local env_var="VOXEIL_$(echo "${label}" | tr '[:lower:] ' '[:upper:]_' | tr -d '()')"
+    local env_var
+    env_var="VOXEIL_$(echo "${label}" | tr '[:lower:] ' '[:upper:]_' | tr -d '()')"
     if [ -n "${!env_var:-}" ]; then
       echo "${!env_var}"
       return 0

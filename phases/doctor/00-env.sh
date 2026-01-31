@@ -14,7 +14,7 @@ EXIT_CODE=0
 echo "=== State Registry ==="
 if [ -f "${STATE_FILE}" ]; then
   echo "State file found at ${STATE_FILE}:"
-  cat "${STATE_FILE}" | sed 's/^/  /'
+  sed 's/^/  /' "${STATE_FILE}"
   echo ""
 else
   echo "  ⚠ No state file found"

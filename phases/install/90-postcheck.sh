@@ -69,7 +69,7 @@ if run_kubectl get nodes >/dev/null 2>&1; then
     FAILED=$((FAILED + 1))
     RESULTS+=("Nodes|FAIL|Cannot access cluster")
   else
-    node_count=$(echo "${node_output}" | grep -v '^[[:space:]]*$' | wc -l || echo "0")
+    node_count=$(echo "${node_output}" | grep -vc '^[[:space:]]*$' || echo "0")
     ready_count=$(echo "${node_output}" | grep -c " Ready " || echo "0")
     
     if [ "${node_count}" -gt 0 ] && [ "${ready_count}" -eq "${node_count}" ]; then
