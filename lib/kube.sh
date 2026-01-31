@@ -302,11 +302,44 @@ wait_rollout_status() {
   
   log_info "Waiting for ${resource_type} ${resource_name} rollout in namespace ${namespace} (timeout: ${timeout}s)..."
   
-  if run_kubectl rollout status "${resource_type}/${resource_name}" -n "${namespace}" --timeout="${timeout}s" >/dev/null 2>&1; then
+  # Show current status before waiting
+  if run_kubectl get "${resource_type}" "${resource_name}" -n "${namespace}" >/dev/null 2>&1; then
+    local current_status
+    current_status=$(run_kubectl get "${resource_type}" "${resource_name}" -n "${namespace}" -o jsonpath='{.status.conditions[?(@.type=="Available")].status},{.status.readyReplicas}/{.spec.replicas}' 2>/dev/null || echo "unknown")
+    log_info "  Current status: ${current_status}"
+  fi
+  
+  # Use a progress monitor in the background to show periodic updates
+  local start_time
+  start_time=$(date +%s)
+  local check_interval=30
+  local last_check=0
+  
+  # Start rollout status check in background and capture output
+  local rollout_output
+  rollout_output=$(mktemp) || rollout_output="/tmp/rollout-$$.log"
+  
+  if run_kubectl rollout status "${resource_type}/${resource_name}" -n "${namespace}" --timeout="${timeout}s" >"${rollout_output}" 2>&1; then
     log_ok "${resource_type} ${resource_name} rollout complete"
+    rm -f "${rollout_output}"
     return 0
   else
-    log_error "${resource_type} ${resource_name} rollout failed or timed out after ${timeout}s"
+    local elapsed
+    elapsed=$(($(date +%s) - start_time))
+    log_error "${resource_type} ${resource_name} rollout failed or timed out after ${elapsed}s (timeout: ${timeout}s)"
+    
+    # Show current status for debugging
+    log_info "Current ${resource_type} status:"
+    run_kubectl get "${resource_type}" "${resource_name}" -n "${namespace}" -o wide 2>&1 | head -5 || true
+    log_info "Recent events:"
+    run_kubectl get events -n "${namespace}" --field-selector involvedObject.name="${resource_name}" --sort-by='.lastTimestamp' 2>&1 | tail -10 || true
+    
+    # Show rollout output if available
+    if [ -f "${rollout_output}" ] && [ -s "${rollout_output}" ]; then
+      log_info "Rollout status output:"
+      cat "${rollout_output}" | head -20 || true
+    fi
+    rm -f "${rollout_output}"
     return 1
   fi
 }

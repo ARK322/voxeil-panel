@@ -16,7 +16,9 @@ LAST_LINE=""
 
 # Logging functions
 log_info() {
-  echo -e "${GREEN}[INFO]${NC} $1"
+  local timestamp
+  timestamp=$(date '+%H:%M:%S' 2>/dev/null || date +%T)
+  echo -e "${GREEN}[INFO]${NC} [${timestamp}] $1"
 }
 
 log_warn() {
@@ -34,8 +36,10 @@ log_ok() {
 # Phase logging (for phase scripts)
 log_phase() {
   local phase_name="$1"
+  local timestamp
+  timestamp=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date)
   echo ""
-  echo -e "${GREEN}[PHASE]${NC} ${phase_name}"
+  echo -e "${GREEN}[PHASE]${NC} ${phase_name} [${timestamp}]"
 }
 
 # Error handling

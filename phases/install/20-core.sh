@@ -37,17 +37,25 @@ log_info "Waiting for core infrastructure deployments to be ready..."
 TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"
 
 # Wait for cert-manager (critical for TLS, required)
+log_info "Checking cert-manager deployment..."
 if ! run_kubectl get deployment cert-manager -n cert-manager >/dev/null 2>&1; then
   log_error "cert-manager deployment not found after applying infrastructure"
+  log_info "Available deployments in cert-manager namespace:"
+  run_kubectl get deployments -n cert-manager 2>&1 || true
   exit 1
 fi
+log_info "cert-manager deployment found, waiting for rollout..."
 wait_rollout_status "cert-manager" "deployment" "cert-manager" "${TIMEOUT}" || die 1 "cert-manager deployment not ready"
 
 # Wait for kyverno admission controller (critical for policy enforcement, required)
+log_info "Checking kyverno-admission-controller deployment..."
 if ! run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
   log_error "kyverno-admission-controller deployment not found after applying infrastructure"
+  log_info "Available deployments in kyverno namespace:"
+  run_kubectl get deployments -n kyverno 2>&1 || true
   exit 1
 fi
+log_info "kyverno-admission-controller deployment found, waiting for rollout..."
 wait_rollout_status "kyverno" "deployment" "kyverno-admission-controller" "${TIMEOUT}" || die 1 "kyverno-admission-controller deployment not ready"
 
 # Ensure local-path StorageClass exists (required for PVCs)
@@ -87,20 +95,29 @@ for pvc_name in postgres-pvc pgadmin-pvc; do
     log_info "Waiting for PVC ${pvc_name} to be bound..."
     pvc_bound=false
     for i in $(seq 1 ${PVC_WAIT_ATTEMPTS}); do
-      if run_kubectl get pvc "${pvc_name}" -n infra-db -o jsonpath='{.status.phase}' 2>/dev/null | grep -q "Bound"; then
+      local pvc_phase
+      pvc_phase=$(run_kubectl get pvc "${pvc_name}" -n infra-db -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+      if [ "${pvc_phase}" = "Bound" ]; then
         log_ok "PVC ${pvc_name} is bound"
         pvc_bound=true
         break
       fi
       if [ $((i % 4)) -eq 0 ]; then
-        log_info "Still waiting for PVC ${pvc_name}... ($i/${PVC_WAIT_ATTEMPTS})"
+        log_info "Still waiting for PVC ${pvc_name}... ($i/${PVC_WAIT_ATTEMPTS}) - Current phase: ${pvc_phase}"
+        # Show PVC details for debugging
+        run_kubectl get pvc "${pvc_name}" -n infra-db -o jsonpath='{.status}' 2>/dev/null | head -3 || true
       fi
       sleep ${PVC_WAIT_INTERVAL}
     done
     if [ "${pvc_bound}" != "true" ]; then
       log_error "PVC ${pvc_name} not bound after ${PVC_WAIT_TIMEOUT}s"
+      log_info "PVC details:"
       run_kubectl get pvc "${pvc_name}" -n infra-db -o yaml || true
+      log_info "StorageClass status:"
+      run_kubectl get storageclass local-path -o yaml 2>&1 | head -20 || true
     fi
+  else
+    log_warn "PVC ${pvc_name} not found in infra-db namespace (may be created later)"
   fi
 done
 
