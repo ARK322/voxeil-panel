@@ -558,41 +558,70 @@ if [ "${VOXEIL_CI:-0}" = "1" ] && [ -n "${VOXEIL_CONTROLLER_IMAGE:-}" ] && [ -n 
     # Filter out ingress resources if domain not provided in CI
     if [ "${EXCLUDE_INGRESS}" = "true" ]; then
       # Remove Ingress resources containing REPLACE_PANEL_DOMAIN
+      # Use buffer-based approach: collect entire resource, then decide to print
       TEMP_FILTERED=$(mktemp) || TEMP_FILTERED="/tmp/filtered-$$"
-      # Use awk to completely remove Ingress resources that contain REPLACE_PANEL_DOMAIN
-      # Process line by line, tracking when we're in an Ingress resource
       awk '
         BEGIN {
-          skip = 0;
-          in_ingress = 0;
-        }
-        /^---$/ {
-          if (!skip) {
-            print;
-          }
-          skip = 0;
-          in_ingress = 0;
-          next;
-        }
-        /^kind:[[:space:]]*Ingress/ {
-          in_ingress = 1;
-          # Check if this line contains REPLACE_PANEL_DOMAIN
-          if ($0 ~ /REPLACE_PANEL_DOMAIN/) {
-            skip = 1;
-            next;
-          }
-        }
-        /REPLACE_PANEL_DOMAIN/ {
-          if (in_ingress) {
-            skip = 1;
-          }
+          RS = "\n---\n";
+          ORS = "\n---\n";
         }
         {
-          if (!skip) {
-            print;
+          # Check if this resource is an Ingress containing REPLACE_PANEL_DOMAIN
+          if ($0 ~ /^kind:[[:space:]]*Ingress/ && $0 ~ /REPLACE_PANEL_DOMAIN/) {
+            # Skip this entire resource
+            next;
           }
+          # Otherwise, print the resource
+          print;
         }
-      ' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || cp "${TEMP_MANIFEST}" "${TEMP_FILTERED}"
+      ' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || {
+        # Fallback: line-by-line processing if RS approach fails
+        awk '
+          BEGIN {
+            skip = 0;
+            in_ingress = 0;
+            buffer = "";
+          }
+          /^---$/ {
+            if (!skip && buffer != "") {
+              print buffer;
+            }
+            if (!skip) {
+              print;
+            }
+            skip = 0;
+            in_ingress = 0;
+            buffer = "";
+            next;
+          }
+          /^kind:[[:space:]]*Ingress/ {
+            in_ingress = 1;
+            buffer = $0 "\n";
+            next;
+          }
+          /REPLACE_PANEL_DOMAIN/ {
+            if (in_ingress) {
+              skip = 1;
+              buffer = "";
+            }
+          }
+          {
+            if (skip) {
+              next;
+            }
+            if (in_ingress) {
+              buffer = buffer $0 "\n";
+            } else {
+              print;
+            }
+          }
+          END {
+            if (!skip && buffer != "") {
+              print buffer;
+            }
+          }
+        ' "${TEMP_MANIFEST}" > "${TEMP_FILTERED}" 2>/dev/null || cp "${TEMP_MANIFEST}" "${TEMP_FILTERED}"
+      }
       mv "${TEMP_FILTERED}" "${TEMP_MANIFEST}"
       log_info "Filtered out ingress resources (domain not provided in CI)"
     fi
