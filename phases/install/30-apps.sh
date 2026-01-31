@@ -71,25 +71,45 @@ if [ "${POSTGRES_READY}" = "true" ]; then
   log_ok "PostgreSQL service endpoint is ready"
   
   # Verify PostgreSQL is actually accepting connections (controller requires this)
+  # Use kubectl exec into postgres pod instead of creating test pod (more reliable)
   log_info "Verifying PostgreSQL accepts connections..."
   POSTGRES_CONNECT_OK=false
+  POSTGRES_POD=""
+  # Find postgres pod
   for i in $(seq 1 30); do
-    # Try to connect using a test pod or kubectl exec
-    if run_kubectl run postgres-test-connection --rm -i --restart=Never --image=postgres:16-alpine -n infra-db --env="PGPASSWORD=$(run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.data.POSTGRES_PASSWORD}' 2>/dev/null | base64 -d 2>/dev/null || run_kubectl get secret postgres-secret -n infra-db -o jsonpath='{.stringData.POSTGRES_PASSWORD}' 2>/dev/null || echo '')" -- psql -h postgres.infra-db.svc.cluster.local -U postgres -d postgres -c "SELECT 1" >/dev/null 2>&1; then
-      POSTGRES_CONNECT_OK=true
-      run_kubectl delete pod postgres-test-connection -n infra-db --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
-      break
+    POSTGRES_POD=$(run_kubectl get pods -n infra-db -l app=postgres -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+    if [ -n "${POSTGRES_POD}" ]; then
+      pod_status=$(run_kubectl get pod "${POSTGRES_POD}" -n infra-db -o jsonpath='{.status.phase}' 2>/dev/null || echo "Unknown")
+      if [ "${pod_status}" = "Running" ]; then
+        break
+      fi
     fi
-    run_kubectl delete pod postgres-test-connection -n infra-db --ignore-not-found --request-timeout=30s >/dev/null 2>&1 || true
     if [ $((i % 5)) -eq 0 ]; then
-      log_info "Still waiting for PostgreSQL to accept connections... ($i/30)"
+      log_info "Waiting for postgres pod to be Running... ($i/30)"
     fi
     sleep 2
   done
+  
+  if [ -n "${POSTGRES_POD}" ]; then
+    # Test connection using kubectl exec (more reliable than test pod)
+    for i in $(seq 1 20); do
+      if run_kubectl exec "${POSTGRES_POD}" -n infra-db -- pg_isready -U postgres >/dev/null 2>&1; then
+        POSTGRES_CONNECT_OK=true
+        break
+      fi
+      if [ $((i % 5)) -eq 0 ]; then
+        log_info "Still waiting for PostgreSQL to accept connections... ($i/20)"
+      fi
+      sleep 2
+    done
+  fi
+  
   if [ "${POSTGRES_CONNECT_OK}" = "true" ]; then
     log_ok "PostgreSQL is accepting connections"
   else
     log_warn "PostgreSQL connection test failed, but proceeding (controller may fail to start)"
+    log_info "PostgreSQL pod status:"
+    run_kubectl get pods -n infra-db -l app=postgres -o wide 2>&1 || true
   fi
 else
   log_warn "PostgreSQL service endpoint not ready, but proceeding (may cause connection errors)"
