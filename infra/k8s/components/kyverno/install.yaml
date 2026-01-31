@@ -774,8 +774,8 @@ spec:
                         - critical
                         - high
                         - low
-                      - medium
-                      - info
+                        - medium
+                        - info
                       type: string
                     source:
                       description: Source is an identifier for the policy engine that
@@ -3622,8 +3622,8 @@ spec:
                         - critical
                         - high
                         - low
-                      - medium
-                      - info
+                        - medium
+                        - info
                       type: string
                     source:
                       description: Source is an identifier for the policy engine that
@@ -3931,8 +3931,8 @@ spec:
                         - critical
                         - high
                         - low
-                      - medium
-                      - info
+                        - medium
+                        - info
                       type: string
                     source:
                       description: Source is an identifier for the policy engine that

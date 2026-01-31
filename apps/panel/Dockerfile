@@ -21,13 +21,21 @@ WORKDIR /app
 COPY package.json ./
 COPY package-lock.json* ./
 COPY packages ./packages
-COPY apps/panel ./apps/panel
+
+# Copy panel app source code and config files (excluding node_modules)
+COPY --from=build /app/apps/panel/package.json ./apps/panel/
+COPY --from=build /app/apps/panel/package-lock.json* ./apps/panel/
+COPY --from=build /app/apps/panel/next.config.mjs ./apps/panel/
+COPY --from=build /app/apps/panel/tsconfig.json ./apps/panel/
+COPY --from=build /app/apps/panel/postcss.config.js ./apps/panel/
+COPY --from=build /app/apps/panel/tailwind.config.js ./apps/panel/
+COPY --from=build /app/apps/panel/next-env.d.ts ./apps/panel/
+COPY --from=build /app/apps/panel/app ./apps/panel/app
+COPY --from=build /app/apps/panel/src ./apps/panel/src
+COPY --from=build /app/apps/panel/.next ./apps/panel/.next
 
 # Install all workspace dependencies at root (resolves workspace:*)
-RUN npm ci --workspaces
-
-# Prune to production dependencies only for panel workspace
-RUN npm prune --omit=dev --workspace=apps/panel
+RUN npm ci --workspaces --omit=dev
 
 ENV NODE_ENV=production
 
