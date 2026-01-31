@@ -10,8 +10,8 @@ const nextConfig = {
   webpack: (config) => {
     config.resolve.alias = {
       ...config.resolve.alias,
-      '@voxeil/shared': path.resolve(__dirname, '../../packages/shared'),
-      '@voxeil/api-client': path.resolve(__dirname, '../../packages/api-client'),
+      '@voxeil/shared': path.resolve(__dirname, '../../packages/shared/dist'),
+      '@voxeil/api-client': path.resolve(__dirname, '../../packages/api-client/dist'),
     };
     return config;
   },
