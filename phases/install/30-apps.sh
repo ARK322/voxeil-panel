@@ -243,7 +243,7 @@ fi
 log_info "Running validation gates before applying applications..."
 
 # Gate 1: StorageClass local-path exists
-log_info "Gate 1/7: Checking StorageClass local-path..."
+log_info "Gate 1/10: Checking StorageClass local-path..."
 if ! run_kubectl get storageclass local-path >/dev/null 2>&1; then
   log_error "StorageClass 'local-path' not found"
   die 1 "StorageClass 'local-path' must exist before applying applications"
@@ -251,7 +251,7 @@ fi
 log_ok "StorageClass local-path exists"
 
 # Gate 2: Required namespaces exist
-log_info "Gate 2/7: Checking required namespaces..."
+log_info "Gate 2/10: Checking required namespaces..."
 REQUIRED_NAMESPACES=("platform" "infra-db" "cert-manager" "kyverno")
 for ns in "${REQUIRED_NAMESPACES[@]}"; do
   if ! run_kubectl get namespace "${ns}" >/dev/null 2>&1; then
