@@ -13,6 +13,43 @@ log_phase "install/30-apps"
 ensure_kubectl || exit 1
 check_kubectl_context || exit 1
 
+# Wait for PostgreSQL to be ready (controller depends on it)
+log_info "Waiting for PostgreSQL to be ready (controller dependency)..."
+if run_kubectl get statefulset postgres -n infra-db >/dev/null 2>&1; then
+  log_info "PostgreSQL StatefulSet found, waiting for rollout..."
+  TIMEOUT="${VOXEIL_WAIT_TIMEOUT}"
+  if ! wait_rollout_status "infra-db" "statefulset" "postgres" "${TIMEOUT}"; then
+    log_error "PostgreSQL StatefulSet not ready after ${TIMEOUT}s"
+    log_info "PostgreSQL StatefulSet status:"
+    run_kubectl get statefulset postgres -n infra-db -o wide 2>&1 || true
+    log_info "PostgreSQL pods:"
+    run_kubectl get pods -n infra-db -l app=postgres 2>&1 || true
+    die 1 "PostgreSQL must be ready before starting controller/panel"
+  fi
+  log_ok "PostgreSQL is ready"
+else
+  log_warn "PostgreSQL StatefulSet not found, proceeding anyway (may fail if postgres is required)"
+fi
+
+# Verify PostgreSQL service is available
+log_info "Verifying PostgreSQL service endpoint..."
+POSTGRES_READY=false
+for i in $(seq 1 30); do
+  if run_kubectl get endpoints postgres -n infra-db -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null | grep -q .; then
+    POSTGRES_READY=true
+    break
+  fi
+  if [ $((i % 5)) -eq 0 ]; then
+    log_info "Still waiting for PostgreSQL service endpoint... ($i/30)"
+  fi
+  sleep 2
+done
+if [ "${POSTGRES_READY}" = "true" ]; then
+  log_ok "PostgreSQL service endpoint is ready"
+else
+  log_warn "PostgreSQL service endpoint not ready, but proceeding (may cause connection errors)"
+fi
+
 # Apply applications (required)
 log_info "Applying application manifests..."
 APPS_DIR="${REPO_ROOT}/apps/deploy/clusters/prod"
