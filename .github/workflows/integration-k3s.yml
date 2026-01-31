@@ -175,6 +175,7 @@ jobs:
           find cmd phases lib tools -name "*.sh" -type f -exec chmod +x {} \; 2>/dev/null || true
 
       - name: First install
+        timeout-minutes: 30
         run: |
           export KUBECONFIG=~/.kube/config
           bash voxeil.sh install --skip-k3s
@@ -231,11 +232,13 @@ jobs:
           retention-days: 7
 
       - name: First doctor check
+        timeout-minutes: 10
         run: |
           export KUBECONFIG=~/.kube/config
           bash voxeil.sh doctor
 
       - name: Uninstall
+        timeout-minutes: 15
         run: |
           export KUBECONFIG=~/.kube/config
           bash voxeil.sh uninstall --force
@@ -254,6 +257,7 @@ jobs:
           kubectl describe pods -A | tail -n 200 || true
 
       - name: Second install
+        timeout-minutes: 30
         run: |
           export KUBECONFIG=~/.kube/config
           bash voxeil.sh install --skip-k3s
@@ -273,6 +277,7 @@ jobs:
           echo "==========================================" >> debug-artifacts/debug-bundle-second-install.txt
 
       - name: Final doctor check
+        timeout-minutes: 10
         run: |
           export KUBECONFIG=~/.kube/config
           bash voxeil.sh doctor
