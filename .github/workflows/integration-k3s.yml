@@ -85,6 +85,44 @@ jobs:
           echo "Controller image: $CONTROLLER_IMAGE"
           echo "Panel image: $PANEL_IMAGE"
 
+      - name: Pull and import base images into k3s
+        run: |
+          # Verify Docker is available
+          docker --version || { echo "ERROR: Docker not available"; exit 1; }
+          
+          # List of base images required by infrastructure components
+          BASE_IMAGES=(
+            "alpine:3.19"
+            "postgres:16-alpine"
+            "dpage/pgadmin4:8.11"
+          )
+          
+          echo "Pulling and importing base images into k3s..."
+          for img in "${BASE_IMAGES[@]}"; do
+            echo "Processing ${img}..."
+            # Pull image
+            docker pull "${img}" || {
+              echo "WARNING: Failed to pull ${img}, continuing..."
+              continue
+            }
+            
+            # Save and import into k3s
+            IMG_TAR="/tmp/$(echo ${img} | tr '/:' '_').tar"
+            docker save "${img}" -o "${IMG_TAR}"
+            if ! sudo k3s ctr images import "${IMG_TAR}" 2>&1; then
+              echo "Trying alternative import method for ${img}..."
+              sudo k3s ctr -n k8s.io images import "${IMG_TAR}" 2>&1 || {
+                echo "WARNING: Failed to import ${img}, continuing..."
+                rm -f "${IMG_TAR}"
+                continue
+              }
+            fi
+            rm -f "${IMG_TAR}"
+            echo "  ✓ Imported ${img}"
+          done
+          
+          echo "Base images import complete"
+
       - name: Build and load application images into k3s
         run: |
           # Verify Docker is available (usually pre-installed on GitHub Actions runners)
@@ -122,7 +160,7 @@ jobs:
           
           # Verify images are available
           echo "Checking imported images..."
-          sudo k3s ctr images ls 2>/dev/null | grep -E "(voxeil-controller|voxeil-panel)" || echo "Note: Images imported, will be available when pods reference them"
+          sudo k3s ctr images ls 2>/dev/null | grep -E "(voxeil-controller|voxeil-panel|alpine|postgres|pgadmin)" || echo "Note: Images imported, will be available when pods reference them"
           
           # Set environment variable for installer to use SHA tags
           echo "VOXEIL_CI=1" >> $GITHUB_ENV
