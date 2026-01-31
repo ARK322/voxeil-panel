@@ -289,6 +289,7 @@ for pvc in "${REQUIRED_PVCS[@]}"; do
     if [ "${binding_mode}" = "WaitForFirstConsumer" ]; then
       log_info "StorageClass uses WaitForFirstConsumer, pre-binding PVC '${pvc}'..."
       # Create a temporary pod to trigger binding
+      # Use alpine:3.19 which is already pre-pulled in CI
       TEMP_PREBIND_POD="prebind-${name}-$(date +%s)"
       cat <<EOF | run_kubectl apply -f - >/dev/null 2>&1
 apiVersion: v1
@@ -299,7 +300,7 @@ metadata:
 spec:
   containers:
   - name: prebind
-    image: busybox:1.36
+    image: alpine:3.19
     command: ["sleep", "10"]
     volumeMounts:
     - name: pvc
