@@ -243,7 +243,7 @@ fi
 log_info "Running validation gates before applying applications..."
 
 # Gate 1: StorageClass local-path exists
-log_info "Gate 1/7: Checking StorageClass local-path..."
+log_info "Gate 1/10: Checking StorageClass local-path..."
 if ! run_kubectl get storageclass local-path >/dev/null 2>&1; then
   log_error "StorageClass 'local-path' not found"
   die 1 "StorageClass 'local-path' must exist before applying applications"
@@ -251,7 +251,7 @@ fi
 log_ok "StorageClass local-path exists"
 
 # Gate 2: Required namespaces exist
-log_info "Gate 2/7: Checking required namespaces..."
+log_info "Gate 2/10: Checking required namespaces..."
 REQUIRED_NAMESPACES=("platform" "infra-db" "cert-manager" "kyverno")
 for ns in "${REQUIRED_NAMESPACES[@]}"; do
   if ! run_kubectl get namespace "${ns}" >/dev/null 2>&1; then
@@ -281,7 +281,7 @@ done
 log_ok "All core infrastructure PVCs are Bound"
 
 # Gate 4: cert-manager-webhook Ready
-log_info "Gate 4/7: Checking cert-manager-webhook is Ready..."
+log_info "Gate 4/10: Checking cert-manager-webhook is Ready..."
 if ! run_kubectl get deployment cert-manager-webhook -n cert-manager >/dev/null 2>&1; then
   log_error "cert-manager-webhook deployment not found"
   die 1 "cert-manager-webhook must exist and be Ready before applying applications"
@@ -295,7 +295,7 @@ fi
 log_ok "cert-manager-webhook is Ready"
 
 # Gate 5: kyverno-admission-controller Ready
-log_info "Gate 5/7: Checking kyverno-admission-controller is Ready..."
+log_info "Gate 5/10: Checking kyverno-admission-controller is Ready..."
 if ! run_kubectl get deployment kyverno-admission-controller -n kyverno >/dev/null 2>&1; then
   log_error "kyverno-admission-controller deployment not found"
   die 1 "kyverno-admission-controller must exist and be Ready before applying applications"
@@ -309,7 +309,7 @@ fi
 log_ok "kyverno-admission-controller is Ready"
 
 # Gate 6: Postgres Ready AND accepts password auth (already verified above, but re-check)
-log_info "Gate 6/7: Verifying PostgreSQL is Ready and accepts connections..."
+log_info "Gate 6/10: Verifying PostgreSQL is Ready and accepts connections..."
 if ! run_kubectl get statefulset postgres -n infra-db >/dev/null 2>&1; then
   log_error "PostgreSQL StatefulSet not found"
   die 1 "PostgreSQL must exist and be Ready before applying applications"
@@ -333,7 +333,7 @@ fi
 log_ok "PostgreSQL is Ready and accepting connections"
 
 # Gate 7: Secrets are not placeholder/empty and are consistent
-log_info "Gate 7/7: Verifying secrets are not placeholder/empty and are consistent..."
+log_info "Gate 7/10: Verifying secrets are not placeholder/empty and are consistent..."
 # Check postgres-secret
 if ! run_kubectl get secret postgres-secret -n infra-db >/dev/null 2>&1; then
   log_error "postgres-secret not found in infra-db namespace"
